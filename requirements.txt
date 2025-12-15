@@ -1,0 +1,27 @@
+# CircaScope - Circadian Rhythm Analysis Application
+# Requirements file for pip installation
+
+# GUI Framework
+PySide6>=6.5.0
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+h5py>=3.8.0
+
+# Statistics
+statsmodels>=0.14.0
+
+# Plotting
+matplotlib>=3.7.0
+
+# Circadian Analysis
+cosinorpy>=1.1.0
+
+# Optional: Wavelet Analysis
+PyWavelets>=1.4.0
+
+# Optional: Excel Export
+openpyxl>=3.1.0
+xlsxwriter>=3.1.0
