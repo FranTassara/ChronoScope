@@ -1,0 +1,316 @@
+================================================================================
+ANÁLISIS COMPLETO DE RESULTADOS - Complexity (Plasticidad)
+================================================================================
+Archivo analizado: cosinor_results_exploration_2comp_24period.csv
+Fecha del análisis: 2025-12-30
+Parámetros: n_components=2, period=24h
+
+================================================================================
+1. ANÁLISIS POR CONDICIÓN
+================================================================================
+
+Significancia General:
+----------------------
+Condición    p-value    q-value    Significativo    R²       R²_adj
+-----------  ---------  ---------  ---------------  -------  -------
+Equinox      0.035      0.052      SÍ ✓             10.2%    6.4%
+Summer       0.134      0.134      NO ✗             6.1%     2.7%
+Winter       0.019      0.052      SÍ ✓             10.5%    7.1%
+
+CONCLUSIÓN 1:
+Solo Equinox y Winter muestran ritmos circadianos significativos.
+Summer no tiene ritmo detectable estadísticamente (p=0.134).
+
+Parámetros Rítmicos:
+--------------------
+Condición    Amplitud    Picos (horas)         Valles (horas)
+-----------  ----------  --------------------  -----------------
+Equinox      0.254       1.6h, 12.5h          7.7h, 18.7h
+Summer       0.157       3.4h, 18.6h          10.9h
+Winter       0.229       7.0h, 23.0h          15.0h
+
+CONCLUSIÓN 2:
+Las condiciones con ritmo significativo tienen FASES MUY DIFERENTES:
+- Equinox: Picos tempranos (madrugada y mediodía)
+- Winter: Picos tardíos (mañana y medianoche)
+
+Esto sugiere PLASTICIDAD FENOTÍPICA CIRCADIANA - el organismo ajusta
+la fase del ritmo según el fotoperiodo.
+
+Nota importante:
+El modelo con 2 componentes detecta RITMOS BIMODALES (2 picos por ciclo de 24h).
+Esto es biológicamente relevante y muestra complejidad en la oscilación.
+
+================================================================================
+2. ANÁLISIS EXTENDIDO - Bootstrap vs CI Sampling
+================================================================================
+
+Comparación de Métodos para Calcular Intervalos de Confianza:
+--------------------------------------------------------------
+
+AMPLITUD - Significancia:
+
+Condición    p(amplitude)     p(amplitude)    CI Bootstrap        CI Sampling
+             Bootstrap        CI Sampling
+-----------  ---------------  --------------  ------------------  -------------------
+Equinox      0.00043 ✓✓✓      0.042 ✓         [0.12, 0.42]       [0.009, 0.50]
+Summer       0.00041 ✓✓✓      0.154           [0.08, 0.29]       [-0.06, 0.37]
+Winter       1.88×10⁻¹¹ ✓✓✓   0.060 ✓         [0.15, 0.40]       [-0.01, 0.47]
+
+CONCLUSIÓN 3:
+- Bootstrap es MÁS SENSIBLE que CI sampling
+- Con Bootstrap, TODAS las condiciones tienen amplitud significativa,
+  incluso Summer
+- Esto significa que Summer SÍ TIENE OSCILACIÓN, pero el modelo completo
+  no ajusta bien (p global = 0.134)
+- Summer probablemente tiene mayor variabilidad o el modelo de 2 componentes
+  no es óptimo para esta condición
+
+ACROFASE (fase) - Significancia:
+
+Condición    p(acrophase)     p(acrophase)
+             Bootstrap        CI Sampling
+-----------  ---------------  --------------
+Equinox      0.458            0.793
+Summer       0.495            0.374
+Winter       0.664            0.857
+
+CONCLUSIÓN 4:
+La acrofase NO es significativamente diferente de 0 en ninguna condición.
+Esto indica ALTA VARIABILIDAD en la fase del ritmo.
+
+MESOR (nivel medio):
+
+Condición    Mesor
+-----------  ------
+Equinox      1.049
+Summer       1.026
+Winter       0.882
+
+Todas las condiciones tienen p(mesor) = 0.0 (altamente significativo).
+Winter tiene el nivel basal más bajo.
+
+================================================================================
+3. COMPARACIONES ENTRE CONDICIONES
+================================================================================
+
+Se analizaron 4 métodos diferentes:
+1. Comparación Directa con CI
+2. Comparación Directa con Bootstrap
+3. LimoRhyde con CI1
+4. LimoRhyde con Bootstrap1
+
+Significancia Global (Método LimoRhyde):
+-----------------------------------------
+
+Comparación           p global    q global    Significativo
+--------------------  ----------  ----------  ---------------
+Equinox vs Winter     0.0044      0.0075      MUY SIG ✓✓
+Equinox vs Summer     0.032       0.032       SIG ✓
+Winter vs Summer      0.0050      0.0075      MUY SIG ✓✓
+
+CONCLUSIÓN 5:
+TODAS las comparaciones son significativas con LimoRhyde.
+Las tres condiciones difieren significativamente entre sí a nivel global.
+
+--------------------------------------------------------------------------------
+3.1 DIFERENCIAS EN AMPLITUD (d_amplitude)
+--------------------------------------------------------------------------------
+
+Método Bootstrap (el más robusto):
+
+Comparación           d_amplitude    CI Bootstrap          p-value
+--------------------  -------------  --------------------  --------
+Equinox vs Winter     -0.025         [-0.22, 0.17]        0.801 (NS)
+Equinox vs Summer     -0.097         [-0.28, 0.08]        0.286 (NS)
+Winter vs Summer      -0.072         [-0.24, 0.09]        0.394 (NS)
+
+CONCLUSIÓN 6:
+NO hay diferencias significativas en AMPLITUD entre condiciones.
+Las amplitudes son similares (~0.15-0.25).
+Las condiciones oscilan con intensidad comparable.
+
+--------------------------------------------------------------------------------
+3.2 DIFERENCIAS EN ACROFASE (d_acrophase) - ¡HALLAZGO CLAVE!
+--------------------------------------------------------------------------------
+
+Comparación           d_acrophase    Equivalente    p-value          p-value
+                      (radianes)     (horas)        Bootstrap        Limo Bootstrap
+--------------------  -------------  -------------  ---------------  ---------------
+Equinox vs Winter     0.673          ~2.6h          0.404 (NS)       0.409 (NS)
+Equinox vs Summer     1.83           ~7h            0.022 ✓          0.015 ✓
+Winter vs Summer      1.16           ~4.4h          0.076 (border.)  0.083 (border.)
+
+CONCLUSIÓN 7 - HALLAZGO PRINCIPAL:
+- Equinox vs Summer tienen DIFERENCIA DE FASE SIGNIFICATIVA (~7 horas de desfase)
+- Winter vs Summer está en el límite de significancia (p~0.08, ~4.4h desfase)
+- Equinox vs Winter NO difieren significativamente en fase
+
+INTERPRETACIÓN BIOLÓGICA:
+Las condiciones difieren principalmente en CUÁNDO ocurre el ritmo (fase),
+NO en cuánto oscila (amplitud).
+
+Summer tiene su pico de complejidad ~7 horas más tarde que Equinox.
+Esto demuestra PLASTICIDAD CIRCADIANA clara y robusta.
+
+--------------------------------------------------------------------------------
+3.3 DIFERENCIAS EN MESOR (nivel medio) - ¡HALLAZGO CLAVE!
+--------------------------------------------------------------------------------
+
+Método Bootstrap:
+
+Comparación           d_mesor     CI Bootstrap            p-value          p-value
+                                                         Bootstrap        Limo Bootstrap
+--------------------  ----------  ----------------------  ---------------  ---------------
+Equinox vs Winter     -0.167      [-0.33, -0.009] ✓       0.038 ✓          0.039 ✓
+Equinox vs Summer     -0.024      [-0.18, 0.13]          0.761 (NS)       0.756 (NS)
+Winter vs Summer      0.144       [0.010, 0.28] ✓        0.035 ✓          0.038 ✓
+
+CONCLUSIÓN 8 - HALLAZGO PRINCIPAL:
+- Equinox tiene nivel medio MAYOR que Winter (diferencia: 0.167, p=0.038)
+- Winter tiene nivel medio MENOR que Summer (diferencia: -0.144, p=0.035)
+- Equinox ≈ Summer (no difieren significativamente)
+
+RANKING de nivel basal de complejidad:
+1. Equinox: 1.049 (más alto)
+2. Summer: 1.026 (intermedio)
+3. Winter: 0.882 (más bajo) ← SIGNIFICATIVAMENTE MENOR
+
+Winter es la condición con MENOR NIVEL BASAL DE COMPLEJIDAD.
+
+================================================================================
+4. SÍNTESIS DE CONCLUSIONES GENERALES
+================================================================================
+
+4.1 DETECCIÓN DE RITMOS:
+------------------------
+✓ Equinox y Winter tienen ritmos circadianos CLAROS (p<0.05)
+✗ Summer tiene oscilación detectable (amplitud significativa con Bootstrap)
+  pero el modelo global no ajusta bien (mayor variabilidad o modelo subóptimo)
+
+4.2 DIFERENCIAS EN AMPLITUD:
+----------------------------
+✗ NO hay diferencias significativas en amplitud entre condiciones
+✓ Las tres condiciones oscilan con intensidad similar (0.15-0.25)
+
+4.3 DIFERENCIAS EN FASE (ACROFASE): ← HALLAZGO CLAVE
+----------------------------------------------------
+✓ Equinox vs Summer: DESFASE DE ~7 HORAS (p=0.015-0.022) ★★★
+◐ Winter está intermedio entre Equinox y Summer
+✓ Esto refleja PLASTICIDAD CIRCADIANA - el organismo ajusta su FASE
+  según el fotoperiodo
+
+4.4 DIFERENCIAS EN NIVEL BASAL (MESOR): ← HALLAZGO CLAVE
+---------------------------------------------------------
+✓ Winter tiene el MENOR nivel de complejidad ★★★
+✓ Equinox > Winter (p=0.038)
+✓ Summer > Winter (p=0.035)
+✓ Equinox ≈ Summer (no difieren)
+
+4.5 PATRÓN BIOLÓGICO GENERAL:
+------------------------------
+La variable "Complexity" muestra:
+
+1. RITMO BIMODAL (2 picos por ciclo de 24h) en condiciones con
+   ritmo significativo
+
+2. PLASTICIDAD EN LA FASE: diferentes fotoperiodos → diferentes
+   fases del ritmo
+   - Equinox: picos tempranos (1.6h, 12.5h)
+   - Summer: picos intermedios/tardíos (3.4h, 18.6h)
+   - Winter: picos tardíos (7h, 23h)
+
+3. NIVEL BASAL VARIABLE: Winter tiene menor complejidad basal
+   que las otras condiciones
+   - Posible adaptación al fotoperiodo invernal
+   - Reducción general del nivel de complejidad en Winter
+
+4. AMPLITUD CONSERVADA: a pesar de las diferencias en fase y nivel
+   basal, la AMPLITUD de oscilación se mantiene similar
+   - Sugiere mecanismo homeostático que preserva la magnitud de
+     la oscilación
+   - El sistema ajusta CUÁNDO y EN QUÉ NIVEL oscila, pero NO
+     CUÁNTO oscila
+
+================================================================================
+5. RECOMENDACIONES METODOLÓGICAS
+================================================================================
+
+5.1 SOBRE LOS DATOS:
+--------------------
+✓ Summer necesita más datos o análisis alternativo
+  - Tiene oscilación (amplitud significativa con Bootstrap)
+  - Pero modelo no ajusta bien (p global = 0.134)
+  - Posible mayor variabilidad individual
+  - Considerar probar n_components=[1] para Summer específicamente
+
+5.2 SOBRE LOS MÉTODOS ESTADÍSTICOS:
+------------------------------------
+✓ El método BOOTSTRAP es más robusto que CI sampling
+  - Usarlo preferentemente para análisis definitivos
+  - Detecta mejor las oscilaciones reales
+  - CIs más estrechos y realistas
+
+✓ LimoRhyde detecta mejor las diferencias GLOBALES entre condiciones
+  - p-values globales más bajos que comparación directa
+  - Incluye F-test para comparación de modelos completos
+  - Recomendado para análisis de diferencias entre condiciones
+
+✓ Bootstrap + LimoRhyde = combinación más potente
+  - Usar "analysis='bootstrap1'" en compare_pairs_limo()
+  - Proporciona inferencia más robusta
+
+5.3 ANÁLISIS ADICIONALES RECOMENDADOS:
+---------------------------------------
+1. Analizar las otras variables (PDF, PER) con los mismos parámetros
+   - Ver si muestran patrones similares de plasticidad
+   - Comparar entre variables
+
+2. Explorar n_components=[1] vs [2] para cada condición
+   - Ver si Summer se ajusta mejor con n=1
+   - Usar get_best_models() para selección formal
+
+3. Probar diferentes períodos (22-26h) para ver robustez
+   - Verificar que 24h es óptimo
+   - Detectar posibles cambios de período entre condiciones
+
+4. Análisis de correlación entre variables
+   - ¿PDF, PER y Complexity oscilan en fase?
+   - ¿Tienen plasticidad coordinada?
+
+================================================================================
+6. INTERPRETACIÓN BIOLÓGICA FINAL
+================================================================================
+
+Tus datos de "Complexity" revelan un sistema circadiano con ALTA PLASTICIDAD
+FENOTÍPICA:
+
+MECANISMOS DE ADAPTACIÓN AL FOTOPERIODO:
+
+1. AJUSTE DE FASE (timing):
+   - El organismo cambia CUÁNDO ocurre el pico de complejidad
+   - Desfase de ~7 horas entre Equinox y Summer
+   - Probablemente sincronización con señales ambientales específicas
+     de cada fotoperiodo
+
+2. AJUSTE DE NIVEL BASAL:
+   - Winter reduce el nivel basal de complejidad
+   - Posible estrategia de ahorro energético o adaptación a días cortos
+   - Manteniendo la capacidad oscilatoria (amplitud conservada)
+
+3. CONSERVACIÓN DE AMPLITUD:
+   - A pesar de cambios en fase y nivel basal, la amplitud se mantiene
+   - Sugiere mecanismo homeostático robusto
+   - La "cantidad de oscilación" es un parámetro conservado
+
+SIGNIFICADO FUNCIONAL:
+
+El sistema circadiano NO es rígido, sino que muestra PLASTICIDAD en
+múltiples niveles:
+- Temporal (fase)
+- Cuantitativo (nivel basal)
+- Estructural (conservación de amplitud)
+
+Winter representa un estado de "complejidad reducida pero rítmica",
+mientras que Equinox y Summer mantienen mayor complejidad basal con
+diferentes estrategias de timing.

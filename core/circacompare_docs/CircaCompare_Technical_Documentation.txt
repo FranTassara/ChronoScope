@@ -1,0 +1,944 @@
+================================================================================
+CIRCACOMPARE MODULE - TECHNICAL DOCUMENTATION FOR SCIENTIFIC PUBLICATION
+================================================================================
+Author: Francisco Tassara
+Version: 1.0.0
+Date: January 2026
+Application: CircaScope - Circadian Rhythm Analysis Software
+
+This document describes the mathematical methods, functions, inputs, outputs,
+and use cases of the CircaCompare module implemented in CircaScope.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. INTRODUCTION AND THEORETICAL BACKGROUND
+2. MATHEMATICAL MODELS
+3. CORE FUNCTIONS (Low-Level)
+4. MAIN ANALYZER CLASS (High-Level API)
+5. DATA STRUCTURES (Input/Output)
+6. USE CASES AND WORKFLOW
+7. PARAMETER SELECTION GUIDE
+8. STATISTICAL INTERPRETATION
+9. REFERENCES
+
+================================================================================
+1. INTRODUCTION AND THEORETICAL BACKGROUND
+================================================================================
+
+The CircaCompare module implements a robust method for:
+  (a) Single-group cosinor analysis (rhythm detection and parameter estimation)
+  (b) Differential rhythmicity analysis (comparing rhythms between conditions)
+
+This implementation is based on the CircaCompare method by Parsons et al.,
+originally published in R (https://github.com/RWParsons/circacompare_py).
+
+KEY ADVANTAGES:
+- Simultaneous estimation of rhythm parameters AND their differences
+- Direct confidence intervals for parameter differences
+- Robust regression options for handling outliers
+- No post-hoc corrections needed for comparisons
+
+================================================================================
+2. MATHEMATICAL MODELS
+================================================================================
+
+2.1 SINGLE-GROUP COSINOR MODEL
+------------------------------
+
+The fundamental cosinor model fits the following equation:
+
+    y(t) = M + A × cos(ωt - φ) + ε
+
+Where:
+    y(t)  = Observed value at time t
+    M     = MESOR (Midline Estimating Statistic Of Rhythm)
+            Represents the rhythm-adjusted mean
+    A     = Amplitude (half the peak-to-trough difference)
+            Must be > 0
+    ω     = Angular frequency = 2π/T, where T is the period
+    φ     = Acrophase (phase of the peak, in radians)
+            Constrained to 0 < φ < 2π
+    ε     = Residual error
+
+Time Conversion:
+    t_radians = (2π × t_hours) / T
+
+    For a 24-hour period:
+    - t = 0h  → 0 radians
+    - t = 6h  → π/2 radians
+    - t = 12h → π radians
+    - t = 18h → 3π/2 radians
+    - t = 24h → 2π radians
+
+
+2.2 TWO-GROUP COMPARISON MODEL (CircaCompare)
+---------------------------------------------
+
+For comparing two conditions, CircaCompare uses a unified model:
+
+    y(t,g) = (M₀ + ΔM×g) + (A₀ + ΔA×g) × cos(ωt - (φ₀ + Δφ×g)) + ε
+
+Where:
+    g     = Group indicator (0 = reference group, 1 = comparison group)
+    M₀    = MESOR for group 0 (reference)
+    A₀    = Amplitude for group 0
+    φ₀    = Acrophase for group 0
+    ΔM    = Difference in MESOR (group 1 - group 0)
+    ΔA    = Difference in Amplitude (group 1 - group 0)
+    Δφ    = Difference in Acrophase (group 1 - group 0)
+
+Group 1 parameters are derived as:
+    M₁ = M₀ + ΔM
+    A₁ = A₀ + ΔA
+    φ₁ = φ₀ + Δφ
+
+Constraints:
+    - A₀ > 0 (positive amplitude for group 0)
+    - A₁ > 0 (positive amplitude for group 1)
+    - 0 < φ₀ < 2π
+    - -π < Δφ < π
+
+================================================================================
+3. CORE FUNCTIONS (Low-Level)
+================================================================================
+
+These are the internal optimization functions. Users typically interact with
+the high-level CircaCompareAnalyzer class, but understanding these is important
+for scientific documentation.
+
+--------------------------------------------------------------------------------
+3.1 _fun_circa_single(x, t, y)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Residual function for single-group cosinor optimization.
+    Calculates the difference between model predictions and observations.
+
+INPUTS:
+    x : np.ndarray, shape (3,)
+        Parameter vector [mesor, amplitude, acrophase]
+    t : np.ndarray
+        Time values IN RADIANS (not hours!)
+    y : np.ndarray
+        Observed measurement values
+
+OUTPUT:
+    np.ndarray
+        Residuals: predicted - observed
+        Shape matches y
+
+MATHEMATICAL FORMULA:
+    residual = mesor + amplitude × cos(t - acrophase) - y
+
+WHEN USED:
+    Called internally by scipy.optimize.least_squares during optimization.
+    Not called directly by users.
+
+--------------------------------------------------------------------------------
+3.2 _fun_circacompare(x, t, y, g)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Residual function for two-group comparison optimization.
+
+INPUTS:
+    x : np.ndarray, shape (6,)
+        Parameter vector [mesor₀, Δmesor, amplitude₀, Δamplitude, acrophase₀, Δacrophase]
+    t : np.ndarray
+        Time values IN RADIANS
+    y : np.ndarray
+        Observed values (both groups combined)
+    g : np.ndarray
+        Group indicator (0 or 1 for each observation)
+
+OUTPUT:
+    np.ndarray
+        Residuals for all observations
+
+MATHEMATICAL FORMULA:
+    residual = (M₀ + ΔM×g) + (A₀ + ΔA×g) × cos(t - (φ₀ + Δφ×g)) - y
+
+WHEN USED:
+    Called internally during comparison optimization.
+
+--------------------------------------------------------------------------------
+3.3 _param_standard_errors(optimised_result, y)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Calculate standard errors for fitted parameters using the Jacobian matrix.
+
+INPUTS:
+    optimised_result : scipy.optimize.OptimizeResult
+        Result from least_squares optimization containing:
+        - .fun: residuals at solution
+        - .jac: Jacobian matrix at solution
+        - .x: fitted parameters
+    y : np.ndarray
+        Observed values
+
+OUTPUT:
+    np.ndarray
+        Standard errors for each parameter
+
+MATHEMATICAL METHOD:
+    1. Calculate sum of squared residuals: SSR = Σ(residuals²)
+    2. Calculate degrees of freedom: df = n - 2
+    3. Calculate mean squared error: MSE = SSR / df
+    4. Calculate RMSE: √MSE
+    5. Compute negative Hessian: H = Jᵀ × J (where J is Jacobian)
+    6. Invert Hessian: H⁻¹
+    7. Standard errors: SE = √(diagonal(H⁻¹)) × RMSE
+
+CONFIDENCE INTERVALS:
+    95% CI = parameter ± 1.96 × SE
+
+--------------------------------------------------------------------------------
+3.4 _circa_single_core(t, y, loss, f_scale, max_iterations)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Core optimization for single-group cosinor fitting.
+
+INPUTS:
+    t : np.ndarray
+        Time values IN RADIANS
+    y : np.ndarray
+        Observed values
+    loss : str
+        Loss function for robust regression:
+        - 'linear': Standard least squares (L2 loss)
+        - 'soft_l1': Smooth approximation to L1 loss
+        - 'huber': Linear for large residuals, quadratic for small
+        - 'cauchy': Strong downweighting of outliers
+        - 'arctan': Similar to Cauchy, bounded loss
+    f_scale : float
+        Scaling factor. Residuals below f_scale are treated approximately linearly.
+        Only affects non-linear loss functions.
+    max_iterations : int
+        Maximum optimization attempts with random starting values
+
+OUTPUT:
+    scipy.optimize.OptimizeResult or None
+        Contains:
+        - .x: fitted parameters [mesor, amplitude, acrophase]
+        - .confidence_intervals: tuple of (upper, lower) CI arrays
+        - .standard_errors: array of SE for each parameter
+        Returns None if optimization fails after max_iterations
+
+OPTIMIZATION STRATEGY:
+    1. Generate random starting values based on data characteristics:
+       - mesor_start = random × 2 × median(y)
+       - amplitude_start = random × (max(y) - min(y))
+       - acrophase_start = random × 2π
+    2. Run scipy.optimize.least_squares
+    3. Check constraints (amplitude > 0, 0 < acrophase < 2π)
+    4. If constraints violated, try again with new random starts
+    5. Repeat until success or max_iterations reached
+
+WHEN USED:
+    Called by CircaCompareAnalyzer.fit_single()
+
+--------------------------------------------------------------------------------
+3.5 _circacompare_core(t, y, g, loss, f_scale, max_iterations)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Core optimization for two-group comparison.
+
+INPUTS:
+    t : np.ndarray
+        Time values IN RADIANS (both groups combined)
+    y : np.ndarray
+        Observed values (both groups combined)
+    g : np.ndarray
+        Group indicator (0 for reference, 1 for comparison)
+    loss : str
+        Loss function (same options as _circa_single_core)
+    f_scale : float
+        Scaling factor for loss function
+    max_iterations : int
+        Maximum optimization attempts
+
+OUTPUT:
+    scipy.optimize.OptimizeResult or None
+        Contains:
+        - .x: [mesor₀, Δmesor, amplitude₀, Δamplitude, acrophase₀, Δacrophase]
+        - .confidence_intervals: tuple of (upper, lower) CI arrays
+        - .standard_errors: array of SE for each parameter
+
+OPTIMIZATION STRATEGY:
+    Similar to _circa_single_core, but with 6 parameters and constraints:
+    - amplitude₀ > 0
+    - amplitude₁ (= amplitude₀ + Δamplitude) > 0
+    - 0 < acrophase₀ < 2π
+    - -π < Δacrophase < π
+
+WHEN USED:
+    Called by CircaCompareAnalyzer.compare()
+
+================================================================================
+4. MAIN ANALYZER CLASS (High-Level API)
+================================================================================
+
+class CircaCompareAnalyzer
+--------------------------
+
+This is the main interface for users and the GUI.
+
+--------------------------------------------------------------------------------
+4.1 __init__(period, loss, f_scale, max_iterations)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Initialize the analyzer with default parameters.
+
+INPUTS:
+    period : float, default=24.0
+        Expected period of oscillation in hours (or matching time units)
+    loss : str, default='linear'
+        Loss function for robust regression
+    f_scale : float, default=1.0
+        Scaling factor for loss function
+    max_iterations : int, default=500
+        Maximum optimization attempts
+
+WHEN USED:
+    At the start of any analysis session.
+
+EXAMPLE:
+    analyzer = CircaCompareAnalyzer(period=24.0, loss='huber')
+
+--------------------------------------------------------------------------------
+4.2 load_csv(filepath, time_column, condition_column, variable_columns)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Load data from a CSV file.
+
+INPUTS:
+    filepath : str
+        Path to CSV file
+    time_column : str, default='time'
+        Name of column containing time values (in hours)
+    condition_column : str, default='condition'
+        Name of column containing condition/group labels
+    variable_columns : List[str] or None
+        Columns to analyze. If None, auto-detects all numeric columns.
+
+OUTPUT:
+    pd.DataFrame
+        Copy of loaded data
+
+EXPECTED CSV FORMAT:
+    time,condition,replicate,variable1,variable2,...
+    0,control,1,10.5,8.2
+    0,control,2,11.2,7.9
+    4,control,1,12.8,9.1
+    ...
+    0,treatment,1,9.8,8.5
+    ...
+
+WHEN USED:
+    After initializing analyzer, before any analysis.
+
+--------------------------------------------------------------------------------
+4.3 load_dataframe(df, time_column, condition_column, variable_columns)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Load data from an existing pandas DataFrame.
+    Same functionality as load_csv but for in-memory data.
+
+INPUTS:
+    df : pd.DataFrame
+        DataFrame with the data
+    (other parameters same as load_csv)
+
+OUTPUT:
+    pd.DataFrame
+        Copy of loaded data
+
+WHEN USED:
+    When data is already in memory (e.g., from GUI data loader).
+
+--------------------------------------------------------------------------------
+4.4 fit_single(variable, condition, period)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Fit single-group cosinor model to one variable in one condition.
+    This is the MAIN FUNCTION for rhythm detection.
+
+INPUTS:
+    variable : str
+        Name of the variable/gene/measurement to analyze
+    condition : str
+        Name of the condition/group to analyze
+    period : float or None
+        Period to use. If None, uses self.period
+
+OUTPUT:
+    CircaSingleResult dataclass containing:
+        - mesor: float - rhythm-adjusted mean
+        - amplitude: float - half peak-to-trough difference
+        - acrophase: float - phase of peak in RADIANS
+        - acrophase_hours: float - phase of peak in HOURS
+        - period: float - period used
+        - mesor_ci: Tuple[float, float] - 95% CI for MESOR
+        - amplitude_ci: Tuple[float, float] - 95% CI for amplitude
+        - acrophase_ci: Tuple[float, float] - 95% CI for acrophase (radians)
+        - standard_errors: np.ndarray - SE for [mesor, amplitude, acrophase]
+        - success: bool - whether optimization succeeded
+
+INTERNAL WORKFLOW:
+    1. Filter data for specified condition
+    2. Extract time and variable values
+    3. Remove NaN values
+    4. Convert time to radians: t_rad = 2π × t / period
+    5. Call _circa_single_core() for optimization
+    6. Extract parameters and confidence intervals
+    7. Convert acrophase to hours
+    8. Return CircaSingleResult
+
+WHEN USED:
+    - To detect if a variable shows significant rhythmicity
+    - To estimate rhythm parameters for a single group
+    - As preliminary analysis before comparison
+
+EXAMPLE:
+    result = analyzer.fit_single('gene_expression', 'control')
+    print(f"Amplitude: {result.amplitude:.3f}")
+    print(f"Peak time: {result.acrophase_hours:.1f} hours")
+
+--------------------------------------------------------------------------------
+4.5 fit_single_all(condition, period)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Batch analysis: fit cosinor to all variables (and optionally all conditions).
+
+INPUTS:
+    condition : str or None
+        Specific condition to analyze. If None, analyzes all conditions.
+    period : float or None
+        Period to use
+
+OUTPUT:
+    pd.DataFrame
+        Results for all variable-condition combinations with columns:
+        variable, condition, mesor, amplitude, acrophase_hours, success, etc.
+
+WHEN USED:
+    - High-throughput analysis (e.g., all genes in a dataset)
+    - Screening for rhythmic variables
+
+--------------------------------------------------------------------------------
+4.6 compare(variable, condition1, condition2, period)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Compare rhythmicity between two conditions using the CircaCompare model.
+    This is the MAIN FUNCTION for differential rhythmicity analysis.
+
+INPUTS:
+    variable : str
+        Name of the variable to compare
+    condition1 : str
+        Reference condition (group 0)
+    condition2 : str
+        Comparison condition (group 1)
+    period : float or None
+        Period to use
+
+OUTPUT:
+    CircaCompareResult dataclass containing:
+
+        Reference group (condition1) parameters:
+        - mesor_g0: float
+        - amplitude_g0: float
+        - acrophase_g0: float (radians)
+        - acrophase_g0_hours: float
+
+        Differences (condition2 - condition1):
+        - d_mesor: float
+        - d_amplitude: float
+        - d_acrophase: float (radians)
+        - d_acrophase_hours: float
+
+        Derived group 1 (condition2) parameters:
+        - mesor_g1: float (= mesor_g0 + d_mesor)
+        - amplitude_g1: float
+        - acrophase_g1: float
+        - acrophase_g1_hours: float
+
+        Confidence intervals:
+        - confidence_intervals: Dict with keys:
+            'mesor_g0', 'd_mesor', 'amplitude_g0', 'd_amplitude',
+            'acrophase_g0', 'd_acrophase'
+          Each value is Tuple[float, float] = (lower, upper)
+
+        Other:
+        - standard_errors: np.ndarray, shape (6,)
+        - period: float
+        - success: bool
+        - condition1, condition2: str (labels)
+
+INTERNAL WORKFLOW:
+    1. Filter data for both conditions
+    2. Combine data: t = [t1, t2], y = [y1, y2], g = [0s, 1s]
+    3. Remove NaN values
+    4. Convert time to radians
+    5. Call _circacompare_core() for joint optimization
+    6. Extract all 6 parameters and their CIs
+    7. Derive group 1 parameters
+    8. Convert acrophases to hours
+    9. Return CircaCompareResult
+
+WHEN USED:
+    - To test if rhythm parameters differ between conditions
+    - Differential rhythmicity analysis
+    - Comparing experimental vs control groups
+
+EXAMPLE:
+    result = analyzer.compare('clock_gene', 'control', 'treatment')
+    print(f"Amplitude difference: {result.d_amplitude:.3f}")
+    print(f"Is amplitude different? {result.is_amplitude_different()}")
+
+--------------------------------------------------------------------------------
+4.7 compare_all_conditions(variable, period)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Compare all pairs of conditions for a single variable.
+
+INPUTS:
+    variable : str
+        Variable to compare
+    period : float or None
+
+OUTPUT:
+    pd.DataFrame
+        All pairwise comparisons with columns from CircaCompareResult.to_dict()
+
+WHEN USED:
+    - When you have >2 conditions and want all pairwise comparisons
+    - Exploratory analysis
+
+--------------------------------------------------------------------------------
+4.8 compare_all_variables(condition1, condition2, period)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Compare two conditions across all variables.
+
+INPUTS:
+    condition1 : str
+        Reference condition
+    condition2 : str
+        Comparison condition
+    period : float or None
+
+OUTPUT:
+    pd.DataFrame
+        Comparison results for all variables
+
+WHEN USED:
+    - High-throughput differential rhythmicity analysis
+    - Finding genes with altered rhythms between conditions
+
+--------------------------------------------------------------------------------
+4.9 predict(result, time_points, n_points)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Generate predicted values from a fitted single-group model.
+    Useful for plotting fitted curves.
+
+INPUTS:
+    result : CircaSingleResult
+        Result from fit_single()
+    time_points : np.ndarray or None
+        Specific times for prediction. If None, generates n_points.
+    n_points : int, default=100
+        Number of evenly-spaced points to generate
+
+OUTPUT:
+    Tuple[np.ndarray, np.ndarray]
+        (time_hours, predicted_values)
+
+WHEN USED:
+    - Creating smooth fitted curves for visualization
+    - Plotting cosinor fit over raw data
+
+--------------------------------------------------------------------------------
+4.10 predict_compare(result, time_points, n_points)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+    Generate predicted values for both groups from a comparison model.
+
+INPUTS:
+    result : CircaCompareResult
+        Result from compare()
+    time_points : np.ndarray or None
+    n_points : int, default=100
+
+OUTPUT:
+    Tuple[np.ndarray, np.ndarray, np.ndarray]
+        (time_hours, predicted_group0, predicted_group1)
+
+WHEN USED:
+    - Plotting both conditions' fitted curves together
+    - Visualizing rhythm differences
+
+--------------------------------------------------------------------------------
+4.11 Configuration Methods
+--------------------------------------------------------------------------------
+
+set_period(period: float)
+    Update the analysis period.
+
+set_loss(loss: str)
+    Update loss function. Options: 'linear', 'soft_l1', 'huber', 'cauchy', 'arctan'
+
+set_f_scale(f_scale: float)
+    Update scaling factor for loss function.
+
+set_max_iterations(max_iterations: int)
+    Update maximum optimization attempts.
+
+get_variables() -> List[str]
+    Get available variable names.
+
+get_conditions() -> List[str]
+    Get available condition names.
+
+get_raw_data() -> pd.DataFrame
+    Get copy of loaded data.
+
+================================================================================
+5. DATA STRUCTURES (Input/Output)
+================================================================================
+
+5.1 INPUT DATA FORMAT
+---------------------
+
+CSV/DataFrame Requirements:
+
+REQUIRED COLUMNS:
+    - time: Numeric, time of measurement (typically in hours)
+    - condition: String/categorical, group identifier
+
+OPTIONAL COLUMNS:
+    - replicate: Identifier for technical/biological replicates
+    - subject: Identifier for repeated measures on same individual
+
+VARIABLE COLUMNS:
+    - All other numeric columns are treated as variables to analyze
+    - Can be gene expression, activity levels, temperature, etc.
+
+EXAMPLE DATA:
+    time | condition | replicate | gene1  | gene2  | gene3
+    -----|-----------|-----------|--------|--------|-------
+    0    | control   | 1         | 10.2   | 5.6    | 8.1
+    0    | control   | 2         | 11.1   | 5.8    | 7.9
+    4    | control   | 1         | 12.8   | 7.2    | 9.5
+    4    | control   | 2         | 13.2   | 6.9    | 9.8
+    ...  | ...       | ...       | ...    | ...    | ...
+    0    | treatment | 1         | 9.8    | 5.2    | 8.4
+    ...  | ...       | ...       | ...    | ...    | ...
+
+
+5.2 OUTPUT: CircaSingleResult
+-----------------------------
+
+@dataclass
+class CircaSingleResult:
+    mesor: float              # Rhythm-adjusted mean
+    amplitude: float          # Half peak-to-trough
+    acrophase: float          # Peak phase (radians)
+    acrophase_hours: float    # Peak phase (hours)
+    period: float             # Period used
+    mesor_ci: Tuple[float, float]      # 95% CI
+    amplitude_ci: Tuple[float, float]  # 95% CI
+    acrophase_ci: Tuple[float, float]  # 95% CI (radians)
+    standard_errors: np.ndarray        # SE for [M, A, φ]
+    success: bool             # Optimization success
+
+Methods:
+    to_dict() -> Dict[str, Any]  # Convert to dictionary
+
+
+5.3 OUTPUT: CircaCompareResult
+------------------------------
+
+@dataclass
+class CircaCompareResult:
+    # Identification
+    condition1: str           # Reference condition name
+    condition2: str           # Comparison condition name
+
+    # Group 0 (reference) parameters
+    mesor_g0: float
+    amplitude_g0: float
+    acrophase_g0: float       # radians
+    acrophase_g0_hours: float
+
+    # Differences (group1 - group0)
+    d_mesor: float
+    d_amplitude: float
+    d_acrophase: float        # radians
+    d_acrophase_hours: float
+
+    # Derived Group 1 parameters
+    mesor_g1: float           # = mesor_g0 + d_mesor
+    amplitude_g1: float
+    acrophase_g1: float
+    acrophase_g1_hours: float
+
+    # Statistics
+    confidence_intervals: Dict[str, Tuple[float, float]]
+        Keys: 'mesor_g0', 'd_mesor', 'amplitude_g0', 'd_amplitude',
+              'acrophase_g0', 'd_acrophase'
+    standard_errors: np.ndarray  # SE for all 6 parameters
+    period: float
+    success: bool
+
+Methods:
+    to_dict() -> Dict[str, Any]
+    is_mesor_different(alpha=0.05) -> bool
+    is_amplitude_different(alpha=0.05) -> bool
+    is_acrophase_different(alpha=0.05) -> bool
+
+================================================================================
+6. USE CASES AND WORKFLOW
+================================================================================
+
+6.1 USE CASE 1: Single-Group Rhythm Detection
+---------------------------------------------
+
+OBJECTIVE: Determine if a variable shows significant rhythmicity in one condition.
+
+WORKFLOW:
+    1. Load data
+    2. Call fit_single()
+    3. Check if amplitude CI excludes 0
+
+CODE:
+    analyzer = CircaCompareAnalyzer(period=24.0)
+    analyzer.load_csv("data.csv")
+    result = analyzer.fit_single("gene_A", "control")
+
+    # Check significance
+    amp_ci = result.amplitude_ci
+    is_rhythmic = amp_ci[0] > 0  # Lower CI > 0 means significant amplitude
+
+    print(f"Amplitude: {result.amplitude:.3f} [{amp_ci[0]:.3f}, {amp_ci[1]:.3f}]")
+    print(f"Peak time: {result.acrophase_hours:.1f} h")
+
+
+6.2 USE CASE 2: Differential Rhythmicity Analysis
+-------------------------------------------------
+
+OBJECTIVE: Test if rhythm parameters differ between two conditions.
+
+WORKFLOW:
+    1. Load data with both conditions
+    2. Call compare()
+    3. Check confidence intervals for differences
+
+CODE:
+    analyzer = CircaCompareAnalyzer(period=24.0)
+    analyzer.load_csv("data.csv")
+    result = analyzer.compare("gene_A", "control", "treatment")
+
+    # Interpret results
+    print(f"Control - Amplitude: {result.amplitude_g0:.3f}")
+    print(f"Treatment - Amplitude: {result.amplitude_g1:.3f}")
+    print(f"Difference: {result.d_amplitude:.3f}")
+    print(f"Amplitude different? {result.is_amplitude_different()}")
+
+    # Check phase shift
+    print(f"Phase shift: {result.d_acrophase_hours:.2f} hours")
+    print(f"Phase different? {result.is_acrophase_different()}")
+
+
+6.3 USE CASE 3: High-Throughput Screening
+-----------------------------------------
+
+OBJECTIVE: Screen many variables for differential rhythmicity.
+
+WORKFLOW:
+    1. Load data
+    2. Call compare_all_variables()
+    3. Filter for significant differences
+
+CODE:
+    analyzer = CircaCompareAnalyzer(period=24.0)
+    analyzer.load_csv("transcriptomics_data.csv")
+
+    results_df = analyzer.compare_all_variables("control", "knockout")
+
+    # Filter for genes with significant amplitude change
+    # (CI for d_amplitude doesn't include 0)
+    significant = results_df[results_df['d_amplitude_significant']]
+
+
+6.4 USE CASE 4: Robust Analysis with Outliers
+---------------------------------------------
+
+OBJECTIVE: Analyze data with potential outliers.
+
+WORKFLOW:
+    1. Use 'huber' or 'cauchy' loss function
+    2. Proceed with normal analysis
+
+CODE:
+    analyzer = CircaCompareAnalyzer(
+        period=24.0,
+        loss='huber',  # Robust to outliers
+        f_scale=1.0    # Residuals < f_scale treated ~linearly
+    )
+    analyzer.load_csv("noisy_data.csv")
+    result = analyzer.compare("variable", "cond1", "cond2")
+
+
+================================================================================
+7. PARAMETER SELECTION GUIDE
+================================================================================
+
+7.1 PERIOD
+----------
+- Default: 24.0 (hours)
+- Should match expected biological rhythm
+- Common values:
+    - Circadian: 24 h
+    - Ultradian: 12, 8, 6, 4 h
+    - Infradian: 48, 168 (weekly) h
+
+7.2 LOSS FUNCTION
+-----------------
+Determines how residuals are penalized during optimization.
+
+'linear' (default):
+    - Standard least squares
+    - Sensitive to outliers
+    - Use when data is clean
+
+'huber':
+    - Quadratic for small residuals, linear for large
+    - Moderate robustness
+    - Good general-purpose choice
+
+'soft_l1':
+    - Smooth approximation to L1 (absolute value) loss
+    - More robust than linear, less than Cauchy
+
+'cauchy':
+    - Strong downweighting of outliers
+    - Use when outliers are expected
+
+'arctan':
+    - Similar to Cauchy
+    - Bounded loss function
+
+RECOMMENDATION:
+    - Clean data: 'linear'
+    - Some outliers expected: 'huber'
+    - Many outliers: 'cauchy'
+
+7.3 F_SCALE
+-----------
+- Only affects non-linear loss functions
+- Residuals below f_scale are treated approximately linearly
+- Default: 1.0
+- Increase if data has larger natural variability
+
+7.4 MAX_ITERATIONS
+------------------
+- Maximum random restarts for optimization
+- Default: 500
+- Increase if optimization frequently fails
+- Decrease for faster (but potentially less reliable) results
+
+================================================================================
+8. STATISTICAL INTERPRETATION
+================================================================================
+
+8.1 CONFIDENCE INTERVAL INTERPRETATION
+--------------------------------------
+
+For SINGLE-GROUP analysis:
+    - If amplitude CI includes 0 → No significant rhythm detected
+    - If amplitude CI excludes 0 → Significant rhythm (reject null: A=0)
+
+For COMPARISON analysis:
+    - If d_amplitude CI includes 0 → Amplitudes not significantly different
+    - If d_amplitude CI excludes 0 → Significant amplitude difference
+    - Same logic applies to d_mesor and d_acrophase
+
+8.2 SIGNIFICANCE TESTING
+------------------------
+
+CircaCompare does NOT provide traditional p-values. Instead, significance is
+determined by whether the 95% confidence interval includes zero:
+
+    Significant difference if: CI_lower > 0 OR CI_upper < 0
+
+This is mathematically equivalent to a two-sided test at α = 0.05.
+
+In the GUI, approximate p-values are derived:
+    - If CI excludes 0: p ≈ 0.01 (significant)
+    - If CI includes 0: p ≈ 0.5 (not significant)
+
+8.3 EFFECT SIZE INTERPRETATION
+------------------------------
+
+Amplitude:
+    - Represents half the peak-to-trough range
+    - Larger amplitude = stronger rhythm
+    - d_amplitude > 0 means condition2 has stronger rhythm
+
+Acrophase:
+    - Time of peak expression/activity
+    - d_acrophase > 0 means condition2 peaks later
+    - d_acrophase < 0 means condition2 peaks earlier
+    - Convert to hours for biological interpretation
+
+MESOR:
+    - Rhythm-adjusted mean level
+    - d_mesor > 0 means condition2 has higher baseline
+
+================================================================================
+9. REFERENCES
+================================================================================
+
+Original CircaCompare Method:
+    Parsons R, Parsons R, Garner N, Oster H, Rawashdeh O. (2020).
+    CircaCompare: A method to estimate and statistically support differences
+    in mesor, amplitude and phase, between circadian rhythms.
+    Bioinformatics, 36(4), 1208-1212.
+    https://doi.org/10.1093/bioinformatics/btz730
+
+Python Implementation:
+    https://github.com/RWParsons/circacompare_py
+
+Cosinor Analysis Background:
+    Cornelissen G. (2014). Cosinor-based rhythmometry.
+    Theoretical Biology and Medical Modelling, 11, 16.
+    https://doi.org/10.1186/1742-4682-11-16
+
+Robust Regression:
+    scipy.optimize.least_squares documentation
+    https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+
+For questions or issues, contact: Francisco Tassara
+CircaScope Version: 1.0
+Last Updated: January 2026

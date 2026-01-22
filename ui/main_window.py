@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QStatusBar, QMenuBar, QMenu, QToolBar,
+    QTabWidget, QStatusBar, QMenuBar, QMenu,
     QMessageBox, QFileDialog, QApplication, QLabel,
     QProgressBar, QSplitter
 )
@@ -45,7 +45,6 @@ class MainWindow(QMainWindow):
         
         self._setup_ui()
         self._setup_menu()
-        self._setup_toolbar()
         self._setup_statusbar()
         self._connect_signals()
         self._restore_settings()
@@ -111,11 +110,12 @@ class MainWindow(QMainWindow):
         
         # Analysis menu
         analysis_menu = menubar.addMenu("&Analysis")
-        
-        run_action = QAction("Run Analysis", self)
-        run_action.setShortcut(QKeySequence("Ctrl+R"))
-        run_action.triggered.connect(self._run_analysis)
-        analysis_menu.addAction(run_action)
+
+        self._run_action = QAction("Run Analysis", self)
+        self._run_action.setShortcut(QKeySequence("Ctrl+R"))
+        self._run_action.triggered.connect(self._run_analysis)
+        self._run_action.setEnabled(False)  # Disabled until data is loaded
+        analysis_menu.addAction(self._run_action)
         
         clear_action = QAction("Clear Results", self)
         clear_action.triggered.connect(self._clear_results)
@@ -149,37 +149,7 @@ class MainWindow(QMainWindow):
         docs_action = QAction("Documentation", self)
         docs_action.triggered.connect(self._show_docs)
         help_menu.addAction(docs_action)
-    
-    def _setup_toolbar(self):
-        """Setup main toolbar."""
-        toolbar = QToolBar("Main Toolbar")
-        toolbar.setMovable(False)
-        toolbar.setIconSize(QSize(24, 24))
-        self.addToolBar(toolbar)
         
-        # Open file
-        open_action = QAction("Open", self)
-        open_action.setToolTip("Open CSV file")
-        open_action.triggered.connect(self._open_csv)
-        toolbar.addAction(open_action)
-        
-        toolbar.addSeparator()
-        
-        # Run analysis
-        self._run_action = QAction("▶ Run", self)
-        self._run_action.setToolTip("Run analysis")
-        self._run_action.triggered.connect(self._run_analysis)
-        self._run_action.setEnabled(False)
-        toolbar.addAction(self._run_action)
-        
-        toolbar.addSeparator()
-        
-        # Export
-        export_action = QAction("Export", self)
-        export_action.setToolTip("Export results")
-        export_action.triggered.connect(self._export_results)
-        toolbar.addAction(export_action)
-    
     def _setup_statusbar(self):
         """Setup status bar."""
         self._statusbar = QStatusBar()
@@ -299,7 +269,7 @@ Analysis Methods:
 3. Rhythm Analysis: JTK, Lomb-Scargle, Wavelet, etc.
 
 For detailed documentation, visit:
-https://github.com/your-repo/circascope
+https://github.com/FranTassara/circascope
             """
         )
     

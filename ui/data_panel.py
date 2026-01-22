@@ -175,9 +175,20 @@ class DataPanel(QWidget):
         self._rep_col_combo = QComboBox()
         self._rep_col_combo.addItem("(None)")
         self._rep_col_combo.setMinimumWidth(120)
+        self._rep_col_combo.setToolTip("For INDEPENDENT data: Different individuals at each timepoint")
         rep_layout.addWidget(self._rep_col_combo)
         mapping_layout.addLayout(rep_layout)
-        
+
+        # Subject column (optional)
+        subj_layout = QVBoxLayout()
+        subj_layout.addWidget(QLabel("Subject (optional):"))
+        self._subj_col_combo = QComboBox()
+        self._subj_col_combo.addItem("(None)")
+        self._subj_col_combo.setMinimumWidth(120)
+        self._subj_col_combo.setToolTip("For DEPENDENT data: Same individuals measured repeatedly over time")
+        subj_layout.addWidget(self._subj_col_combo)
+        mapping_layout.addLayout(subj_layout)
+
         layout.addLayout(mapping_layout)
 
         # Load button
@@ -230,11 +241,14 @@ class DataPanel(QWidget):
         self._cols_label = QLabel("Columns: -")
         self._conditions_label = QLabel("Conditions: -")
         self._timepoints_label = QLabel("Timepoints: -")
-        
+        self._analysis_type_label = QLabel("Analysis Type: -")
+        self._analysis_type_label.setStyleSheet("font-weight: bold;")
+
         info_layout.addWidget(self._rows_label)
         info_layout.addWidget(self._cols_label)
         info_layout.addWidget(self._conditions_label)
         info_layout.addWidget(self._timepoints_label)
+        info_layout.addWidget(self._analysis_type_label)
         info_layout.addStretch()
         
         layout.addLayout(info_layout)
@@ -296,11 +310,14 @@ class DataPanel(QWidget):
             self._cond_col_combo.addItem("(None)")
             self._rep_col_combo.clear()
             self._rep_col_combo.addItem("(None)")
+            self._subj_col_combo.clear()
+            self._subj_col_combo.addItem("(None)")
 
             for col in columns:
                 self._time_col_combo.addItem(col)
                 self._cond_col_combo.addItem(col)
                 self._rep_col_combo.addItem(col)
+                self._subj_col_combo.addItem(col)
 
             # Auto-select likely columns
             loader = CircadianDataLoader()
@@ -316,7 +333,21 @@ class DataPanel(QWidget):
                 idx = self._cond_col_combo.findText(cond_col)
                 if idx >= 0:
                     self._cond_col_combo.setCurrentIndex(idx)
-            
+
+            # Auto-select replicate column
+            rep_col = loader._replicate_col
+            if rep_col:
+                idx = self._rep_col_combo.findText(rep_col)
+                if idx >= 0:
+                    self._rep_col_combo.setCurrentIndex(idx)
+
+            # Auto-select subject column
+            subj_col = loader._subject_col
+            if subj_col:
+                idx = self._subj_col_combo.findText(subj_col)
+                if idx >= 0:
+                    self._subj_col_combo.setCurrentIndex(idx)
+
             # Update preview table
             self._update_preview_table(df.head(10))
             
@@ -334,6 +365,10 @@ class DataPanel(QWidget):
             self._cols_label.setText(f"Genes: {info.n_genes}")
             self._conditions_label.setText(f"Conditions: {', '.join(info.conditions)}")
             self._timepoints_label.setText(f"Clusters: {len(info.clusters)}")
+
+            # Rosbash dataset is always independent (different cells)
+            self._analysis_type_label.setText("Analysis Type: INDEPENDENT")
+            self._analysis_type_label.setStyleSheet("font-weight: bold; color: green;")
 
             # Store loader temporarily
             self._rosbash_loader = loader
@@ -384,6 +419,10 @@ class DataPanel(QWidget):
             rep_col = self._rep_col_combo.currentText()
             if rep_col != "(None)":
                 loader.set_replicate_column(rep_col)
+
+            subj_col = self._subj_col_combo.currentText()
+            if subj_col != "(None)":
+                loader.set_subject_column(subj_col)
             
             self._progress_bar.setValue(70)
             
@@ -404,6 +443,25 @@ class DataPanel(QWidget):
             self._cols_label.setText(f"Variables: {len(info.variable_columns)}")
             self._conditions_label.setText(f"Conditions: {len(info.conditions)}")
             self._timepoints_label.setText(f"Timepoints: {len(info.timepoints)}")
+
+            # DEBUG: Print all column info
+            print(f"[DEBUG ANALYSIS TYPE]")
+            print(f"  time_column: {info.time_column}")
+            print(f"  condition_column: {info.condition_column}")
+            print(f"  replicate_column: {info.replicate_column}")
+            print(f"  subject_column: {info.subject_column}")
+            print(f"  variable_columns: {info.variable_columns}")
+
+            # Determine analysis type based on what's actually loaded in the loader
+            # NOT what's selected in the combo box
+            if info.subject_column is not None:
+                print(f"  -> Setting DEPENDENT (subject_column = {info.subject_column})")
+                self._analysis_type_label.setText("Analysis Type: DEPENDENT")
+                self._analysis_type_label.setStyleSheet("font-weight: bold; color: blue;")
+            else:
+                print(f"  -> Setting INDEPENDENT (subject_column is None)")
+                self._analysis_type_label.setText("Analysis Type: INDEPENDENT")
+                self._analysis_type_label.setStyleSheet("font-weight: bold; color: green;")
             
             self._progress_bar.setValue(100)
             self._status_label.setText(f"✓ CSV loaded: {Path(filepath).name}")

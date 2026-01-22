@@ -12,10 +12,10 @@ This package contains the analysis engines for circadian rhythm analysis:
 from .cosinor_analysis import (
     CosinorAnalyzer,
     CosinorParameters,
-    DifferentialResult,
     DataType,
     ModelType,
-    AnalysisMode,
+    AnalysisMethod,
+    Criterium,
     COSINORPY_AVAILABLE
 )
 
@@ -51,13 +51,13 @@ __all__ = [
     'AnalysisType',
     'AnalysisResult',
     'ComparisonResult',
-    # CosinorPy module
+    # CosinorPy module (refactored)
     'CosinorAnalyzer',
     'CosinorParameters',
-    'DifferentialResult',
     'DataType',
     'ModelType',
-    'AnalysisMode',
+    'AnalysisMethod',
+    'Criterium',
     'COSINORPY_AVAILABLE',
     # CircaCompare module
     'CircaCompareAnalyzer',
@@ -72,6 +72,5 @@ __all__ = [
     'LombScargleResult',
     'CWTResult',
     'LMEResult',
-    'AnalysisMethod',
     'DefaultPeriodRanges'
 ]

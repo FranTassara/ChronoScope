@@ -1,0 +1,794 @@
+================================================================================
+                    RHYTHM ANALYSIS MODULE - REFERENCE GUIDE
+================================================================================
+                           CircaScope v1.0
+                        Author: Francisco Tassara
+================================================================================
+
+This document describes all functions and methods available in the
+rhythm_analysis.py module for circadian rhythm detection and analysis.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. OVERVIEW
+2. DATA FORMAT REQUIREMENTS
+3. RESULT DATACLASSES
+4. ANALYSIS METHODS
+   4.1  JTK Cycle (_run_discrete_jtk)
+   4.2  AR-JTK (_run_ar_jtk)
+   4.3  Cosine-Kendall (_run_cosine_kendall)
+   4.4  Cosinor OLS (_fit_cosinor)
+   4.5  Harmonic Cosinor (_fit_harmonic_cosinor)
+   4.6  Fourier F24 (_compute_fourier_f24)
+   4.7  Lomb-Scargle (_compute_lomb_scargle)
+   4.8  CWT - Continuous Wavelet Transform (_compute_cwt)
+   4.9  Spectral Analysis (run_spectral_analysis)
+   4.10 Linear Mixed Effects (_fit_lme_model)
+5. HELPER FUNCTIONS
+6. RHYTHMANALYZER CLASS
+7. USAGE EXAMPLES
+
+================================================================================
+1. OVERVIEW
+================================================================================
+
+The Rhythm Analysis module provides 10 different methods for detecting and
+analyzing circadian rhythms in time-series data:
+
+| Method           | Type          | Best For                              |
+|------------------|---------------|---------------------------------------|
+| JTK Cycle        | Nonparametric | Robust detection, evenly sampled data |
+| AR-JTK           | Nonparametric | Data with autocorrelated noise        |
+| Cosine-Kendall   | Nonparametric | Similar to JTK, cosine templates      |
+| Cosinor OLS      | Parametric    | Standard rhythm characterization      |
+| Harmonic Cosinor | Parametric    | Bimodal/multimodal rhythms            |
+| Fourier F24      | Effect size   | Screening, not significance testing   |
+| Lomb-Scargle     | Periodogram   | Unevenly sampled data                 |
+| CWT              | Time-frequency| Non-stationary rhythms                |
+| Spectral Analysis| Periodogram   | Period detection via FFT              |
+| LME              | Mixed model   | Hierarchical/grouped data             |
+
+Dependencies:
+    pip install numpy scipy pandas statsmodels
+    pip install PyWavelets  # Optional, for CWT only
+
+================================================================================
+2. DATA FORMAT REQUIREMENTS
+================================================================================
+
+CSV Format (Standard):
+----------------------
+    time,condition,variable1,variable2,...
+    0,control,1.2,3.4
+    4,control,2.3,4.5
+    8,control,1.8,3.9
+    0,treatment,1.5,3.2
+    4,treatment,2.1,4.1
+    ...
+
+CSV Format (With Replicates):
+-----------------------------
+    time,condition,replicate,variable1,variable2,...
+    0,control,1,1.2,3.4
+    0,control,2,1.3,3.5
+    0,control,3,1.1,3.3
+    4,control,1,2.3,4.5
+    ...
+
+Column Descriptions:
+- time: Numeric time values in hours (e.g., 0, 4, 8, 12, ...)
+- condition: Categorical label for experimental conditions
+- replicate: (Optional) Identifier for biological/technical replicates
+- variable1, variable2, ...: Numeric measurement values
+
+================================================================================
+3. RESULT DATACLASSES
+================================================================================
+
+All analysis methods return typed dataclasses with standardized interfaces.
+
+-------------------------------------------------------------------------------
+3.1 JTKResult
+-------------------------------------------------------------------------------
+Used by: JTK Cycle, AR-JTK, Cosine-Kendall
+
+Attributes:
+    p_value         : float   - Raw p-value from Kendall tau test
+    adj_p_value     : float   - Bonferroni-adjusted p-value
+    period          : float   - Best-fit period (hours)
+    amplitude       : float   - Estimated amplitude (90th-10th percentile / 2)
+    acrophase       : float   - Peak time in hours
+    asymmetry       : float   - Waveform asymmetry parameter (0-1)
+    tau             : float   - Kendall tau correlation coefficient
+    lag             : float   - Phase lag parameter
+    method          : str     - Analysis method identifier
+
+Methods:
+    is_significant(alpha=0.05) -> bool  : Check if adj_p_value < alpha
+    to_dict() -> Dict[str, Any]         : Convert to dictionary
+
+-------------------------------------------------------------------------------
+3.2 CosinorResult
+-------------------------------------------------------------------------------
+Used by: Cosinor OLS
+
+Attributes:
+    mesor           : float   - Midline Estimating Statistic Of Rhythm
+    amplitude       : float   - Rhythm amplitude
+    acrophase_rad   : float   - Acrophase in radians
+    acrophase_hours : float   - Acrophase in hours
+    period          : float   - Best-fit period (hours)
+    p_value         : float   - F-test p-value
+    adj_p_value     : float   - Bonferroni-adjusted p-value
+    amplitude_ci    : Tuple[float, float] - 95% CI for amplitude
+    acrophase_ci    : Tuple[float, float] - 95% CI for acrophase (radians)
+    amplitude_p     : float   - P-value for amplitude significance
+    acrophase_p     : float   - P-value for acrophase significance
+    method          : str     - "Cosinor"
+
+Methods:
+    is_significant(alpha=0.05) -> bool  : Check if adj_p_value < alpha
+    to_dict() -> Dict[str, Any]         : Convert to dictionary
+
+-------------------------------------------------------------------------------
+3.3 HarmonicCosinorResult
+-------------------------------------------------------------------------------
+Used by: Harmonic Cosinor
+
+Attributes:
+    adj_p_value     : float   - Bonferroni-adjusted p-value
+    period          : float   - Best-fit period (hours)
+    amplitudes      : List[float] - Amplitudes for each detected peak
+    acrophases      : List[float] - Acrophase times (hours) for each peak
+    n_harmonics     : int     - Number of harmonics used
+    method          : str     - "Harmonic-Cosinor"
+    fit_model       : Optional[Dict] - Model parameters for plotting
+
+Methods:
+    is_significant(alpha=0.05) -> bool  : Check if adj_p_value < alpha
+    to_dict() -> Dict[str, Any]         : Convert to dictionary
+
+-------------------------------------------------------------------------------
+3.4 FourierF24Result
+-------------------------------------------------------------------------------
+Used by: Fourier F24
+
+Attributes:
+    f24_score       : float   - F24 rhythmicity index (effect size)
+    power_spectrum  : np.ndarray - Full power spectrum
+    frequencies     : np.ndarray - Corresponding frequencies
+    dominant_period : float   - Period with highest power
+    dominant_power  : float   - Power at dominant period
+    target_period   : float   - The period tested (e.g., 24h)
+    target_power    : float   - Power at the target period
+    correlation_r   : Optional[float] - Correlation between replicates
+    method          : str     - "Fourier-F24"
+
+Methods:
+    is_rhythmic(threshold=2.0) -> bool  : Check if f24_score > threshold
+    to_dict() -> Dict[str, Any]         : Convert to dictionary
+
+Note: F24 is an EFFECT SIZE measure, not a significance test.
+      Wijnen et al. (2006) used F24 > 2 or F24 > 3 as filters.
+
+-------------------------------------------------------------------------------
+3.5 LombScargleResult
+-------------------------------------------------------------------------------
+Used by: Lomb-Scargle
+
+Attributes:
+    dominant_period : float   - Period with highest power
+    dominant_power  : float   - Power at dominant period
+    false_alarm_probability : Optional[float] - FAP for dominant peak
+    periods         : np.ndarray - Array of periods tested
+    power_spectrum  : np.ndarray - Power at each period
+    method          : str     - "Lomb-Scargle"
+
+Methods:
+    is_significant(alpha=0.05) -> bool  : Check if FAP < alpha
+    to_dict() -> Dict[str, Any]         : Convert to dictionary
+
+-------------------------------------------------------------------------------
+3.6 CWTResult
+-------------------------------------------------------------------------------
+Used by: CWT (Continuous Wavelet Transform)
+
+Attributes:
+    dominant_period      : float - Period with highest average power
+    mean_power           : float - Mean power across dominant period
+    period_variation     : float - Std dev of dominant period over time
+    amplitude_modulations: int   - Number of amplitude peaks detected
+    method               : str   - "CWT"
+
+Methods:
+    to_dict() -> Dict[str, Any] : Convert to dictionary
+
+-------------------------------------------------------------------------------
+3.7 LMEResult
+-------------------------------------------------------------------------------
+Used by: Linear Mixed Effects
+
+Attributes:
+    terms       : List[str]   - List of model terms
+    estimates   : List[float] - Parameter estimates
+    std_errors  : List[float] - Standard errors
+    z_values    : List[float] - Z-statistics
+    p_values    : List[float] - P-values for each term
+    method      : str         - "LME"
+
+Methods:
+    to_dict() -> Dict[str, Any]     : Convert to dictionary
+    to_dataframe() -> pd.DataFrame  : Convert to pandas DataFrame
+
+================================================================================
+4. ANALYSIS METHODS
+================================================================================
+
+-------------------------------------------------------------------------------
+4.1 JTK Cycle (_run_discrete_jtk)
+-------------------------------------------------------------------------------
+
+Description:
+    Nonparametric rhythm detection using Kendall's tau correlation with
+    triangle waveform templates. Tests multiple periods and phase shifts.
+
+Function Signature:
+    _run_discrete_jtk(
+        series: pd.Series,
+        period_range: List[float] = None,
+        lag_range: Optional[np.ndarray] = None,
+        asymmetries: List[float] = None
+    ) -> JTKResult
+
+Parameters:
+    series       : pd.Series with time as index, values as data
+    period_range : List of periods to test (default: [20, 21, ..., 28])
+    lag_range    : Array of lag/phase values to test (default: 0 to period)
+    asymmetries  : List of asymmetry values (default: [0.5] for symmetric)
+
+Returns:
+    JTKResult object
+
+Algorithm:
+    1. Rank-transform the data
+    2. For each (period, lag, asymmetry) combination:
+       - Generate triangle template aligned to timepoints
+       - Compute Kendall's tau between ranked data and template
+    3. Select best combination (lowest p-value)
+    4. Apply Bonferroni correction
+
+-------------------------------------------------------------------------------
+4.2 AR-JTK (_run_ar_jtk)
+-------------------------------------------------------------------------------
+
+Description:
+    JTK with autoregressive noise handling. Detects autocorrelation in
+    residuals and applies AR prewhitening before re-running JTK.
+
+Function Signature:
+    _run_ar_jtk(
+        series: pd.Series,
+        period_range: List[float] = None,
+        lag_range: Optional[np.ndarray] = None,
+        asymmetries: List[float] = None,
+        ar_lag: int = 1,
+        ljungbox_lag: int = 10
+    ) -> Tuple[JTKResult, bool]
+
+Parameters:
+    series        : pd.Series with time as index, values as data
+    period_range  : List of periods to test
+    lag_range     : Array of lag values
+    asymmetries   : List of asymmetry values
+    ar_lag        : AR model lag for prewhitening (default: 1)
+    ljungbox_lag  : Lag for Ljung-Box autocorrelation test (default: 10)
+
+Returns:
+    Tuple of (JTKResult, bool indicating if AR correction was applied)
+
+Algorithm:
+    1. Run initial JTK analysis
+    2. Compute rank-domain residuals
+    3. Test for autocorrelation using Ljung-Box test
+    4. If autocorrelated: fit AR model and prewhiten residuals
+    5. Reconstruct whitened series and re-run JTK
+
+-------------------------------------------------------------------------------
+4.3 Cosine-Kendall (_run_cosine_kendall)
+-------------------------------------------------------------------------------
+
+Description:
+    Similar to JTK but uses cosine templates instead of triangle templates.
+    Fully nonparametric using Kendall's tau correlation.
+
+Function Signature:
+    _run_cosine_kendall(
+        series: pd.Series,
+        period_range: List[float] = None,
+        interval: float = 1.0
+    ) -> JTKResult
+
+Parameters:
+    series       : pd.Series with time as index, values as data
+    period_range : List of periods to test (default: circadian range)
+    interval     : Time interval for lag steps (default: 1.0)
+
+Returns:
+    JTKResult object (method = "Cosine-Kendall")
+
+Algorithm:
+    1. Rank-transform the data
+    2. For each (period, lag) combination:
+       - Generate cosine template: cos(2π(t-lag)/period)
+       - Rank the template
+       - Compute Kendall's tau
+    3. Select best combination, apply Bonferroni correction
+
+-------------------------------------------------------------------------------
+4.4 Cosinor OLS (_fit_cosinor)
+-------------------------------------------------------------------------------
+
+Description:
+    Standard parametric cosinor analysis using Ordinary Least Squares.
+    Fits: y = mesor + amplitude * cos(2πt/T - acrophase)
+
+Function Signature:
+    _fit_cosinor(
+        times: np.ndarray,
+        values: np.ndarray,
+        period_range: List[float] = None
+    ) -> CosinorResult
+
+Parameters:
+    times        : Array of time values (hours)
+    values       : Array of measurement values
+    period_range : List of periods to test (default: circadian range)
+
+Returns:
+    CosinorResult object
+
+Algorithm:
+    1. For each period in range:
+       - Construct design matrix: [1, cos(ωt), sin(ωt)]
+       - Fit OLS regression
+       - Calculate AIC for model selection
+    2. Select best period (lowest AIC)
+    3. Calculate amplitude = √(β_cos² + β_sin²)
+    4. Calculate acrophase = atan2(β_sin, β_cos)
+    5. Compute confidence intervals using delta method
+
+Model:
+    y = M + β_cos*cos(ωt) + β_sin*sin(ωt)
+    where ω = 2π/period, amplitude = √(β_cos² + β_sin²)
+    and acrophase = atan2(β_sin, β_cos)
+
+-------------------------------------------------------------------------------
+4.5 Harmonic Cosinor (_fit_harmonic_cosinor)
+-------------------------------------------------------------------------------
+
+Description:
+    Detects multi-modal rhythms (e.g., bimodal with 2 peaks per cycle)
+    using multi-harmonic templates and Kendall's tau correlation.
+
+Function Signature:
+    _fit_harmonic_cosinor(
+        times: np.ndarray,
+        values: np.ndarray,
+        period_range: List[float] = None,
+        n_harmonics: int = 2
+    ) -> HarmonicCosinorResult
+
+Parameters:
+    times        : Array of time values
+    values       : Array of measurement values
+    period_range : List of periods to test
+    n_harmonics  : Number of harmonics (1=unimodal, 2=bimodal, etc.)
+
+Returns:
+    HarmonicCosinorResult object
+
+Algorithm:
+    1. For each period and lag:
+       - Generate harmonic template: Σ cos(2πh(t-lag)/period) for h=1..n
+       - Rank both data and template
+       - Compute Kendall's tau
+    2. Select best combination
+    3. Identify peaks in the model waveform
+    4. Estimate amplitude and acrophase for each peak
+
+-------------------------------------------------------------------------------
+4.6 Fourier F24 (_compute_fourier_f24)
+-------------------------------------------------------------------------------
+
+Description:
+    Computes F24 score (Wijnen et al., 2006) - an effect size measure
+    representing power at target frequency relative to noise.
+
+    NOTE: This is NOT a significance test. Use for screening/filtering.
+
+Function Signature:
+    _compute_fourier_f24(
+        times: np.ndarray,
+        values: np.ndarray,
+        target_period: float = 24.0,
+        n_permutations: int = 1000
+    ) -> FourierF24Result
+
+Parameters:
+    times          : Array of time values
+    values         : Array of measurement values
+    target_period  : Period to evaluate (default: 24 hours)
+    n_permutations : Number of random permutations for baseline
+
+Returns:
+    FourierF24Result object
+
+Algorithm:
+    1. Center data (subtract mean)
+    2. Compute FFT
+    3. Find power at target frequency
+    4. Generate permuted data n times
+    5. Compute mean permutation power at target frequency
+    6. F24 = target_power / mean_permutation_power
+
+Interpretation:
+    F24 > 2.0 : Typically considered rhythmic (Wijnen et al., 2006)
+    F24 > 3.0 : More stringent threshold
+
+-------------------------------------------------------------------------------
+4.7 Lomb-Scargle (_compute_lomb_scargle)
+-------------------------------------------------------------------------------
+
+Description:
+    Periodogram method designed for unevenly sampled data.
+    Computes power spectrum and estimates false alarm probability.
+
+Function Signature:
+    _compute_lomb_scargle(
+        times: np.ndarray,
+        values: np.ndarray,
+        period_range: Tuple[float, float] = (18.0, 32.0),
+        n_periods: int = 1000
+    ) -> LombScargleResult
+
+Parameters:
+    times        : Array of time values (can be unevenly spaced)
+    values       : Array of measurement values
+    period_range : (min_period, max_period) tuple
+    n_periods    : Number of periods to evaluate
+
+Returns:
+    LombScargleResult object
+
+Algorithm:
+    1. Center data
+    2. Define period grid from min to max
+    3. Convert to angular frequencies
+    4. Compute Lomb-Scargle periodogram (scipy.signal.lombscargle)
+    5. Find dominant period (highest power)
+    6. Estimate FAP ≈ 1 - (1 - exp(-power))^M
+
+-------------------------------------------------------------------------------
+4.8 CWT - Continuous Wavelet Transform (_compute_cwt)
+-------------------------------------------------------------------------------
+
+Description:
+    Time-frequency analysis using wavelet transforms. Useful for detecting
+    non-stationary rhythms with varying period or amplitude over time.
+
+    Requires PyWavelets: pip install PyWavelets
+
+Function Signature:
+    _compute_cwt(
+        times: np.ndarray,
+        values: np.ndarray,
+        sampling_interval: float = 0.5,
+        wavelet: str = 'cmor1.5-1.0',
+        period_range: Tuple[float, float] = (20.0, 28.0)
+    ) -> CWTResult
+
+Parameters:
+    times             : Array of time values
+    values            : Array of measurement values
+    sampling_interval : Sampling interval in hours
+    wavelet           : Wavelet type (default: complex Morlet)
+    period_range      : (min_period, max_period) tuple
+
+Returns:
+    CWTResult object
+
+Raises:
+    ImportError if PyWavelets is not installed
+
+Algorithm:
+    1. Detrend signal (subtract mean)
+    2. Define scales from period range
+    3. Apply CWT using specified wavelet
+    4. Compute power = |coefficients|²
+    5. Calculate global wavelet spectrum (mean over time)
+    6. Find dominant period
+    7. Track period variation over time
+    8. Detect amplitude modulations
+
+Wavelet Options:
+    'cmor1.5-1.0' : Complex Morlet (default, good for oscillations)
+    'morl'        : Real Morlet
+    'mexh'        : Mexican Hat
+    See PyWavelets documentation for more options
+
+-------------------------------------------------------------------------------
+4.9 Spectral Analysis (run_spectral_analysis in RhythmAnalyzer)
+-------------------------------------------------------------------------------
+
+Description:
+    FFT-based spectral analysis with multiple periodogram methods.
+    Returns data for interactive visualization.
+
+Method Signature (RhythmAnalyzer class):
+    run_spectral_analysis(
+        variable: str,
+        condition: str,
+        per_type: str = 'per',
+        max_per: float = 240.0,
+        prominent: bool = True
+    ) -> Dict[str, Any]
+
+Parameters:
+    variable  : Name of variable to analyze
+    condition : Condition to analyze
+    per_type  : Periodogram type:
+                - 'per'        : Standard FFT periodogram
+                - 'welch'      : Welch's method (averaged)
+                - 'lombscargle': Lomb-Scargle periodogram
+    max_per   : Maximum period to consider (hours)
+    prominent : Whether to identify prominent peaks
+
+Returns:
+    Dictionary with keys:
+        'periods'          : np.ndarray - Period values
+        'power'            : np.ndarray - Power spectral density
+        'threshold'        : float      - Significance threshold
+        'dominant_period'  : float      - Period with highest power
+        'significant_peaks': List[float] - Periods above threshold
+
+Significance Threshold:
+    Based on Refinetti et al. (2007):
+    T = (1 - (0.05/N)^(1/(N-1))) × Σ(power)
+
+-------------------------------------------------------------------------------
+4.10 Linear Mixed Effects (_fit_lme_model)
+-------------------------------------------------------------------------------
+
+Description:
+    Linear Mixed Effects model for hierarchical/grouped data with
+    repeated measurements (e.g., multiple subjects).
+
+Function Signature:
+    _fit_lme_model(
+        df: pd.DataFrame,
+        dependent: str,
+        fixed_effects: List[str],
+        random_effect: str
+    ) -> LMEResult
+
+Parameters:
+    df            : DataFrame with the data
+    dependent     : Name of dependent variable column
+    fixed_effects : List of fixed effect column names (e.g., ['time'])
+    random_effect : Name of random effect grouping column (e.g., 'subject')
+
+Returns:
+    LMEResult object
+
+Model:
+    dependent ~ fixed_effect1 + fixed_effect2 + ... | random_effect
+
+Example:
+    # Test time effect with subject as random effect
+    result = _fit_lme_model(
+        df,
+        dependent='expression',
+        fixed_effects=['time'],
+        random_effect='subject'
+    )
+
+================================================================================
+5. HELPER FUNCTIONS
+================================================================================
+
+-------------------------------------------------------------------------------
+acrophase_to_hours(rad_phase, period=24.0) -> float
+-------------------------------------------------------------------------------
+    Convert acrophase from radians to hours.
+
+    Parameters:
+        rad_phase : Acrophase in radians
+        period    : Period in hours (default: 24.0)
+
+    Returns:
+        Acrophase in hours (0 to period)
+
+-------------------------------------------------------------------------------
+hours_to_radians(hours, period=24.0) -> float
+-------------------------------------------------------------------------------
+    Convert time in hours to radians.
+
+    Parameters:
+        hours  : Time in hours
+        period : Period in hours (default: 24.0)
+
+    Returns:
+        Time in radians
+
+================================================================================
+6. RHYTHMANALYZER CLASS
+================================================================================
+
+The RhythmAnalyzer class provides a unified interface for all analysis methods.
+
+-------------------------------------------------------------------------------
+Initialization
+-------------------------------------------------------------------------------
+    analyzer = RhythmAnalyzer(
+        period_range: Optional[List[float]] = None,
+        default_period: float = 24.0
+    )
+
+Parameters:
+    period_range   : List of periods to test (default: circadian range)
+    default_period : Default period for single-period analyses
+
+-------------------------------------------------------------------------------
+Data Loading Methods
+-------------------------------------------------------------------------------
+
+load_csv(filepath, time_column='time', condition_column='condition',
+         replicate_column=None, variable_columns=None) -> pd.DataFrame
+
+    Load data from CSV file.
+
+load_dataframe(df, time_column='time', condition_column='condition',
+               replicate_column=None, variable_columns=None) -> pd.DataFrame
+
+    Load data from existing DataFrame.
+
+-------------------------------------------------------------------------------
+Analysis Methods
+-------------------------------------------------------------------------------
+
+run_jtk(variable, condition, period_range=None, ...) -> JTKResult
+run_ar_jtk(variable, condition, ...) -> Tuple[JTKResult, bool]
+run_cosine_kendall(variable, condition, ...) -> JTKResult
+run_cosinor(variable, condition, period_range=None) -> CosinorResult
+run_harmonic_cosinor(variable, condition, n_harmonics=2) -> HarmonicCosinorResult
+run_fourier_f24(variable, condition, target_period=None) -> FourierF24Result
+run_lomb_scargle(variable, condition, period_range=None) -> LombScargleResult
+run_cwt(variable, condition, sampling_interval=None) -> CWTResult
+run_spectral_analysis(variable, condition, per_type='per') -> Dict
+run_lme(dependent, fixed_effects, random_effect, condition=None) -> LMEResult
+
+-------------------------------------------------------------------------------
+Batch Analysis Methods
+-------------------------------------------------------------------------------
+
+run_all_jtk(condition=None, variables=None, **kwargs) -> pd.DataFrame
+run_all_cosinor(condition=None, variables=None, **kwargs) -> pd.DataFrame
+run_all_lomb_scargle(condition=None, variables=None, **kwargs) -> pd.DataFrame
+
+-------------------------------------------------------------------------------
+Utility Methods
+-------------------------------------------------------------------------------
+
+get_variables() -> List[str]      : Get list of available variables
+get_conditions() -> List[str]     : Get list of available conditions
+predict_cosinor(result, n_points=100) -> Tuple[np.ndarray, np.ndarray]
+predict_harmonic_cosinor(result) -> Tuple[np.ndarray, np.ndarray]
+
+================================================================================
+7. USAGE EXAMPLES
+================================================================================
+
+-------------------------------------------------------------------------------
+Example 1: Basic JTK Analysis
+-------------------------------------------------------------------------------
+
+import pandas as pd
+import numpy as np
+from core.rhythm_analysis import RhythmAnalyzer
+
+# Create sample data
+np.random.seed(42)
+t = np.linspace(0, 48, 25)
+y = 10 + 5 * np.cos(2 * np.pi * t / 24) + np.random.normal(0, 1, len(t))
+
+df = pd.DataFrame({
+    'time': t,
+    'condition': ['control'] * len(t),
+    'gene_expression': y
+})
+
+# Initialize analyzer and load data
+analyzer = RhythmAnalyzer()
+analyzer.load_dataframe(df)
+
+# Run JTK analysis
+result = analyzer.run_jtk('gene_expression', 'control')
+
+print(f"Period: {result.period} hours")
+print(f"Acrophase: {result.acrophase} hours")
+print(f"P-value (adjusted): {result.adj_p_value}")
+print(f"Significant: {result.is_significant()}")
+
+-------------------------------------------------------------------------------
+Example 2: Using Low-Level Functions Directly
+-------------------------------------------------------------------------------
+
+from core.rhythm_analysis import _fit_cosinor, DefaultPeriodRanges
+import numpy as np
+
+# Generate data
+t = np.linspace(0, 48, 25)
+y = 10 + 5 * np.cos(2 * np.pi * t / 24) + np.random.normal(0, 1, len(t))
+
+# Run cosinor directly
+result = _fit_cosinor(t, y, period_range=DefaultPeriodRanges.CIRCADIAN)
+
+print(f"MESOR: {result.mesor:.2f}")
+print(f"Amplitude: {result.amplitude:.2f}")
+print(f"Acrophase: {result.acrophase_hours:.2f} hours")
+print(f"Period: {result.period} hours")
+
+-------------------------------------------------------------------------------
+Example 3: Batch Analysis
+-------------------------------------------------------------------------------
+
+# Load data with multiple genes
+analyzer = RhythmAnalyzer()
+df = analyzer.load_csv('expression_data.csv')
+
+# Run JTK on all variables for 'control' condition
+results_df = analyzer.run_all_jtk(condition='control')
+
+# Filter significant results
+significant = results_df[results_df['adj_p_value'] < 0.05]
+print(f"Found {len(significant)} significant rhythmic genes")
+
+-------------------------------------------------------------------------------
+Example 4: Fourier F24 Screening
+-------------------------------------------------------------------------------
+
+from core.rhythm_analysis import _compute_fourier_f24
+
+# Generate data
+t = np.linspace(0, 48, 49)
+y = 10 + 5 * np.cos(2 * np.pi * t / 24) + np.random.normal(0, 1, len(t))
+
+# Compute F24
+result = _compute_fourier_f24(t, y, target_period=24.0)
+
+print(f"F24 Score: {result.f24_score:.2f}")
+print(f"Rhythmic (F24 > 2): {result.is_rhythmic()}")
+
+-------------------------------------------------------------------------------
+Example 5: Harmonic Cosinor for Bimodal Rhythms
+-------------------------------------------------------------------------------
+
+from core.rhythm_analysis import _fit_harmonic_cosinor
+
+# Generate bimodal data (two peaks per 24h)
+t = np.linspace(0, 48, 49)
+y = 10 + 3*np.cos(2*np.pi*t/24) + 2*np.cos(2*2*np.pi*t/24) + np.random.normal(0, 0.5, len(t))
+
+# Run harmonic cosinor with 2 harmonics
+result = _fit_harmonic_cosinor(t, y, n_harmonics=2)
+
+print(f"Period: {result.period} hours")
+print(f"Number of peaks: {len(result.acrophases)}")
+for i, (amp, acro) in enumerate(zip(result.amplitudes, result.acrophases), 1):
+    print(f"  Peak {i}: amplitude={amp:.2f}, time={acro:.2f}h")
+
+================================================================================
+END OF REFERENCE GUIDE
+================================================================================

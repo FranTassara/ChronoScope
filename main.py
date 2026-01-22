@@ -26,6 +26,18 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
+# NumPy 2.0 compatibility patch
+# CosinorPy uses deprecated numpy types, so we need to add them back
+import numpy as np
+if not hasattr(np, 'float'):
+    np.float = np.float64
+if not hasattr(np, 'int'):
+    np.int = np.int64
+if not hasattr(np, 'bool'):
+    np.bool = np.bool_
+if not hasattr(np, 'complex'):
+    np.complex = np.complex128
+
 
 def check_dependencies():
     """Check that all required dependencies are installed."""
@@ -70,10 +82,10 @@ def main():
     check_dependencies()
     
     # Import after dependency check
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QStyleFactory
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QFont
-    
+
     from ui.main_window import MainWindow
     
     # Create application
@@ -85,7 +97,14 @@ def main():
     app.setOrganizationName("LabCeriani")
     
     # Set application style
-    app.setStyle("Fusion")
+    # Try Windows style first for better dropdown rendering, fallback to Fusion
+    available_styles = [s.lower() for s in QStyleFactory.keys()]
+    if "windowsvista" in available_styles:
+        app.setStyle("windowsvista")
+    elif "windows" in available_styles:
+        app.setStyle("Windows")
+    else:
+        app.setStyle("Fusion")
     
     # Set default font
     font = QFont("Segoe UI", 10)
@@ -180,28 +199,42 @@ def main():
         margin-right: 5px;
     }
 
+    QComboBox:on {
+        border-color: #4a90d9;
+    }
+
     QComboBox QAbstractItemView {
         border: 1px solid #cccccc;
         background-color: white;
         selection-background-color: #4a90d9;
         selection-color: white;
         outline: none;
+        show-decoration-selected: 1;
     }
 
     QComboBox QAbstractItemView::item {
-        padding: 4px 8px;
-        color: #333333;
-        background-color: white;
+        padding: 5px 10px;
+        min-height: 20px;
+        color: #000000;
+        background-color: transparent;
+        border: none;
     }
 
     QComboBox QAbstractItemView::item:hover {
-        background-color: #e3f2fd;
-        color: #333333;
+        background-color: #b3d9ff;
+        color: #000000;
+        border: none;
     }
 
     QComboBox QAbstractItemView::item:selected {
         background-color: #4a90d9;
-        color: white;
+        color: #ffffff;
+        border: none;
+    }
+
+    QComboBox QAbstractItemView::item:selected:hover {
+        background-color: #3a7bc8;
+        color: #ffffff;
     }
     
     QSpinBox, QDoubleSpinBox {

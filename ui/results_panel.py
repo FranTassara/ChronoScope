@@ -66,7 +66,7 @@ class PlotCanvas(FigureCanvas):
         
         # Plot fit curve
         t_fit = np.linspace(0, period, 200)
-        y_fit = mesor + amplitude * np.cos(2 * np.pi * t_fit / period - acrophase_rad)
+        y_fit = mesor + amplitude * np.cos(2 * np.pi * t_fit / period + acrophase_rad)
         ax.plot(t_fit, y_fit, 'r-', linewidth=2, label='Cosinor Fit')
         
         # Add horizontal line at MESOR
@@ -98,13 +98,13 @@ class PlotCanvas(FigureCanvas):
         mesor_g0 = result.get('mesor_g0', 0)
         amp_g0 = result.get('amplitude_g0', 0)
         acr_g0 = result.get('acrophase_g0', 0)
-        y_g0 = mesor_g0 + amp_g0 * np.cos(2 * np.pi * t_fit / period - acr_g0)
-        
+        y_g0 = mesor_g0 + amp_g0 * np.cos(2 * np.pi * t_fit / period + acr_g0)
+
         # Group 1
         mesor_g1 = result.get('mesor_g1', 0)
         amp_g1 = result.get('amplitude_g1', 0)
         acr_g1 = result.get('acrophase_g1', 0)
-        y_g1 = mesor_g1 + amp_g1 * np.cos(2 * np.pi * t_fit / period - acr_g1)
+        y_g1 = mesor_g1 + amp_g1 * np.cos(2 * np.pi * t_fit / period + acr_g1)
         
         cond1 = result.get('condition1', 'Group 0')
         cond2 = result.get('condition2', 'Group 1')
@@ -181,13 +181,29 @@ class PlotCanvas(FigureCanvas):
         values = [r.get(parameter) if r.get(parameter) is not None else 0 for r in results]
         
         # Check for confidence intervals
-        ci_low = [r.get(f'{parameter}_ci', (0, 0))[0] if r.get(f'{parameter}_ci') else 0 for r in results]
-        ci_high = [r.get(f'{parameter}_ci', (0, 0))[1] if r.get(f'{parameter}_ci') else 0 for r in results]
-        
+        # Only use CI if it exists and is valid (not None or (0,0))
         errors = None
-        if any(ci_low) or any(ci_high):
-            errors = [[v - l for v, l in zip(values, ci_low)],
-                      [h - v for v, h in zip(values, ci_high)]]
+        has_any_ci = any(r.get(f'{parameter}_ci') is not None for r in results)
+
+        if has_any_ci:
+            lower_errors = []
+            upper_errors = []
+
+            for r, v in zip(results, values):
+                ci = r.get(f'{parameter}_ci')
+                if ci is not None and isinstance(ci, (tuple, list)) and len(ci) == 2:
+                    # Valid CI exists
+                    ci_low, ci_high = ci
+                    # Calculate error bars: distance from value to CI bounds
+                    # Ensure errors are non-negative (matplotlib requirement)
+                    lower_errors.append(max(0, v - ci_low))
+                    upper_errors.append(max(0, ci_high - v))
+                else:
+                    # No CI for this result - use 0 error
+                    lower_errors.append(0)
+                    upper_errors.append(0)
+
+            errors = [lower_errors, upper_errors]
         
         x = np.arange(len(labels))
         bars = ax.bar(x, values, yerr=errors, capsize=3, color='steelblue', alpha=0.7)
@@ -414,6 +430,10 @@ class ResultsPanel(QWidget):
             print(f"[DEBUG] First result keys: {list(results[0].keys())[:10]}...")
             print(f"[DEBUG] First result variable: {results[0].get('variable')}")
             print(f"[DEBUG] First result condition: {results[0].get('condition')}")
+            print(f"[DEBUG] First result mesor: {results[0].get('mesor')}")
+            print(f"[DEBUG] First result amplitude: {results[0].get('amplitude')}")
+            print(f"[DEBUG] First result acrophase_hours: {results[0].get('acrophase_hours')}")
+            print(f"[DEBUG] First result p_value: {results[0].get('p_value')}")
 
         self._results.extend(results)
         self._update_table()
@@ -441,45 +461,177 @@ class ResultsPanel(QWidget):
         if not self._results:
             self._results_table.setRowCount(0)
             return
-        
-        # Determine columns
-        columns = ['variable', 'condition', 'method', 'mesor', 'amplitude',
-                   'acrophase_hours', 'period', 'p_value', 'significant']
-        
+
+        # Check if we have comparison results
+        is_comparison = 'condition1' in self._results[0] and 'condition2' in self._results[0]
+
+        # Check if we have nonlinear cosinor results
+        has_nonlinear = any(r.get('amplification') is not None or r.get('lin_comp') is not None for r in self._results)
+
+        # Check if we have nonlinear comparison results
+        has_nonlinear_comparison = any(r.get('amplification_diff') is not None or r.get('lin_comp_diff') is not None for r in self._results)
+
+        # Check if we have periodogram results (Spectral Analysis - shows data)
+        has_spectral = any(r.get('periods') is not None and r.get('method') == 'spectral_analysis' for r in self._results)
+
+        # Check if we have CosinorPy periodogram (just shows message)
+        has_cosinorpy_periodogram = any(r.get('method') == 'cosinorpy_periodogram' for r in self._results)
+
+        # Determine columns based on result type
+        if is_comparison:
+            columns = ['variable', 'condition1', 'condition2', 'method', 'n_components', 'period',
+                      'p1', 'q1', 'p2', 'q2',  # Population-specific p/q values (for dependent multi-component)
+                      'amplitude_g0', 'amplitude_g1', 'amplitude_diff', 'p_amplitude', 'q_amplitude', 'amplitude_diff_ci',
+                      'acrophase_g0', 'acrophase_g1', 'acrophase_diff', 'p_acrophase', 'q_acrophase', 'acrophase_diff_ci',
+                      'mesor_g0', 'mesor_g1', 'mesor_diff', 'p_mesor', 'q_mesor', 'mesor_diff_ci',
+                      'me', 'resid_se', 'aic', 'bic']
+            headers = ['Variable', 'Cond1', 'Cond2', 'Method', 'Components', 'Period (h)',
+                      'p-Cond1', 'q-Cond1', 'p-Cond2', 'q-Cond2',  # Individual condition rhythm p/q values
+                      'Amp-1', 'Amp-2', 'Amp-Diff', 'p-Amp', 'q-Amp', 'CI-Amp',
+                      'Acro-1', 'Acro-2', 'Acro-Diff', 'p-Acro', 'q-Acro', 'CI-Acro',
+                      'MESOR-1', 'MESOR-2', 'MESOR-Diff', 'p-MESOR', 'q-MESOR', 'CI-MESOR',
+                      'ME', 'Resid-SE', 'AIC', 'BIC']
+
+            # Add nonlinear comparison columns if present
+            if has_nonlinear_comparison:
+                columns.extend(['amplification_g0', 'amplification_g1', 'amplification_diff', 'p_amplification', 'q_amplification', 'amplification_diff_ci',
+                               'lin_comp_g0', 'lin_comp_g1', 'lin_comp_diff', 'p_lin_comp', 'q_lin_comp', 'lin_comp_diff_ci'])
+                headers.extend(['Amplif-1', 'Amplif-2', 'Amplif-Diff', 'p-Amplif', 'q-Amplif', 'CI-Amplif',
+                               'LinComp-1', 'LinComp-2', 'LinComp-Diff', 'p-LinComp', 'q-LinComp', 'CI-LinComp'])
+        else:
+            # For CosinorPy periodogram, show just message
+            if has_cosinorpy_periodogram:
+                columns = ['variable', 'condition', 'method', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Status']
+            # For Spectral Analysis, show detailed periodogram data
+            elif has_spectral:
+                columns = ['variable', 'condition', 'method', 'dominant_period', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'Peaks']
+            else:
+                # Basic identification
+                columns = ['variable', 'condition', 'method', 'n_components']
+                headers = ['Variable', 'Condition', 'Method', 'Components']
+
+                # Model parameters
+                columns.extend(['mesor', 'amplitude', 'acrophase', 'acrophase_hours', 'period'])
+                headers.extend(['MESOR', 'Amplitude', 'Acrophase (rad)', 'Acrophase (h)', 'Period (h)'])
+
+                # Basic statistics (from fit_group)
+                columns.extend(['p_value', 'q_value', 'p_reject', 'q_reject'])
+                headers.extend(['p', 'q', 'p_reject', 'q_reject'])
+
+                # Fit quality metrics
+                columns.extend(['rss', 'r_squared', 'r_squared_adj', 'log_likelihood', 'aic', 'bic', 'me', 'resid_se'])
+                headers.extend(['RSS', 'R²', 'R²_adj', 'Log-Likelihood', 'AIC', 'BIC', 'ME', 'Resid-SE'])
+
+                # Confidence intervals (from analyse_best_models)
+                columns.extend(['amplitude_ci', 'acrophase_ci', 'mesor_ci'])
+                headers.extend(['CI(Amplitude)', 'CI(Acrophase)', 'CI(MESOR)'])
+
+                # p-values for parameters (from analyse_best_models)
+                columns.extend(['p_amplitude', 'p_acrophase', 'p_mesor'])
+                headers.extend(['p(Amplitude)', 'p(Acrophase)', 'p(MESOR)'])
+
+                # q-values for parameters (from analyse_best_models)
+                columns.extend(['q_amplitude', 'q_acrophase', 'q_mesor'])
+                headers.extend(['q(Amplitude)', 'q(Acrophase)', 'q(MESOR)'])
+
+                # Other
+                columns.extend(['peak_times', 'trough_times'])
+                headers.extend(['Peak Times (h)', 'Trough Times (h)'])
+
+                # Add nonlinear columns if present
+                if has_nonlinear:
+                    columns.extend(['amplification', 'p_amplification', 'lin_comp', 'p_lin_comp'])
+                    headers.extend(['Amplification', 'p-Amp', 'Lin Component', 'p-Lin'])
+
+                columns.append('significant')
+                headers.append('Significant')
+
+                # Add best_model column if any result has it
+                if any(r.get('best_model') is not None for r in self._results):
+                    columns.append('best_model')
+                    headers.append('Best Model')
+
         self._results_table.setColumnCount(len(columns))
-        self._results_table.setHorizontalHeaderLabels(
-            [c.replace('_', ' ').title() for c in columns]
-        )
-        
+        self._results_table.setHorizontalHeaderLabels(headers)
+
         # Apply filter
         filtered = self._get_filtered_results()
         self._results_table.setRowCount(len(filtered))
-        
+
         for i, result in enumerate(filtered):
             for j, col in enumerate(columns):
                 if col == 'significant':
                     p_val = result.get('p_value')
                     value = 'Yes' if (p_val is not None and p_val < 0.05) else ('No' if p_val is not None else 'N/A')
+                elif col == 'best_model':
+                    # Handle best_model column
+                    value = result.get('best_model', '')
+                    if value is None:
+                        value = ''
                 else:
                     value = result.get(col, '-')
                     if isinstance(value, float):
-                        if col == 'p_value':
+                        # Check for NaN first
+                        if math.isnan(value):
+                            value = 'N/A'
+                        elif col.startswith('p_') or col.startswith('q_') or col == 'p_value':
                             value = f'{value:.2e}' if value < 0.001 else f'{value:.4f}'
                         else:
                             value = f'{value:.3f}'
+                    elif isinstance(value, tuple) and len(value) == 2:
+                        # Format confidence intervals as [lower, upper]
+                        if value[0] is not None and value[1] is not None:
+                            value = f'[{value[0]:.3f}, {value[1]:.3f}]'
+                        else:
+                            value = 'N/A'
+                    elif isinstance(value, list):
+                        # Format lists (peak_times, trough_times) as comma-separated values
+                        if value:
+                            value = ', '.join([f'{v:.2f}' for v in value])
+                        else:
+                            value = 'N/A'
                     elif value is None:
                         value = 'N/A'
 
                 item = QTableWidgetItem(str(value))
 
-                # Color code significance
-                if col == 'p_value' or col == 'significant':
-                    p_val = result.get('p_value')
+                # Color code p-values and q-values
+                if col.startswith('p_') or col.startswith('q_') or col == 'p_value' or col == 'significant':
+                    # For comparison, check the specific p-value or q-value column
+                    if col.startswith('p_') or col.startswith('q_'):
+                        p_val = result.get(col)
+                    else:
+                        p_val = result.get('p_value')
+
                     if p_val is not None and p_val < 0.05:
                         item.setBackground(Qt.green)
-                
+
+                # Highlight best model
+                elif col == 'best_model':
+                    best_model_value = result.get('best_model', '')
+                    if best_model_value and 'Yes' in best_model_value:
+                        item.setBackground(Qt.yellow)
+                        item.setForeground(Qt.black)
+
                 self._results_table.setItem(i, j, item)
-    
+
+        # Hide columns that only contain N/A values
+        for j in range(len(columns)):
+            all_na = True
+            for i in range(len(filtered)):
+                item = self._results_table.item(i, j)
+                if item and item.text() not in ['N/A', '-', '']:
+                    all_na = False
+                    break
+
+            # Hide column if all values are N/A
+            if all_na:
+                self._results_table.setColumnHidden(j, True)
+            else:
+                self._results_table.setColumnHidden(j, False)
+
     def _get_filtered_results(self) -> List[Dict]:
         """Get filtered results based on current filter."""
         filter_idx = self._significance_filter.currentIndex()
@@ -512,27 +664,76 @@ class ResultsPanel(QWidget):
         """Update all plots."""
         if not self._results:
             return
-        
+
+        # Check if these are CosinorPy periodogram results (no plots needed)
+        is_periodogram = self._results[0].get('method') == 'cosinorpy_periodogram'
+        if is_periodogram:
+            # Clear all plots and show message
+            self._fit_canvas.clear()
+            self._polar_canvas.clear()
+            self._bar_canvas.clear()
+            self._period_canvas.clear()
+            return
+
+        # Check if these are comparison results
+        is_comparison = 'condition1' in self._results[0] and 'condition2' in self._results[0]
+
         # Update bar plot
         self._update_bar_plot()
-        
+
         # Update polar plot with all acrophases
-        acrophases = [r.get('acrophase_hours') for r in self._results if 'acrophase_hours' in r]
-        labels = [f"{r.get('variable', '')}_{r.get('condition', '')}" for r in self._results if 'acrophase_hours' in r]
-        
+        if is_comparison:
+            # For comparisons, show acrophases from both groups
+            acrophases = []
+            labels = []
+            for r in self._results:
+                # Group 0 (condition1)
+                if r.get('acrophase_g0') is not None:
+                    # Convert radians to hours
+                    acro_hours = (r.get('acrophase_g0') * 24.0) / (2 * np.pi)
+                    acrophases.append(acro_hours)
+                    labels.append(f"{r.get('variable', '')}_{r.get('condition1', '')}")
+                # Group 1 (condition2)
+                if r.get('acrophase_g1') is not None:
+                    acro_hours = (r.get('acrophase_g1') * 24.0) / (2 * np.pi)
+                    acrophases.append(acro_hours)
+                    labels.append(f"{r.get('variable', '')}_{r.get('condition2', '')}")
+        else:
+            # Regular single analysis results
+            acrophases = [r.get('acrophase_hours') for r in self._results if 'acrophase_hours' in r]
+            labels = [f"{r.get('variable', '')}_{r.get('condition', '')}" for r in self._results if 'acrophase_hours' in r]
+
         if acrophases:
             self._polar_canvas.plot_polar_acrophase(acrophases, labels)
-        
+
+        # Update periodogram if we have Spectral Analysis results (not CosinorPy periodogram)
+        spectral_results = [r for r in self._results if r.get('periods') is not None and r.get('method') == 'spectral_analysis']
+        if spectral_results:
+            self._update_periodogram_plot(spectral_results[0])
+
         # Update fit plot with first result
         if self._results:
             self._update_fit_plot(self._results[0])
     
     def _update_fit_plot(self, result: Dict):
         """Update cosinor fit plot for selected result."""
-        mesor = result.get('mesor', 0)
-        amplitude = result.get('amplitude', 0)
-        acrophase_rad = result.get('acrophase', result.get('acrophase_rad', 0))
+        # Check if this is a comparison result (has different structure)
+        is_comparison = 'condition1' in result and 'condition2' in result
+
+        if is_comparison:
+            # For comparison results, plot both conditions
+            self._plot_comparison_fit(result)
+            return
+
+        mesor = result.get('mesor')
+        amplitude = result.get('amplitude')
+        acrophase_rad = result.get('acrophase', result.get('acrophase_rad'))
         period = result.get('period', 24.0)
+
+        # Convert None to 0 for plotting
+        mesor = mesor if mesor is not None else 0
+        amplitude = amplitude if amplitude is not None else 0
+        acrophase_rad = acrophase_rad if acrophase_rad is not None else 0
 
         # Get times and values from result, or generate synthetic data
         times_data = result.get('times')
@@ -555,17 +756,156 @@ class ResultsPanel(QWidget):
             times, values, mesor, amplitude, acrophase_rad,
             period, title=variable, condition=condition
         )
-    
+
+    def _plot_comparison_fit(self, result: Dict):
+        """Plot cosinor fits for both conditions in a comparison."""
+        variable = result.get('variable', '')
+        condition1 = result.get('condition1', '')
+        condition2 = result.get('condition2', '')
+        period = result.get('period', 24.0)
+
+        # Get parameters for both groups
+        mesor_g0 = result.get('mesor_g0')
+        amplitude_g0 = result.get('amplitude_g0')
+        acrophase_g0 = result.get('acrophase_g0')
+
+        mesor_g1 = result.get('mesor_g1')
+        amplitude_g1 = result.get('amplitude_g1')
+        acrophase_g1 = result.get('acrophase_g1')
+
+        # Handle nan/None values for all parameters
+        def safe_value(val, default=0):
+            """Convert None or nan to default value."""
+            if val is None:
+                return default
+            if isinstance(val, float) and np.isnan(val):
+                return default
+            return val
+
+        mesor_g0 = safe_value(mesor_g0, 0)
+        amplitude_g0 = safe_value(amplitude_g0, 0)
+        acrophase_g0 = safe_value(acrophase_g0, 0)
+
+        mesor_g1 = safe_value(mesor_g1, 0)
+        amplitude_g1 = safe_value(amplitude_g1, 0)
+        acrophase_g1 = safe_value(acrophase_g1, 0)
+
+        # Check if we have valid data to plot
+        if amplitude_g0 == 0 and amplitude_g1 == 0:
+            # No valid amplitude data, clear and show message
+            self._fit_canvas.clear()
+            ax = self._fit_canvas.axes
+            ax.text(0.5, 0.5, 'No comparison fit data available',
+                    ha='center', va='center', transform=ax.transAxes)
+            self._fit_canvas.draw()
+            return
+
+        # Clear canvas and get axis
+        self._fit_canvas.clear()
+        ax = self._fit_canvas.axes
+
+        # Generate time points for smooth curves
+        t_fit = np.linspace(0, period, 200)
+
+        # Plot fit curve for condition 1 (group 0)
+        y_fit_g0 = mesor_g0 + amplitude_g0 * np.cos(2 * np.pi * t_fit / period - acrophase_g0)
+        ax.plot(t_fit, y_fit_g0, '-', linewidth=2.5, label=f'{condition1}', color='steelblue')
+
+        # Plot fit curve for condition 2 (group 1)
+        y_fit_g1 = mesor_g1 + amplitude_g1 * np.cos(2 * np.pi * t_fit / period - acrophase_g1)
+        ax.plot(t_fit, y_fit_g1, '-', linewidth=2.5, label=f'{condition2}', color='orangered')
+
+        # Add horizontal lines at MESORs if they are not zero
+        if mesor_g0 != 0:
+            ax.axhline(y=mesor_g0, color='steelblue', linestyle='--', alpha=0.3)
+        if mesor_g1 != 0:
+            ax.axhline(y=mesor_g1, color='orangered', linestyle='--', alpha=0.3)
+
+        # Labels and legend
+        ax.set_xlabel('Time (hours)')
+        ax.set_ylabel('Expression')
+        ax.set_title(f'{variable} - Comparison: {condition1} vs {condition2}')
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+
+        self._fit_canvas.fig.tight_layout()
+        self._fit_canvas.draw()
+
+    def _update_periodogram_plot(self, result: Dict):
+        """Update periodogram plot for selected result."""
+        periods = result.get('periods')
+        power = result.get('power_spectrum')
+        dominant_period = result.get('dominant_period')
+        threshold = result.get('threshold')
+
+        if periods is None or power is None:
+            return
+
+        # Clear and plot
+        self._period_canvas.clear()
+        ax = self._period_canvas.axes
+
+        # Plot power spectrum
+        ax.plot(periods, power, 'b-', linewidth=1, label='Power')
+
+        # Plot significance threshold
+        if threshold is not None:
+            ax.axhline(y=threshold, color='red', linestyle='--',
+                      linewidth=1, label=f'Threshold (p=0.05)')
+
+        # Mark dominant period
+        if dominant_period is not None:
+            ax.axvline(x=dominant_period, color='green', linestyle='--',
+                      linewidth=2, label=f'Peak: {dominant_period:.1f}h')
+
+        ax.set_xlabel('Period (hours)')
+        ax.set_ylabel('Power')
+
+        variable = result.get('variable', '')
+        condition = result.get('condition', '')
+        ax.set_title(f'Periodogram - {variable} ({condition})')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        self._period_canvas.fig.tight_layout()
+        self._period_canvas.draw()
+
     def _update_bar_plot(self):
         """Update bar parameter plot."""
         if not self._results:
             return
-        
+
+        # Check if these are comparison results
+        is_comparison = 'condition1' in self._results[0] and 'condition2' in self._results[0]
+
         param = self._bar_param_combo.currentText()
-        self._bar_canvas.plot_bar_parameters(
-            self._results, parameter=param,
-            title=f'{param.replace("_", " ").title()} Across Conditions'
-        )
+
+        if is_comparison:
+            # For comparisons, create a modified results list with both groups
+            bar_results = []
+            for r in self._results:
+                # Add group 0 result
+                bar_results.append({
+                    'variable': r.get('variable', ''),
+                    'condition': r.get('condition1', ''),
+                    param: r.get(f'{param}_g0')
+                })
+                # Add group 1 result
+                bar_results.append({
+                    'variable': r.get('variable', ''),
+                    'condition': r.get('condition2', ''),
+                    param: r.get(f'{param}_g1')
+                })
+            self._bar_canvas.plot_bar_parameters(
+                bar_results, parameter=param,
+                title=f'{param.replace("_", " ").title()} Comparison'
+            )
+        else:
+            # Regular single analysis
+            self._bar_canvas.plot_bar_parameters(
+                self._results, parameter=param,
+                title=f'{param.replace("_", " ").title()} Across Conditions'
+            )
     
     # =========================================================================
     # EXPORT

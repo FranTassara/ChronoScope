@@ -74,9 +74,9 @@ class CircadianDataLoader:
     """
     
     # Common column name patterns for auto-detection
-    TIME_PATTERNS = ['time', 'zeit', 'zt', 'ct', 'hour', 'hours', 't', 'timepoint']
+    TIME_PATTERNS = ['time', 'zeit', 'zt', 'ct', 'hour', 'hours', 'timepoint']
     CONDITION_PATTERNS = ['condition', 'group', 'treatment', 'genotype', 'sample', 'cond']
-    REPLICATE_PATTERNS = ['replicate', 'rep', 'replica', 'n', 'repeat']
+    REPLICATE_PATTERNS = ['replicate', 'rep', 'replica', 'repeat']  # Removed 'n' - too generic
     SUBJECT_PATTERNS = ['subject', 'subj', 'animal', 'mouse', 'fly', 'individual', 'id']
     
     def __init__(self):
@@ -100,35 +100,47 @@ class CircadianDataLoader:
     ) -> pd.DataFrame:
         """
         Load a CSV file and perform initial analysis.
-        
+
         Args:
             filepath: Path to the CSV file
-            separator: Column separator
+            separator: Column separator (if ',', will auto-detect between ',' and ';')
             encoding: File encoding
-        
+
         Returns:
             Loaded DataFrame
-        
+
         Raises:
             FileNotFoundError: If file doesn't exist
             ValueError: If file cannot be parsed
         """
         try:
-            self._raw_data = pd.read_csv(
-                filepath,
-                sep=separator,
-                encoding=encoding
-            )
+            # Auto-detect separator if default comma is used
+            if separator == ',':
+                # Try semicolon first
+                try:
+                    self._raw_data = pd.read_csv(filepath, sep=';', encoding=encoding)
+                    # If only one column, separator is probably comma
+                    if len(self._raw_data.columns) == 1:
+                        self._raw_data = pd.read_csv(filepath, sep=',', encoding=encoding)
+                except:
+                    self._raw_data = pd.read_csv(filepath, sep=',', encoding=encoding)
+            else:
+                # Use specified separator
+                self._raw_data = pd.read_csv(
+                    filepath,
+                    sep=separator,
+                    encoding=encoding
+                )
             self._filepath = filepath
         except Exception as e:
             raise ValueError(f"Failed to load CSV: {e}")
-        
+
         # Auto-detect columns
         self._auto_detect_columns()
-        
+
         # Generate dataset info
         self._generate_dataset_info()
-        
+
         return self._raw_data.copy()
     
     def load_dataframe(self, df: pd.DataFrame, name: str = "dataframe") -> pd.DataFrame:

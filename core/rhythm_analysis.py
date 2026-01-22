@@ -82,6 +82,7 @@ class AnalysisMethod(Enum):
     HARMONIC_COSINOR = "Harmonic-Cosinor"
     FOURIER_F24 = "Fourier-F24"
     LOMB_SCARGLE = "Lomb-Scargle"
+    SPECTRAL_ANALYSIS = "Spectral-Analysis"
     CWT = "CWT"
     LME = "LME"
 
@@ -1977,7 +1978,150 @@ class RhythmAnalyzer:
             df = self._raw_data.copy()
         
         return _fit_lme_model(df, dependent, fixed_effects, random_effect)
-    
+
+    def run_spectral_analysis(
+        self,
+        variable: str,
+        condition: str,
+        per_type: str = 'per',
+        max_per: float = 240.0,
+        prominent: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Run spectral analysis (periodogram) to identify dominant periods.
+
+        This is an improved implementation that returns data for interactive
+        visualization, unlike CosinorPy's periodogram which only generates plots.
+
+        Uses scipy.signal for spectral analysis:
+        - 'per': Standard FFT periodogram (for evenly sampled data)
+        - 'welch': Welch's method (averaged periodogram, good for noisy data)
+        - 'lombscargle': Lomb-Scargle (for unevenly sampled data or with replicates)
+
+        Significance threshold based on Refinetti et al. 2007.
+
+        Args:
+            variable: Name of the variable to analyze
+            condition: Condition to analyze
+            per_type: Type of periodogram ('per', 'welch', or 'lombscargle')
+            max_per: Maximum period to consider (in hours)
+            prominent: Whether to identify prominent peaks
+
+        Returns:
+            Dictionary with:
+                - periods: Array of period values
+                - power: Array of power spectral density values
+                - dominant_period: Period with highest power
+                - threshold: Significance threshold
+                - significant_peaks: List of significant periods
+        """
+        from scipy import signal
+
+        if self._raw_data is None:
+            raise ValueError("No data loaded. Call load_csv() or load_dataframe() first.")
+
+        # Extract data for this variable and condition
+        if condition is not None:
+            subset = self._raw_data[self._raw_data[self._condition_col] == condition]
+        else:
+            subset = self._raw_data.copy()
+
+        X = subset[self._time_col].values
+        Y = subset[variable].values
+
+        # Calculate periodogram based on type
+        if per_type == 'per':
+            # For standard periodogram, need evenly sampled data
+            X_u = np.unique(X)
+            Y_u = []
+            for x_u in X_u:
+                Y_u.append(np.median(Y[x_u == X]))
+
+            if len(X_u) > 1:
+                time_diffs = np.diff(X_u)
+                sampling_interval = np.median(time_diffs)
+                sampling_f = 1 / sampling_interval
+            else:
+                raise ValueError("Need at least 2 time points for periodogram")
+
+            f, Pxx_den = signal.periodogram(Y_u, sampling_f)
+
+        elif per_type == 'welch':
+            # Welch's method also needs evenly sampled data
+            X_u = np.unique(X)
+            Y_u = []
+            for x_u in X_u:
+                Y_u.append(np.median(Y[x_u == X]))
+
+            if len(X_u) > 1:
+                time_diffs = np.diff(X_u)
+                sampling_interval = np.median(time_diffs)
+                sampling_f = 1 / sampling_interval
+            else:
+                raise ValueError("Need at least 2 time points for periodogram")
+
+            f, Pxx_den = signal.welch(Y_u, sampling_f)
+
+        elif per_type == 'lombscargle':
+            # Lomb-Scargle can handle uneven sampling and replicates
+            min_per = 2
+            f = np.linspace(1/max_per, 1/min_per, 1000)
+            Pxx_den = signal.lombscargle(X, Y, f)
+        else:
+            raise ValueError(f"Invalid periodogram type: {per_type}")
+
+        # Convert frequency to period
+        if f[0] == 0:
+            per = 1 / f[1:]
+            Pxx = Pxx_den[1:]
+        else:
+            per = 1 / f
+            Pxx = Pxx_den
+
+        # Filter to max_per
+        Pxx = Pxx[per <= max_per]
+        per = per[per <= max_per]
+
+        # Calculate significance threshold (Refinetti et al. 2007)
+        p_t = 0.05
+        N = len(Y_u) if per_type in ['per', 'welch'] else len(Y)
+        T = (1 - (p_t/N)**(1/(N-1))) * sum(Pxx_den)
+
+        result = {
+            'periods': per,
+            'power': Pxx,
+            'threshold': T
+        }
+
+        # Find prominent peaks if requested
+        if prominent:
+            # Always identify the dominant period (highest power)
+            max_idx = np.argmax(Pxx)
+            dominant_per = per[max_idx]
+            result['dominant_period'] = float(dominant_per)
+
+            # Find significant peaks
+            if len(Pxx) < 10:
+                # For sparse data, identify periods above threshold
+                significant_indices = np.where(Pxx > T)[0]
+                if len(significant_indices) > 0:
+                    result['significant_peaks'] = [float(per[i]) for i in significant_indices]
+                else:
+                    result['significant_peaks'] = []
+            else:
+                # For denser data, use proper peak detection
+                locs, heights = signal.find_peaks(Pxx, height=T)
+                if len(locs) > 0:
+                    heights = heights['peak_heights']
+                    s = list(zip(heights, locs))
+                    s.sort(reverse=True)
+                    heights_sorted, locs_sorted = zip(*s)
+                    result['significant_peaks'] = [float(per[loc]) for loc in locs_sorted]
+                else:
+                    result['significant_peaks'] = []
+
+        return result
+
     # =========================================================================
     # BATCH ANALYSIS METHODS
     # =========================================================================

@@ -32,13 +32,16 @@ class AnalysisCategory(Enum):
 
 class AnalysisMethod(Enum):
     """Available analysis methods."""
-    # CosinorPy methods
-    COSINORPY_SINGLE = "CosinorPy: Single Cosinor"
-    COSINORPY_MULTI = "CosinorPy: Multi-Component"
-    COSINORPY_POPULATION = "CosinorPy: Population Mean"
-    COSINORPY_COMPARE = "CosinorPy: Compare Conditions"
-    COSINORPY_COUNT = "CosinorPy: Count Data"
-    COSINORPY_NONLINEAR = "CosinorPy: Nonlinear Cosinor"
+    # CosinorPy methods - New Refactored
+    COSINORPY_PERIODOGRAM = "CosinorPy: Periodogram Analysis"
+    COSINORPY_INDEPENDENT = "CosinorPy: Cosinor (Independent Data)"
+    COSINORPY_DEPENDENT = "CosinorPy: Cosinor (Dependent Data)"
+    COSINORPY_COMPARE_INDEPENDENT = "CosinorPy: Compare Conditions (Independent)"
+    COSINORPY_COMPARE_DEPENDENT = "CosinorPy: Compare Conditions (Dependent)"
+    COSINORPY_NONLINEAR_INDEPENDENT = "CosinorPy: Nonlinear (Independent Data)"
+    COSINORPY_NONLINEAR_DEPENDENT = "CosinorPy: Nonlinear (Dependent Data)"
+    COSINORPY_NONLINEAR_COMPARE_INDEPENDENT = "CosinorPy: Nonlinear Compare (Independent)"
+    COSINORPY_NONLINEAR_COMPARE_DEPENDENT = "CosinorPy: Nonlinear Compare (Dependent)"
 
     # CircaCompare methods
     CIRCACOMPARE_SINGLE = "CircaCompare: Single Fit"
@@ -52,6 +55,7 @@ class AnalysisMethod(Enum):
     RHYTHM_HARMONIC = "Harmonic Cosinor"
     RHYTHM_F24 = "Fourier F24"
     RHYTHM_LOMB = "Lomb-Scargle"
+    RHYTHM_SPECTRAL = "Spectral Analysis (Periodogram)"
     RHYTHM_CWT = "Wavelet (CWT)"
     RHYTHM_LME = "Linear Mixed Effects"
 
@@ -70,6 +74,8 @@ class AnalysisWorker(QThread):
     """Worker thread for running analyses."""
     finished = Signal(bool, object, str)  # success, results, message
     progress = Signal(int, str)  # percentage, status message
+    period_detected = Signal(float, float)  # detected_period, p_value
+    components_detected = Signal(int, float)  # detected_n_components, p_value
 
     def __init__(self, config: AnalysisConfig, loader, source_type: str):
         super().__init__()
@@ -77,6 +83,8 @@ class AnalysisWorker(QThread):
         self.loader = loader
         self.source_type = source_type
         self.results = []
+        self.detected_period = None
+        self.detected_n_components = None
 
     def run(self):
         try:
@@ -97,37 +105,177 @@ class AnalysisWorker(QThread):
                 time_col = 'time'
                 condition_col = 'condition'
 
+            # TODO: Auto-period detection needs to be reimplemented for refactored architecture
+            # The old periodogram method signature is incompatible with the new refactored version
+            # Auto-detect optimal period if requested (only for CosinorPy methods)
+            # if self.config.parameters.get('auto_period', False) and self.source_type == 'csv':
+            #     self.progress.emit(10, "Auto-detecting optimal period...")
+            #     # ... old code commented out ...
+
             # Map UI method to engine AnalysisType
             analysis_type = self._map_method_to_type(self.config.method)
 
             total = len(self.config.variables) * len(self.config.conditions)
             current = 0
 
-            for var in self.config.variables:
-                for cond in self.config.conditions:
+            # Check if this is a pairwise comparison analysis (2 conditions)
+            if self.config.compare_conditions:
+                # This is a pairwise comparison - use run_comparison
+                cond1, cond2 = self.config.compare_conditions
+                total = len(self.config.variables)
+                current = 0
+
+                for var in self.config.variables:
                     self.progress.emit(
                         int(current / total * 100),
-                        f"Analyzing {var} in {cond}..."
+                        f"Comparing {var}: {cond1} vs {cond2}..."
                     )
 
                     if self.source_type == 'csv':
-                        result = engine.run_analysis(
-                            data, var, cond, analysis_type,
+                        # Get CSV file path from loader for saving plots
+                        csv_path = getattr(self.loader, '_filepath', None)
+                        result = engine.run_comparison(
+                            data, var, cond1, cond2, analysis_type,
                             time_col=time_col,
                             condition_col=condition_col,
-                            parameters=self.config.parameters
+                            parameters=self.config.parameters,
+                            data_file_path=csv_path
                         )
                     else:  # rosbash
                         # For Rosbash, need special handling
-                        result = self._run_rosbash_analysis(var, cond, analysis_type)
+                        result = None  # TODO: implement rosbash comparison
 
                     if result and result.success:
                         self.results.append(result.to_dict())
                     elif result:
-                        # Include failed results with error message
                         self.results.append(result.to_dict())
 
                     current += 1
+
+            # Special handling for Compare Conditions (all pairs) - Independent and Dependent
+            elif analysis_type in (AnalysisType.COSINORPY_COMPARE_INDEPENDENT,
+                                  AnalysisType.COSINORPY_COMPARE_DEPENDENT,
+                                  AnalysisType.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT,
+                                  AnalysisType.COSINORPY_NONLINEAR_COMPARE_DEPENDENT):
+                # Compare all conditions - run ONCE per variable (not per condition)
+                total = len(self.config.variables)
+                current = 0
+
+                for var in self.config.variables:
+                    self.progress.emit(
+                        int(current / total * 100),
+                        f"Comparing all conditions for {var}..."
+                    )
+
+                    if self.source_type == 'csv':
+                        # Get CSV file path from loader for saving plots
+                        csv_path = getattr(self.loader, '_filepath', None)
+
+                        # Use first condition as placeholder (engine will use all conditions)
+                        result = engine.run_analysis(
+                            data, var, self.config.conditions[0], analysis_type,
+                            time_col=time_col,
+                            condition_col=condition_col,
+                            parameters=self.config.parameters,
+                            data_file_path=csv_path
+                        )
+                    else:  # rosbash
+                        # For Rosbash, need special handling
+                        result = None  # TODO: implement rosbash comparison
+
+                    # Handle both single result and list of results
+                    if result:
+                        if isinstance(result, list):
+                            # Multiple comparison results (multiple pairs)
+                            for res in result:
+                                self.results.append(res.to_dict() if hasattr(res, 'to_dict') else res)
+                        else:
+                            # Single result
+                            self.results.append(result.to_dict() if hasattr(result, 'to_dict') else result)
+
+                    current += 1
+
+                self.progress.emit(100, "Complete")
+
+            # Special handling for Periodogram - run once for all selected variables/conditions
+            elif analysis_type == AnalysisType.COSINORPY_PERIODOGRAM:
+                self.progress.emit(10, "Generating periodograms...")
+
+                if self.source_type == 'csv':
+                    # Get CSV file path from loader for saving plots
+                    csv_path = getattr(self.loader, '_filepath', None)
+
+                    # Call periodogram with ALL selected variables and conditions
+                    result = engine.run_analysis(
+                        data,
+                        variable=None,  # Signal to use all selected variables
+                        condition=None,  # Signal to use all selected conditions
+                        analysis_type=analysis_type,
+                        time_col=time_col,
+                        condition_col=condition_col,
+                        parameters={
+                            **self.config.parameters,
+                            'selected_variables': self.config.variables,
+                            'selected_conditions': self.config.conditions
+                        },
+                        data_file_path=csv_path
+                    )
+
+                    if result and result.success:
+                        self.results.append(result.to_dict())
+                    elif result:
+                        self.results.append(result.to_dict())
+                else:
+                    # Rosbash not supported for periodogram
+                    pass
+
+                self.progress.emit(100, "Complete")
+
+            else:
+                # Regular single analysis
+                for var in self.config.variables:
+                    for cond in self.config.conditions:
+                        self.progress.emit(
+                            int(current / total * 100),
+                            f"Analyzing {var} in {cond}..."
+                        )
+
+                        if self.source_type == 'csv':
+                            # Get CSV file path from loader for saving plots
+                            csv_path = getattr(self.loader, '_filepath', None)
+                            result = engine.run_analysis(
+                                data, var, cond, analysis_type,
+                                time_col=time_col,
+                                condition_col=condition_col,
+                                parameters=self.config.parameters,
+                                data_file_path=csv_path
+                            )
+                        else:  # rosbash
+                            # For Rosbash, need special handling
+                            result = self._run_rosbash_analysis(var, cond, analysis_type)
+
+                        # Handle both single result and list of results (for multiple periods)
+                        if result:
+                            if isinstance(result, list):
+                                # Multiple results (e.g., multiple periods tested)
+                                for res in result:
+                                    if res.success:
+                                        self.results.append(res.to_dict())
+                            else:
+                                # Single result
+                                if result.success:
+                                    self.results.append(result.to_dict())
+
+                                    # Check if auto-components was used and emit signal
+                                    if self.config.parameters.get('auto_components', False) and result.n_components is not None:
+                                        self.detected_n_components = result.n_components
+                                        self.components_detected.emit(result.n_components, result.p_value or 0.0)
+                                        print(f"[DEBUG Worker] Auto-components detected: {result.n_components} components, p-value: {result.p_value}")
+                        elif result:
+                            # Include failed results with error message
+                            self.results.append(result.to_dict())
+
+                        current += 1
 
             self.progress.emit(100, "Complete")
             self.finished.emit(True, self.results, "Analysis completed successfully")
@@ -142,14 +290,20 @@ class AnalysisWorker(QThread):
         from core.analysis_engine import AnalysisType
 
         mapping = {
-            AnalysisMethod.COSINORPY_SINGLE: AnalysisType.COSINORPY_SINGLE,
-            AnalysisMethod.COSINORPY_MULTI: AnalysisType.COSINORPY_MULTI,
-            AnalysisMethod.COSINORPY_POPULATION: AnalysisType.COSINORPY_POPULATION,
-            AnalysisMethod.COSINORPY_COMPARE: AnalysisType.COSINORPY_COMPARE,
-            AnalysisMethod.COSINORPY_COUNT: AnalysisType.COSINORPY_COUNT,
-            AnalysisMethod.COSINORPY_NONLINEAR: AnalysisType.COSINORPY_NONLINEAR,
+            # CosinorPy - New Refactored Methods
+            AnalysisMethod.COSINORPY_PERIODOGRAM: AnalysisType.COSINORPY_PERIODOGRAM,
+            AnalysisMethod.COSINORPY_INDEPENDENT: AnalysisType.COSINORPY_INDEPENDENT,
+            AnalysisMethod.COSINORPY_DEPENDENT: AnalysisType.COSINORPY_DEPENDENT,
+            AnalysisMethod.COSINORPY_COMPARE_INDEPENDENT: AnalysisType.COSINORPY_COMPARE_INDEPENDENT,
+            AnalysisMethod.COSINORPY_COMPARE_DEPENDENT: AnalysisType.COSINORPY_COMPARE_DEPENDENT,
+            AnalysisMethod.COSINORPY_NONLINEAR_INDEPENDENT: AnalysisType.COSINORPY_NONLINEAR_INDEPENDENT,
+            AnalysisMethod.COSINORPY_NONLINEAR_DEPENDENT: AnalysisType.COSINORPY_NONLINEAR_DEPENDENT,
+            AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT: AnalysisType.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT,
+            AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_DEPENDENT: AnalysisType.COSINORPY_NONLINEAR_COMPARE_DEPENDENT,
+            # CircaCompare
             AnalysisMethod.CIRCACOMPARE_SINGLE: AnalysisType.CIRCACOMPARE_SINGLE,
             AnalysisMethod.CIRCACOMPARE_COMPARE: AnalysisType.CIRCACOMPARE_COMPARE,
+            # Rhythm Analysis
             AnalysisMethod.RHYTHM_JTK: AnalysisType.JTK,
             AnalysisMethod.RHYTHM_AR_JTK: AnalysisType.AR_JTK,
             AnalysisMethod.RHYTHM_COSINE_KENDALL: AnalysisType.COSINE_KENDALL,
@@ -157,10 +311,11 @@ class AnalysisWorker(QThread):
             AnalysisMethod.RHYTHM_HARMONIC: AnalysisType.HARMONIC_COSINOR,
             AnalysisMethod.RHYTHM_F24: AnalysisType.FOURIER_F24,
             AnalysisMethod.RHYTHM_LOMB: AnalysisType.LOMB_SCARGLE,
+            AnalysisMethod.RHYTHM_SPECTRAL: AnalysisType.SPECTRAL_ANALYSIS,
             AnalysisMethod.RHYTHM_CWT: AnalysisType.CWT,
             AnalysisMethod.RHYTHM_LME: AnalysisType.LME,
         }
-        return mapping.get(method, AnalysisType.COSINORPY_SINGLE)
+        return mapping.get(method, AnalysisType.COSINORPY_PERIODOGRAM)
 
     def _run_rosbash_analysis(self, gene: str, condition: str, analysis_type):
         """Run analysis on Rosbash data (placeholder for now)."""
@@ -228,7 +383,11 @@ class AnalysisPanel(QWidget):
         # Method selection
         method_group = self._create_method_selection()
         layout.addWidget(method_group)
-        
+
+        # Data type info panel - REMOVED to save space
+        # self._data_info_frame = self._create_data_info_panel()
+        # layout.addWidget(self._data_info_frame)
+
         # Data selection
         data_group = self._create_data_selection()
         layout.addWidget(data_group)
@@ -247,11 +406,14 @@ class AnalysisPanel(QWidget):
         """Create method selection group."""
         group = QGroupBox("Analysis Method")
         layout = QVBoxLayout(group)
-        
-        # Module selection
-        module_layout = QHBoxLayout()
+
+        # Module and Method selection side by side
+        selection_layout = QHBoxLayout()
+
+        # Module selection (left side)
+        module_layout = QVBoxLayout()
         module_layout.addWidget(QLabel("Module:"))
-        
+
         self._module_combo = QComboBox()
         self._module_combo.addItems([
             "CosinorPy",
@@ -259,29 +421,69 @@ class AnalysisPanel(QWidget):
             "Rhythm Analysis"
         ])
         self._module_combo.currentIndexChanged.connect(self._on_module_changed)
-        module_layout.addWidget(self._module_combo, 1)
-        layout.addLayout(module_layout)
-        
-        # Method selection
-        method_layout = QHBoxLayout()
+        module_layout.addWidget(self._module_combo)
+
+        selection_layout.addLayout(module_layout)
+
+        # Method selection (right side)
+        method_layout = QVBoxLayout()
         method_layout.addWidget(QLabel("Method:"))
-        
+
         self._method_combo = QComboBox()
         self._method_combo.currentIndexChanged.connect(self._on_method_changed)
-        method_layout.addWidget(self._method_combo, 1)
-        layout.addLayout(method_layout)
-        
-        # Method description
+        method_layout.addWidget(self._method_combo)
+
+        selection_layout.addLayout(method_layout)
+
+        layout.addLayout(selection_layout)
+
+        # Method description (below both dropdowns)
         self._method_desc = QLabel("")
         self._method_desc.setWordWrap(True)
         self._method_desc.setStyleSheet("color: gray; font-style: italic;")
         layout.addWidget(self._method_desc)
-        
+
         # Initialize methods
         self._on_module_changed(0)
-        
+
         return group
-    
+
+    def _create_data_info_panel(self) -> QFrame:
+        """Create informational panel about data type and method recommendations."""
+        frame = QFrame()
+        frame.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: #E8F5E9;
+                border: 1px solid #4CAF50;
+                border-radius: 4px;
+                padding: 8px;
+            }
+        """)
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+
+        # Title
+        title = QLabel("📊 Data Type Information")
+        title.setStyleSheet("font-weight: bold; color: #2E7D32;")
+        layout.addWidget(title)
+
+        # Data type detection label
+        self._data_type_label = QLabel("No data loaded")
+        self._data_type_label.setWordWrap(True)
+        self._data_type_label.setStyleSheet("color: #1B5E20;")
+        layout.addWidget(self._data_type_label)
+
+        # Method recommendation label
+        self._method_recommendation_label = QLabel("")
+        self._method_recommendation_label.setWordWrap(True)
+        self._method_recommendation_label.setStyleSheet("color: #1B5E20; font-style: italic;")
+        layout.addWidget(self._method_recommendation_label)
+
+        frame.setVisible(False)  # Hidden by default until data is loaded
+        return frame
+
     def _create_data_selection(self) -> QGroupBox:
         """Create data/variable selection group."""
         group = QGroupBox("Data Selection")
@@ -461,40 +663,126 @@ class AnalysisPanel(QWidget):
             item = self._params_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        
-        # Period
-        self._period_spin = QDoubleSpinBox()
-        self._period_spin.setRange(1, 72)
-        self._period_spin.setValue(24.0)
-        self._period_spin.setSuffix(" hours")
-        self._params_layout.addRow("Period:", self._period_spin)
-        
-        # Number of components
-        self._components_spin = QSpinBox()
-        self._components_spin.setRange(1, 6)
-        self._components_spin.setValue(1)
-        self._params_layout.addRow("Components:", self._components_spin)
-        
-        # Period range (for methods that search)
+
+        # Number of components (comma-separated list)
+        self._components_edit = QLineEdit()
+        self._components_edit.setText("1")
+        self._components_edit.setPlaceholderText("e.g., 1 or 1,2,3")
+        self._components_edit.setToolTip(
+            "Components to test (comma-separated).\n\n"
+            "• Single component: Enter '1'\n"
+            "• Multiple components: Enter '1,2,3' to test models with 1, 2, and 3 components\n"
+            "• CosinorPy will select the best model based on the chosen criterium"
+        )
+        # Connect signal to update comparison parameters when components change
+        self._components_edit.textChanged.connect(self._on_components_changed)
+
+        components_label = QLabel("Components:")
+        components_label.setToolTip(
+            "Components to test (comma-separated).\n\n"
+            "• Single component: Enter '1'\n"
+            "• Multiple components: Enter '1,2,3' to test models with 1, 2, and 3 components\n"
+            "• CosinorPy will select the best model based on the chosen criterium"
+        )
+        self._params_layout.addRow(components_label, self._components_edit)
+
+        # Period range
+        # Note: If min == max, this is a single period. If min != max, it's a range.
         period_range_widget = QWidget()
         pr_layout = QHBoxLayout(period_range_widget)
         pr_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self._period_min_spin = QDoubleSpinBox()
-        self._period_min_spin.setRange(1, 48)
-        self._period_min_spin.setValue(20.0)
+        self._period_min_spin.setRange(1, 72)
+        self._period_min_spin.setValue(24.0)
+        self._period_min_spin.setSuffix(" h")
+        self._period_min_spin.valueChanged.connect(self._on_period_changed)
         pr_layout.addWidget(self._period_min_spin)
-        
+
         pr_layout.addWidget(QLabel("to"))
-        
+
         self._period_max_spin = QDoubleSpinBox()
-        self._period_max_spin.setRange(1, 48)
-        self._period_max_spin.setValue(28.0)
+        self._period_max_spin.setRange(1, 72)
+        self._period_max_spin.setValue(24.0)
+        self._period_max_spin.setSuffix(" h")
+        self._period_max_spin.valueChanged.connect(self._on_period_changed)
         pr_layout.addWidget(self._period_max_spin)
-        
-        pr_layout.addWidget(QLabel("hours"))
-        self._params_layout.addRow("Period Range:", period_range_widget)
-        
+
+        pr_layout.addWidget(QLabel("step"))
+
+        self._period_step_spin = QDoubleSpinBox()
+        self._period_step_spin.setRange(0.1, 10.0)
+        self._period_step_spin.setValue(1.0)
+        self._period_step_spin.setSingleStep(0.1)
+        self._period_step_spin.setDecimals(1)
+        self._period_step_spin.setSuffix(" h")
+        self._period_step_spin.setToolTip(
+            "Step size for period range.\n\n"
+            "• Step = 1.0: Test every hour (e.g., 20, 21, 22, ...)\n"
+            "• Step = 2.0: Test every 2 hours (e.g., 20, 22, 24, ...)\n"
+            "• Step = 0.5: Test every half hour (e.g., 20.0, 20.5, 21.0, ...)\n"
+            "• Larger steps = faster analysis, smaller steps = higher resolution"
+        )
+        self._period_step_spin.valueChanged.connect(self._on_period_changed)
+        pr_layout.addWidget(self._period_step_spin)
+
+        period_range_label = QLabel("Period:")
+        period_range_label.setToolTip(
+            "Period to test (in hours).\n\n"
+            "• Single period: Set both values equal (e.g., 24 to 24)\n"
+            "• Multiple periods: Set different values (e.g., 20 to 28)\n"
+            "  → CosinorPy will test all periods in range and select best fit"
+        )
+        self._params_layout.addRow(period_range_label, period_range_widget)
+
+        # Period per condition (for Independent Models with exactly 2 conditions)
+        # Create widgets for period1 and period2
+        period_per_cond_widget = QWidget()
+        ppc_layout = QVBoxLayout(period_per_cond_widget)
+        ppc_layout.setContentsMargins(0, 0, 0, 0)
+        ppc_layout.setSpacing(4)
+
+        # Period for condition 1
+        period1_row = QWidget()
+        p1_layout = QHBoxLayout(period1_row)
+        p1_layout.setContentsMargins(0, 0, 0, 0)
+        self._period_cond1_label = QLabel("Period for Condition 1:")
+        self._period_cond1_spin = QDoubleSpinBox()
+        self._period_cond1_spin.setRange(1, 72)
+        self._period_cond1_spin.setValue(24.0)
+        self._period_cond1_spin.setSuffix(" h")
+        p1_layout.addWidget(self._period_cond1_label)
+        p1_layout.addWidget(self._period_cond1_spin)
+        ppc_layout.addWidget(period1_row)
+
+        # Period for condition 2
+        period2_row = QWidget()
+        p2_layout = QHBoxLayout(period2_row)
+        p2_layout.setContentsMargins(0, 0, 0, 0)
+        self._period_cond2_label = QLabel("Period for Condition 2:")
+        self._period_cond2_spin = QDoubleSpinBox()
+        self._period_cond2_spin.setRange(1, 72)
+        self._period_cond2_spin.setValue(24.0)
+        self._period_cond2_spin.setSuffix(" h")
+        p2_layout.addWidget(self._period_cond2_label)
+        p2_layout.addWidget(self._period_cond2_spin)
+        ppc_layout.addWidget(period2_row)
+
+        self._period_per_cond_label = QLabel("Periods:")
+        self._params_layout.addRow(self._period_per_cond_label, period_per_cond_widget)
+
+        # Info message for >2 conditions
+        self._period_multi_cond_info = QLabel(
+            "ℹ️ Using default period (24h) for all conditions.\n"
+            "Period selection is only available when comparing exactly 2 conditions."
+        )
+        self._period_multi_cond_info.setWordWrap(True)
+        self._period_multi_cond_info.setStyleSheet(
+            "color: #555; font-style: italic; font-size: 9px; "
+            "background-color: #f0f0f0; padding: 6px; border-radius: 3px;"
+        )
+        self._params_layout.addRow("", self._period_multi_cond_info)
+
         # Loss function (for CircaCompare)
         self._loss_combo = QComboBox()
         self._loss_combo.addItems(['linear', 'soft_l1', 'huber', 'cauchy', 'arctan'])
@@ -526,10 +814,518 @@ class AnalysisPanel(QWidget):
         self._permutations_spin.setValue(1000)
         self._permutations_spin.setSingleStep(100)
         self._params_layout.addRow("Permutations:", self._permutations_spin)
-        
+
+        # Amplification (for Nonlinear Cosinor)
+        self._amplification_spin = QDoubleSpinBox()
+        self._amplification_spin.setRange(-0.2, 0.2)
+        self._amplification_spin.setValue(0.0)
+        self._amplification_spin.setSingleStep(0.01)
+        self._amplification_spin.setDecimals(3)
+        self._amplification_spin.setSpecialValueText("Auto")
+        self._amplification_spin.setToolTip(
+            "Amplification coefficient for non-linear cosinor:\n"
+            "- Negative values: damped oscillation (amplitude decreases over time)\n"
+            "- Positive values: forced oscillation (amplitude increases over time)\n"
+            "- Zero (Auto): automatically estimated from data"
+        )
+        self._params_layout.addRow("Amplification:", self._amplification_spin)
+
+        # Linear component (for Nonlinear Cosinor)
+        self._lin_comp_spin = QDoubleSpinBox()
+        self._lin_comp_spin.setRange(-2.0, 2.0)
+        self._lin_comp_spin.setValue(0.0)
+        self._lin_comp_spin.setSingleStep(0.1)
+        self._lin_comp_spin.setDecimals(3)
+        self._lin_comp_spin.setSpecialValueText("Auto")
+        self._lin_comp_spin.setToolTip(
+            "Linear trend component for non-linear cosinor:\n"
+            "- Positive: increasing baseline trend\n"
+            "- Negative: decreasing baseline trend\n"
+            "- Zero (Auto): automatically estimated from data"
+        )
+        self._params_layout.addRow("Linear Component:", self._lin_comp_spin)
+
+        # Use dependent model (for Nonlinear Cosinor comparison)
+        self._use_dependent_model_check = QCheckBox("Use dependent (shared period) model")
+        self._use_dependent_model_check.setChecked(False)
+        self._use_dependent_model_check.setToolTip(
+            "For independent data comparison:\n"
+            "- Unchecked: Independent model (each group has its own period)\n"
+            "- Checked: Dependent model (both groups share the same period)"
+        )
+        self._params_layout.addRow("", self._use_dependent_model_check)
+
+        # Periodogram type (for Periodogram)
+        self._per_type_combo = QComboBox()
+        self._per_type_combo.addItems(['per', 'welch', 'lombscargle'])
+        self._per_type_combo.setToolTip(
+            "Type of periodogram:\n"
+            "- per: Standard FFT periodogram\n"
+            "- welch: Welch's method (averaged periodogram)\n"
+            "- lombscargle: Lomb-Scargle (for unevenly sampled data)"
+        )
+        self._params_layout.addRow("Periodogram Type:", self._per_type_combo)
+
+        # Max period (for Periodogram)
+        self._max_per_spin = QDoubleSpinBox()
+        self._max_per_spin.setRange(12.0, 1000.0)
+        self._max_per_spin.setValue(240.0)
+        self._max_per_spin.setSingleStep(10.0)
+        self._max_per_spin.setDecimals(1)
+        self._max_per_spin.setSuffix(" h")
+        self._max_per_spin.setToolTip(
+            "Maximum period to consider in periodogram analysis (in hours)"
+        )
+        self._params_layout.addRow("Max Period:", self._max_per_spin)
+
+        # Prominent peaks checkbox (for CosinorPy Periodogram)
+        self._prominent_check = QCheckBox("Find prominent peaks")
+        self._prominent_check.setChecked(False)
+        self._prominent_check.setToolTip(
+            "Identify and label prominent peaks above significance threshold"
+        )
+        self._params_layout.addRow("", self._prominent_check)
+
+        # Model Type (for CosinorPy - count data analysis)
+        self._model_type_combo = QComboBox()
+        self._model_type_combo.addItems(['Normal', 'Poisson', 'Negative Binomial'])
+        self._model_type_combo.setToolTip(
+            "Model type for count data:\n"
+            "- Normal: For continuous data (default)\n"
+            "- Poisson: For count data (RNA-seq)\n"
+            "- Negative Binomial: For overdispersed count data"
+        )
+        self._params_layout.addRow("Model Type:", self._model_type_combo)
+
+        # Criterium (for CosinorPy - best period selection)
+        self._criterium_label = QLabel("Criterium (Best Period):")
+        self._criterium_combo = QComboBox()
+        self._criterium_combo.addItems(['RSS', 'AIC', 'BIC', 'Log-Likelihood'])
+        self._criterium_combo.setToolTip(
+            "Criterion for selecting best period:\n"
+            "- RSS: Residual Sum of Squares (default)\n"
+            "- AIC: Akaike Information Criterion\n"
+            "- BIC: Bayesian Information Criterion\n"
+            "- Log-Likelihood: Maximum likelihood"
+        )
+        self._params_layout.addRow(self._criterium_label, self._criterium_combo)
+
+        # Comparison Type (for single component comparison methods)
+        self._comparison_type_combo = QComboBox()
+        self._comparison_type_combo.addItems(['Pooled Model', 'Independent Models'])
+        self._comparison_type_combo.currentTextChanged.connect(self._update_compare_conditions_parameters)
+        self._comparison_type_combo.setToolTip(
+            "Statistical approach for comparing conditions:\n\n"
+            "• Pooled Model: Single model with group interaction\n"
+            "  - Same period for both groups\n"
+            "  - Assumes common variance\n"
+            "  - Higher statistical power\n"
+            "  - Recommended for similar groups\n\n"
+            "• Independent Models: Separate models per condition\n"
+            "  - Different periods allowed\n"
+            "  - No variance assumptions\n"
+            "  - More robust for heterogeneous groups"
+        )
+        self._params_layout.addRow("Comparison Type:", self._comparison_type_combo)
+
+        # Comparison Method (for multi-component comparison)
+        self._comparison_method_combo = QComboBox()
+        self._comparison_method_combo.addItems(['Independent', 'LimoRhyde'])
+        self._comparison_method_combo.currentTextChanged.connect(self._update_limo_analysis_options)
+        self._comparison_method_combo.currentTextChanged.connect(self._update_compare_conditions_parameters)
+        self._comparison_method_combo.setToolTip(
+            "Method for multi-component comparison:\n\n"
+            "• Independent: Compare separate models\n"
+            "  - Analysis: CI or Bootstrap\n"
+            "  - Flexible, robust\n\n"
+            "• LimoRhyde: LimoRhyde-style comparison\n"
+            "  - Analysis: None, CI1, Bootstrap1, CI2, Bootstrap2\n"
+            "  - Additional F-tests and p-values"
+        )
+        self._params_layout.addRow("Comparison Method:", self._comparison_method_combo)
+
+        # Analysis Method (for CosinorPy - CI calculation method)
+        self._analysis_method_label = QLabel("Analysis Method:")
+        self._analysis_method_combo = QComboBox()
+        # Default options for independent data
+        self._analysis_method_combo.addItems(['CI', 'Bootstrap', 'Sampling'])
+        self._analysis_method_combo.setToolTip(
+            "Method for calculating confidence intervals:\n"
+            "- CI: Analytical confidence intervals (fast, for independent data)\n"
+            "- Bootstrap: Bootstrap resampling (more robust)\n"
+            "- Sampling: Parameter sampling (for dependent data)"
+        )
+        self._analysis_method_combo.currentTextChanged.connect(self._update_cosinor_independent_params_visibility)
+        self._params_layout.addRow(self._analysis_method_label, self._analysis_method_combo)
+
+        # Bootstrap size (for Bootstrap analysis method)
+        self._bootstrap_size_label = QLabel("Bootstrap Size:")
+        self._bootstrap_size_spin = QSpinBox()
+        self._bootstrap_size_spin.setRange(50, 10000)
+        self._bootstrap_size_spin.setValue(1000)
+        self._bootstrap_size_spin.setSingleStep(50)
+        self._bootstrap_size_spin.setToolTip(
+            "Number of bootstrap iterations (higher = more accurate but slower)"
+        )
+        self._params_layout.addRow(self._bootstrap_size_label, self._bootstrap_size_spin)
+
+        # Parameters to Compare (multi-select via checkboxes)
+        params_widget = QWidget()
+        params_layout = QHBoxLayout(params_widget)
+        params_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._param_amplitude_check = QCheckBox("Amplitude")
+        self._param_amplitude_check.setChecked(True)
+        self._param_acrophase_check = QCheckBox("Acrophase")
+        self._param_acrophase_check.setChecked(True)
+        self._param_mesor_check = QCheckBox("MESOR")
+        self._param_mesor_check.setChecked(True)
+
+        params_layout.addWidget(self._param_amplitude_check)
+        params_layout.addWidget(self._param_acrophase_check)
+        params_layout.addWidget(self._param_mesor_check)
+        params_layout.addStretch()
+
+        params_label = QLabel("Parameters to Compare:")
+        params_label.setToolTip(
+            "Select which rhythm parameters to compare between conditions.\n"
+            "At least one parameter must be selected."
+        )
+        self._params_layout.addRow(params_label, params_widget)
+
+        # Include Linear Component (checkbox)
+        self._include_lin_comp_check = QCheckBox("Include linear component (trend)")
+        self._include_lin_comp_check.setChecked(False)
+        self._include_lin_comp_check.setToolTip(
+            "Include linear trend component in comparison.\n"
+            "Only available for Independent comparison method."
+        )
+        self._params_layout.addRow("", self._include_lin_comp_check)
+
+        # Save CosinorPy plots checkbox (for CosinorPy methods - excludes Periodogram)
+        self._save_cosinorpy_plots_check = QCheckBox("Save CosinorPy plots to folder")
+        self._save_cosinorpy_plots_check.setChecked(False)
+        self._save_cosinorpy_plots_check.setToolTip(
+            "Save CosinorPy-generated plots to output folder.\n\n"
+            "When checked, calls cosinor.plot_df_models() to generate and save\n"
+            "diagnostic plots showing model fits, residuals, and predictions.\n"
+            "Plots are saved to disk without displaying in GUI."
+        )
+        self._params_layout.addRow("", self._save_cosinorpy_plots_check)
+
         # Update visibility based on current method
         self._update_parameter_visibility()
-    
+
+    def _update_analysis_method_options(self, method_text: str):
+        """Update Analysis Method combo options based on selected analysis method."""
+        # Store current selection
+        current_selection = self._analysis_method_combo.currentText()
+
+        # Determine if this is a dependent data method
+        is_dependent = 'Dependent' in method_text
+
+        # Clear and repopulate
+        self._analysis_method_combo.clear()
+
+        if is_dependent:
+            # For dependent data: only Sampling and Bootstrap
+            # CosinorPy population methods accept: 'sampling' or 'bootstrap'
+            self._analysis_method_combo.addItems(['Sampling', 'Bootstrap'])
+            # Set default to Sampling for dependent data
+            if current_selection in ['Sampling', 'Bootstrap']:
+                self._analysis_method_combo.setCurrentText(current_selection)
+            else:
+                self._analysis_method_combo.setCurrentText('Sampling')
+        else:
+            # For independent data: only CI and Bootstrap
+            # CosinorPy independent methods accept: 'CI' or 'bootstrap' (NOT sampling)
+            self._analysis_method_combo.addItems(['CI', 'Bootstrap'])
+            # Restore previous selection if valid
+            if current_selection in ['CI', 'Bootstrap']:
+                self._analysis_method_combo.setCurrentText(current_selection)
+            else:
+                self._analysis_method_combo.setCurrentText('CI')
+
+    def _update_limo_analysis_options(self, comparison_method: str):
+        """Update Analysis Method options when Comparison Method changes (for Compare Conditions)."""
+        # Only update if we're in a Compare Conditions method
+        method_text = self._method_combo.currentText()
+        if 'Compare Conditions' not in method_text:
+            return
+
+        current_selection = self._analysis_method_combo.currentText()
+        self._analysis_method_combo.clear()
+
+        if comparison_method == 'LimoRhyde':
+            # LimoRhyde options
+            self._analysis_method_combo.addItems(['None', 'CI1', 'Bootstrap1', 'CI2', 'Bootstrap2'])
+            if current_selection in ['None', 'CI1', 'Bootstrap1', 'CI2', 'Bootstrap2']:
+                self._analysis_method_combo.setCurrentText(current_selection)
+            else:
+                self._analysis_method_combo.setCurrentText('None')
+        else:
+            # Independent options (CI or Bootstrap)
+            self._analysis_method_combo.addItems(['CI', 'Bootstrap'])
+            if current_selection in ['CI', 'Bootstrap']:
+                self._analysis_method_combo.setCurrentText(current_selection)
+            else:
+                self._analysis_method_combo.setCurrentText('CI')
+
+    def _on_components_changed(self):
+        """Handle changes to the components text field."""
+        # Only update if we're in Compare Conditions method
+        method_text = self._method_combo.currentText()
+        if "Compare Conditions" in method_text:
+            self._update_compare_conditions_parameters()
+        # Also update visibility for Cosinor Independent
+        elif method_text == "Cosinor (Independent Data)":
+            self._update_cosinor_independent_params_visibility()
+        # Also update visibility for Cosinor Dependent
+        elif method_text == "Cosinor (Dependent Data)":
+            self._update_cosinor_dependent_params_visibility()
+        # Also update visibility for Nonlinear methods
+        elif "Nonlinear" in method_text:
+            self._update_nonlinear_independent_params_visibility()
+
+    def _on_period_changed(self):
+        """Handle changes to period spinboxes."""
+        method_text = self._method_combo.currentText()
+        if method_text == "Cosinor (Independent Data)":
+            self._update_cosinor_independent_params_visibility()
+
+    def _update_cosinor_independent_params_visibility(self):
+        """Update parameter visibility for Cosinor (Independent Data) based on n_components and period."""
+        # Only apply when in Cosinor Independent mode
+        method_text = self._method_combo.currentText()
+        if method_text != "Cosinor (Independent Data)":
+            return
+
+        # Parse n_components
+        try:
+            n_components = self._parse_components(self._components_edit.text())
+        except:
+            # If parsing fails, show all parameters
+            n_components = []
+
+        # Determine if we have multiple periods
+        period_min = self._period_min_spin.value()
+        period_max = self._period_max_spin.value()
+        has_multiple_periods = (period_min != period_max)
+
+        # Determine if we have component > 1 (either single N>1 or multiple components)
+        has_component_gt_one = (
+            (len(n_components) == 1 and n_components[0] > 1) or
+            len(n_components) > 1
+        )
+
+        # Logic for Independent Data:
+        # - Criterium (Best Period): visible only when has_multiple_periods
+        # - Analysis Method: visible only when has_component_gt_one
+        # - Bootstrap Size: visible only when Analysis Method = Bootstrap AND has_component_gt_one
+
+        # Show/hide Criterium (Best Period)
+        self._criterium_label.setVisible(has_multiple_periods)
+        self._criterium_combo.setVisible(has_multiple_periods)
+
+        # Show/hide Analysis Method
+        self._analysis_method_label.setVisible(has_component_gt_one)
+        self._analysis_method_combo.setVisible(has_component_gt_one)
+
+        # Show/hide Bootstrap Size (only if Analysis Method is Bootstrap AND has_component_gt_one)
+        analysis_method = self._analysis_method_combo.currentText()
+        show_bootstrap = has_component_gt_one and analysis_method == 'Bootstrap'
+        self._bootstrap_size_label.setVisible(show_bootstrap)
+        self._bootstrap_size_spin.setVisible(show_bootstrap)
+
+    def _update_cosinor_dependent_params_visibility(self):
+        """Update parameter visibility for Cosinor (Dependent Data) based on n_components."""
+        # Only apply when in Cosinor Dependent mode
+        method_text = self._method_combo.currentText()
+        if method_text != "Cosinor (Dependent Data)":
+            return
+
+        # Parse n_components
+        try:
+            n_components = self._parse_components(self._components_edit.text())
+        except:
+            # If parsing fails, show all parameters
+            n_components = []
+
+        # Determine if we have component > 1 (either single N>1 or multiple components)
+        has_component_gt_one = (
+            (len(n_components) == 1 and n_components[0] > 1) or
+            len(n_components) > 1
+        )
+
+        # Logic for Dependent Data:
+        # - Criterium: visible only when has_component_gt_one (for get_best_models_population)
+        # - Analysis Method: visible only when has_component_gt_one (for analyse_best_models_population)
+        # - Bootstrap Size: visible only when Analysis Method = Bootstrap AND has_component_gt_one
+
+        # Show/hide Criterium
+        self._criterium_label.setVisible(has_component_gt_one)
+        self._criterium_combo.setVisible(has_component_gt_one)
+
+        # Show/hide Analysis Method
+        self._analysis_method_label.setVisible(has_component_gt_one)
+        self._analysis_method_combo.setVisible(has_component_gt_one)
+
+        # Show/hide Bootstrap Size (only if Analysis Method is Bootstrap AND has_component_gt_one)
+        analysis_method = self._analysis_method_combo.currentText()
+        show_bootstrap = has_component_gt_one and (analysis_method == 'Bootstrap' or analysis_method == 'Sampling')
+        # Actually, only show bootstrap size if method is Bootstrap
+        show_bootstrap = has_component_gt_one and analysis_method == 'Bootstrap'
+        self._bootstrap_size_label.setVisible(show_bootstrap)
+        self._bootstrap_size_spin.setVisible(show_bootstrap)
+
+    def _update_nonlinear_independent_params_visibility(self):
+        """
+        Update parameter visibility for Nonlinear methods based on n_components.
+
+        For nonlinear analysis:
+        - amplification and lin_comp are OUTPUTS (results), not inputs
+        - Model Type doesn't apply (always uses generalized cosinor model)
+        - Criterium doesn't apply (best model selected by p-value automatically)
+        - Analysis Method doesn't apply (no CI vs Bootstrap option)
+        - Bootstrap Size: only needed when n_components > 1 (for amplitude/acrophase stats)
+        """
+        method_text = self._method_combo.currentText()
+
+        # Only apply to Nonlinear methods
+        if "Nonlinear" not in method_text:
+            return
+
+        # Parse n_components
+        try:
+            n_components = self._parse_components(self._components_edit.text())
+        except:
+            n_components = [1]
+
+        # Determine if we have component > 1 (either single N>1 or multiple components for auto-selection)
+        has_component_gt_one = (
+            (len(n_components) == 1 and n_components[0] > 1) or
+            len(n_components) > 1
+        )
+
+        # Bootstrap Size: only show when n_components > 1
+        # For 1-component models, stats are calculated analytically (no bootstrap needed)
+        self._bootstrap_size_label.setVisible(has_component_gt_one)
+        self._bootstrap_size_spin.setVisible(has_component_gt_one)
+
+    def _update_compare_conditions_parameters(self):
+        """Update parameter visibility based on n_components and comparison method for Compare Conditions."""
+        method_text = self._method_combo.currentText()
+        if "Compare Conditions" not in method_text:
+            return
+
+        # Determine if this is dependent or independent
+        is_dependent = "Dependent" in method_text
+
+        # Parse n_components from the text field
+        components_text = self._components_edit.text().strip()
+        try:
+            # Parse comma-separated values
+            components = [int(x.strip()) for x in components_text.split(',') if x.strip()]
+            is_single_component = len(components) == 1 and components[0] == 1
+        except ValueError:
+            # If parsing fails, assume multi-component
+            is_single_component = False
+
+        # Hide all conditional parameters first
+        self._hide_param("Comparison Type:")
+        self._hide_param("Comparison Method:")
+        self._hide_param("Analysis Method:")
+        self._hide_param("Parameters to Compare:")
+        self._hide_param("Bootstrap Size:")
+        self._hide_checkbox(self._include_lin_comp_check)
+
+        # Determine period widget visibility for Independent Models
+        # For Independent data with "Independent Models" comparison type and exactly 2 conditions:
+        # show per-condition periods
+        show_per_condition_periods = False
+        show_multi_cond_info = False
+
+        if not is_dependent and is_single_component:
+            # Get comparison type
+            comparison_type = self._comparison_type_combo.currentText()
+
+            if comparison_type == "Independent Models":
+                # Count unique conditions in data
+                if hasattr(self, '_loader') and self._loader and self._source_type == 'csv':
+                    dataset_info = self._loader.get_dataset_info()
+                    n_conditions = len(dataset_info.conditions) if dataset_info.conditions else 0
+
+                    if n_conditions == 2:
+                        # Exactly 2 conditions: show per-condition periods
+                        show_per_condition_periods = True
+                        # Update condition labels
+                        conditions = dataset_info.conditions
+                        self._period_cond1_label.setText(f"Period for {conditions[0]}:")
+                        self._period_cond2_label.setText(f"Period for {conditions[1]}:")
+                    elif n_conditions > 2:
+                        # More than 2 conditions: show info message
+                        show_multi_cond_info = True
+
+        if is_dependent:
+            # Dependent data: simpler UI (no Comparison Type or Method)
+            if not is_single_component:
+                # Multi-component dependent: show analysis options
+                self._show_param("Analysis Method:")
+                self._show_param("Parameters to Compare:")
+                self._show_checkbox(self._include_lin_comp_check)
+
+                # Update Analysis Method combo to show CI and Permutation for dependent
+                current_selection = self._analysis_method_combo.currentText()
+                self._analysis_method_combo.clear()
+                self._analysis_method_combo.addItems(['CI', 'Permutation'])
+                # Restore previous selection if valid
+                if current_selection in ['CI', 'Permutation']:
+                    self._analysis_method_combo.setCurrentText(current_selection)
+                else:
+                    self._analysis_method_combo.setCurrentText('CI')
+        else:
+            # Independent data: existing complex logic
+            if is_single_component:
+                # Single component: Show only Comparison Type
+                # Note: single component methods (test_cosinor_pairs, test_cosinor_pairs_independent)
+                # do NOT use bootstrap_size, Analysis Method, or Parameters to Compare
+                self._show_param("Comparison Type:")
+            else:
+                # Multi-component: Show Comparison Method and conditional parameters
+                self._show_param("Comparison Method:")
+                self._show_param("Bootstrap Size:")  # Only for multi-component
+
+                # Get current comparison method
+                comparison_method = self._comparison_method_combo.currentText()
+
+                if comparison_method == 'Independent':
+                    # Independent method: Show Analysis Method, Parameters to Compare, and Lin Comp
+                    self._show_param("Analysis Method:")
+                    self._show_param("Parameters to Compare:")
+                    self._show_checkbox(self._include_lin_comp_check)
+                else:
+                    # LimoRhyde method: Show Analysis Method and Parameters to Compare (no Lin Comp)
+                    self._show_param("Analysis Method:")
+                    self._show_param("Parameters to Compare:")
+
+        # Update period widget visibility ONLY for Independent Models special cases
+        # For all other cases, ensure standard Period spinboxes are visible
+        if show_per_condition_periods:
+            # Show per-condition periods, hide standard period spinboxes
+            self._hide_param("Period:")
+            self._show_param("Periods:")
+            self._period_multi_cond_info.setVisible(False)
+        elif show_multi_cond_info:
+            # Hide both period widgets, show info message
+            self._hide_param("Period:")
+            self._hide_param("Periods:")
+            self._period_multi_cond_info.setVisible(True)
+        else:
+            # Default case: show standard Period, hide Periods and info
+            self._show_param("Period:")
+            self._hide_param("Periods:")
+            self._period_multi_cond_info.setVisible(False)
+
     def _update_parameter_visibility(self):
         """Show/hide parameters based on selected method."""
         # Check if params layout exists (may be called during initialization)
@@ -538,39 +1334,188 @@ class AnalysisPanel(QWidget):
 
         method_text = self._method_combo.currentText()
         module_text = self._module_combo.currentText()
+        print(f"[DEBUG _update_parameter_visibility] method_text: '{method_text}', module_text: '{module_text}'")
 
-        # Default: hide all optional params
+        # Update Analysis Method options based on data type (independent vs dependent)
+        if module_text == "CosinorPy":
+            self._update_analysis_method_options(method_text)
+
+        # Default: hide ALL parameters
         self._hide_param("Components:")
-        self._hide_param("Period Range:")
+        self._hide_param("Period:")
+        self._hide_param("Periods:")
         self._hide_param("Loss Function:")
         self._hide_param("F-Scale:")
         self._hide_param("Max Iterations:")
         self._hide_param("Harmonics:")
         self._hide_param("Permutations:")
+        self._hide_param("Amplification:")
+        self._hide_param("Linear Component:")
+        self._hide_param("Periodogram Type:")
+        self._hide_param("Max Period:")
+        self._hide_param("Model Type:")
+        # Note: Criterium label changed to "Criterium (Best Period):"
+        if hasattr(self, '_criterium_label'):
+            self._criterium_label.setVisible(False)
+            self._criterium_combo.setVisible(False)
+        # Note: Analysis Method and Bootstrap Size have custom labels
+        if hasattr(self, '_analysis_method_label'):
+            self._analysis_method_label.setVisible(False)
+            self._analysis_method_combo.setVisible(False)
+        if hasattr(self, '_bootstrap_size_label'):
+            self._bootstrap_size_label.setVisible(False)
+            self._bootstrap_size_spin.setVisible(False)
+        self._hide_param("Comparison Type:")
+        self._hide_param("Comparison Method:")
+        self._hide_param("Parameters to Compare:")
+        self._hide_checkbox(self._prominent_check)
+        self._hide_checkbox(self._use_dependent_model_check)
+        self._hide_checkbox(self._save_cosinorpy_plots_check)
+        self._hide_checkbox(self._include_lin_comp_check)
+        self._period_multi_cond_info.setVisible(False)
 
-        # Show relevant params based on method
-        if "Multi-Component" in method_text:
-            self._show_param("Components:")
+        # =====================================================================
+        # COSINORPY - NEW REFACTORED METHODS
+        # =====================================================================
+        if module_text == "CosinorPy":
 
-        # Show CircaCompare params when CircaCompare module is selected
-        if module_text == "CircaCompare":
+            # Method 1: Periodogram Analysis
+            # No parameters needed - periodogram_df() only takes df and folder
+            if method_text == "Periodogram Analysis":
+                pass  # No parameters to show
+
+            # Method 2: Cosinor (Independent Data)
+            elif method_text == "Cosinor (Independent Data)":
+                self._show_param("Period:")
+                self._show_param("Components:")
+                self._show_param("Model Type:")
+                self._show_checkbox(self._save_cosinorpy_plots_check)
+                # Conditionally show Criterium, Analysis Method, Bootstrap Size based on n_components and period
+                self._update_cosinor_independent_params_visibility()
+
+            # Method 3: Cosinor (Dependent Data)
+            elif method_text == "Cosinor (Dependent Data)":
+                self._show_param("Period:")
+                self._show_param("Components:")
+                self._show_param("Model Type:")
+                self._show_checkbox(self._save_cosinorpy_plots_check)
+                # Conditionally show Criterium, Analysis Method, Bootstrap Size based on n_components
+                self._update_cosinor_dependent_params_visibility()
+
+            # Method 4: Compare Conditions (Independent)
+            elif method_text == "Compare Conditions (Independent)":
+                # Always show basic parameters
+                self._show_param("Period:")
+                self._show_param("Components:")
+                self._show_checkbox(self._save_cosinorpy_plots_check)
+
+                # Update conditional parameters based on current n_components value
+                self._update_compare_conditions_parameters()
+
+            # Method 5: Compare Conditions (Dependent)
+            elif method_text == "Compare Conditions (Dependent)":
+                # Always show basic parameters
+                self._show_param("Period:")
+                self._show_param("Components:")
+                self._show_checkbox(self._save_cosinorpy_plots_check)
+
+                # Update conditional parameters based on current n_components value
+                self._update_compare_conditions_parameters()
+
+            # Method 6: Nonlinear (Independent Data)
+            # Model: Y = A + B·exp(C·t)·cos(2π·t/P + φ) + D·t
+            # Parameters C (amplification) and D (lin_comp) are OUTPUTS, not inputs
+            # Bootstrap is only needed for n_components > 1
+            elif method_text == "Nonlinear (Independent Data)":
+                self._show_param("Period:")
+                self._show_param("Components:")
+                self._show_checkbox(self._save_cosinorpy_plots_check)
+                # Show bootstrap size only if n_components might be > 1
+                self._update_nonlinear_independent_params_visibility()
+
+            # Method 7: Nonlinear (Dependent Data)
+            # Same model as Independent, but for population/longitudinal data
+            elif method_text == "Nonlinear (Dependent Data)":
+                self._show_param("Period:")
+                self._show_param("Components:")
+                self._show_checkbox(self._save_cosinorpy_plots_check)
+                # Show bootstrap size only if n_components might be > 1
+                self._update_nonlinear_independent_params_visibility()
+
+            # Method 8: Nonlinear Compare (Independent)
+            # Compare conditions using nonlinear model
+            elif method_text == "Nonlinear Compare (Independent)":
+                self._show_param("Period:")
+                self._show_param("Components:")
+                self._show_checkbox(self._use_dependent_model_check)
+                self._show_checkbox(self._save_cosinorpy_plots_check)
+                # Show bootstrap size only if n_components might be > 1
+                self._update_nonlinear_independent_params_visibility()
+
+            # Method 9: Nonlinear Compare (Dependent)
+            # Compare conditions using nonlinear model for population data
+            elif method_text == "Nonlinear Compare (Dependent)":
+                self._show_param("Period:")
+                self._show_param("Components:")
+                self._show_checkbox(self._save_cosinorpy_plots_check)
+                # Show bootstrap size only if n_components might be > 1
+                self._update_nonlinear_independent_params_visibility()
+
+        # =====================================================================
+        # CIRCACOMPARE
+        # =====================================================================
+        elif module_text == "CircaCompare":
+            self._show_param("Period:")
             self._show_param("Loss Function:")
             self._show_param("F-Scale:")
             self._show_param("Max Iterations:")
-        
-        if "Harmonic" in method_text:
-            self._show_param("Harmonics:")
-        
-        if "JTK" in method_text or "Lomb" in method_text or "OLS" in method_text:
-            self._show_param("Period Range:")
-        
-        if "F24" in method_text:
-            self._show_param("Permutations:")
-        
-        # Show comparison frame for comparison methods
-        is_comparison = "Compare" in method_text
-        self._compare_frame.setVisible(is_comparison)
-        self._cond_list.setVisible(not is_comparison)
+
+        # =====================================================================
+        # RHYTHM ANALYSIS
+        # =====================================================================
+        elif module_text == "Rhythm Analysis":
+            if "Harmonic" in method_text:
+                self._show_param("Period:")
+                self._show_param("Harmonics:")
+
+            if "JTK" in method_text or "Lomb" in method_text or "OLS" in method_text:
+                self._show_param("Period Range:")
+
+            if "F24" in method_text:
+                self._show_param("Period:")
+                self._show_param("Permutations:")
+
+            if "Spectral Analysis" in method_text:
+                self._show_param("Periodogram Type:")
+                self._show_param("Max Period:")
+                self._show_param("Period Range:")
+
+            if "Wavelet" in method_text or "Linear Mixed" in method_text:
+                self._show_param("Period:")
+
+        # =====================================================================
+        # COMPARISON FRAME VISIBILITY
+        # =====================================================================
+        # Show comparison frame ONLY for pairwise comparison methods (user selects 2 specific conditions)
+        # NOT for "Compare All", "Compare Conditions", or "Nonlinear Compare" (which use all conditions automatically)
+        is_nonlinear_compare = "Nonlinear Compare" in method_text
+        is_pairwise_comparison = "Compare" in method_text and "Compare All" not in method_text and "Compare Conditions" not in method_text and not is_nonlinear_compare
+        is_compare_all_or_conditions = "Compare All" in method_text or "Compare Conditions" in method_text or is_nonlinear_compare
+
+        self._compare_frame.setVisible(is_pairwise_comparison)
+
+        # For pairwise comparison methods, hide condition list (use dropdowns instead)
+        # For Compare All/Conditions/Nonlinear Compare, show condition list but make it read-only (user shouldn't select)
+        if is_compare_all_or_conditions:
+            self._cond_list.setVisible(True)
+            # Disable selection for Compare All/Conditions/Nonlinear Compare (all conditions will be used automatically)
+            self._cond_list.setSelectionMode(QAbstractItemView.NoSelection)
+        elif is_pairwise_comparison:
+            self._cond_list.setVisible(False)
+        else:
+            # For normal single-group methods, show condition list with selection enabled
+            self._cond_list.setVisible(True)
+            self._cond_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
     
     def _show_param(self, label: str):
         """Show a parameter row."""
@@ -591,23 +1536,123 @@ class AnalysisPanel(QWidget):
                 field = self._params_layout.itemAt(i, QFormLayout.FieldRole)
                 if field and field.widget():
                     field.widget().setVisible(False)
-    
+
+    def _show_checkbox(self, checkbox: QCheckBox):
+        """Show a checkbox widget."""
+        for i in range(self._params_layout.rowCount()):
+            field = self._params_layout.itemAt(i, QFormLayout.FieldRole)
+            if field and field.widget() == checkbox:
+                checkbox.setVisible(True)
+                break
+
+    def _hide_checkbox(self, checkbox: QCheckBox):
+        """Hide a checkbox widget."""
+        for i in range(self._params_layout.rowCount()):
+            field = self._params_layout.itemAt(i, QFormLayout.FieldRole)
+            if field and field.widget() == checkbox:
+                checkbox.setVisible(False)
+                break
+
     # =========================================================================
     # EVENT HANDLERS
+    # =========================================================================
+
+    def _parse_components(self, text: str) -> list:
+        """
+        Parse comma-separated components string to list of integers.
+
+        Args:
+            text: String like "1" or "1,2,3"
+
+        Returns:
+            List of integers, e.g., [1] or [1, 2, 3]
+            Returns [1] as default fallback on parse error.
+        """
+        try:
+            # Remove whitespace and split by comma
+            parts = [p.strip() for p in text.split(',') if p.strip()]
+            # Convert to integers
+            components = [int(p) for p in parts]
+            # Validate range (1-6 is typical for cosinor analysis)
+            if not all(1 <= c <= 6 for c in components):
+                print(f"[WARNING] Components out of range (1-6): {components}, using default [1]")
+                return [1]
+            return components
+        except (ValueError, AttributeError) as e:
+            print(f"[WARNING] Failed to parse components '{text}': {e}, using default [1]")
+            return [1]
+
+    def _parse_period(self, text: str):
+        """
+        Parse period string to either float or list of floats.
+
+        Args:
+            text: String like "24" or "24, 12, 48" or "23-25" (range format)
+
+        Returns:
+            Float for single period, or list of floats for multiple periods.
+            Returns 24.0 as default fallback on parse error.
+        """
+        try:
+            # Check if it's a range format (e.g., "23-25")
+            if '-' in text and ',' not in text:
+                # Range format: generate list
+                parts = text.split('-')
+                if len(parts) == 2:
+                    start = float(parts[0].strip())
+                    end = float(parts[1].strip())
+                    # Generate list with step=1.0
+                    periods = []
+                    current = start
+                    while current <= end:
+                        periods.append(current)
+                        current += 1.0
+                    return periods if len(periods) > 1 else periods[0]
+
+            # Check if comma-separated (multiple periods)
+            if ',' in text:
+                # Multiple periods: return list
+                parts = [p.strip() for p in text.split(',') if p.strip()]
+                periods = [float(p) for p in parts]
+                return periods if len(periods) > 1 else periods[0]
+
+            # Single period: return float
+            return float(text.strip())
+
+        except (ValueError, AttributeError) as e:
+            print(f"[WARNING] Failed to parse period '{text}': {e}, using default 24.0")
+            return 24.0
+
+    # =========================================================================
+    # ORIGINAL EVENT HANDLERS
     # =========================================================================
     
     def _on_module_changed(self, index: int):
         """Handle module selection change."""
         self._method_combo.clear()
-        
-        if index == 0:  # CosinorPy
+
+        # Check if subject column exists (for dependent data methods)
+        has_subject_col = False
+        if hasattr(self, '_loader') and self._loader and self._source_type == 'csv':
+            dataset_info = self._loader.get_dataset_info()
+            has_subject_col = dataset_info.subject_column is not None
+
+        if index == 0:  # CosinorPy - NEW REFACTORED METHODS
             methods = [
-                ("Single Cosinor", "Fit single-component cosinor model"),
-                ("Multi-Component", "Fit multi-harmonic cosinor model"),
-                ("Population Mean", "For dependent/longitudinal data"),
-                ("Compare Conditions", "Differential rhythmicity analysis"),
-                ("Count Data (Poisson)", "For RNA-seq counts")
+                ("Periodogram Analysis", "Spectral analysis to identify dominant periods"),
+                ("Cosinor (Independent Data)", "Fit cosinor model to independent data"),
+                ("Compare Conditions (Independent)", "Compare conditions for independent data"),
+                ("Nonlinear (Independent Data)", "Nonlinear cosinor with damping/forcing (independent)"),
+                ("Nonlinear Compare (Independent)", "Compare nonlinear parameters (independent data)")
             ]
+
+            # Only add dependent methods if subject column exists
+            if has_subject_col:
+                methods.insert(2, ("Cosinor (Dependent Data)", "Fit cosinor model to dependent/population data"))
+                methods.insert(4, ("Compare Conditions (Dependent)", "Compare conditions for dependent/population data"))
+                methods.insert(6, ("Nonlinear (Dependent Data)", "Nonlinear cosinor with damping/forcing (dependent)"))
+                methods.append(("Nonlinear Compare (Dependent)", "Compare nonlinear parameters (dependent data)"))
+
         elif index == 1:  # CircaCompare
             methods = [
                 ("Single Fit", "Robust cosinor fitting"),
@@ -621,13 +1666,14 @@ class AnalysisPanel(QWidget):
                 ("Harmonic Cosinor", "Multi-modal rhythm detection"),
                 ("Fourier F24", "Effect size measure (requires 2 replicates)"),
                 ("Lomb-Scargle", "For unevenly sampled data"),
+                ("Spectral Analysis (Periodogram)", "Advanced spectral analysis with interactive visualization"),
                 ("Wavelet (CWT)", "Time-frequency analysis"),
                 ("Linear Mixed Effects", "Hierarchical modeling")
             ]
-        
+
         for name, desc in methods:
             self._method_combo.addItem(name, desc)
-        
+
         self._on_method_changed(0)
     
     def _on_method_changed(self, index: int):
@@ -688,9 +1734,33 @@ class AnalysisPanel(QWidget):
         
         # Get conditions
         method_text = self._method_combo.currentText()
-        is_comparison = "Compare" in method_text
-        
-        if is_comparison:
+        is_compare_all = "Compare All" in method_text
+        is_compare_conditions = "Compare Conditions" in method_text
+        is_nonlinear_compare = "Nonlinear Compare" in method_text
+        # Pairwise uses 2 specific condition dropdowns; Compare All/Conditions/Nonlinear Compare use ALL conditions
+        is_pairwise_comparison = "Compare" in method_text and not is_compare_all and not is_compare_conditions and not is_nonlinear_compare
+
+        if is_compare_all or is_compare_conditions or is_nonlinear_compare:
+            # For "Compare All" and "Compare Conditions", automatically use ALL available conditions
+            selected_conds = [
+                self._cond_list.item(i).text()
+                for i in range(self._cond_list.count())
+            ]
+            compare_conditions = None  # Not needed for Compare All/Conditions
+
+            if len(selected_conds) < 2:
+                if is_compare_conditions:
+                    comparison_name = "Compare Conditions"
+                elif is_nonlinear_compare:
+                    comparison_name = "Nonlinear Compare"
+                else:
+                    comparison_name = "Compare All"
+                QMessageBox.warning(self, "Not Enough Conditions",
+                                  f"{comparison_name} requires at least 2 conditions in your data.")
+                return
+
+        elif is_pairwise_comparison:
+            # For pairwise comparison (2 conditions)
             cond1 = self._cond1_combo.currentText()
             cond2 = self._cond2_combo.currentText()
             if cond1 == cond2:
@@ -699,13 +1769,14 @@ class AnalysisPanel(QWidget):
             selected_conds = [cond1]
             compare_conditions = (cond1, cond2)
         else:
+            # For single analysis methods
             selected_conds = [
                 self._cond_list.item(i).text()
                 for i in range(self._cond_list.count())
                 if self._cond_list.item(i).isSelected()
             ]
             compare_conditions = None
-            
+
             if not selected_conds:
                 QMessageBox.warning(self, "No Conditions", "Please select at least one condition.")
                 return
@@ -723,12 +1794,14 @@ class AnalysisPanel(QWidget):
         self._worker = AnalysisWorker(config, self._loader, self._source_type)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)
-        
+        self._worker.period_detected.connect(self._on_period_detected)
+        self._worker.components_detected.connect(self._on_components_detected)
+
         self._run_btn.setEnabled(False)
         self._cancel_btn.setVisible(True)
         self._progress_bar.setVisible(True)
         self._progress_bar.setValue(0)
-        
+
         self.analysis_started.emit()
         self._worker.start()
     
@@ -742,7 +1815,37 @@ class AnalysisPanel(QWidget):
         """Handle progress updates."""
         self._progress_bar.setValue(percent)
         self._status_label.setText(message)
-    
+
+    def _on_period_detected(self, period: float, p_value: float):
+        """Handle period detection results."""
+        # Update the detected period label with green checkmark
+        self._detected_period_label.setText(
+            f"  ✓ <b>Using auto-detected period: {period:.2f} hours</b> (p={p_value:.4f})\n"
+            f"  This period will be shown in all result tables."
+        )
+        self._detected_period_label.setStyleSheet(
+            "color: #2E7D32; font-style: italic; font-size: 10px; "
+            "background-color: #E8F5E9; padding: 4px; border-radius: 3px;"
+        )
+        self._detected_period_label.setVisible(True)
+
+        # Update the period spinbox to show the detected value (read-only)
+        self._period_spin.setValue(period)
+
+    def _on_components_detected(self, n_components: int, p_value: float):
+        """Handle auto-selected components detection results."""
+        # Update the detected components label with green checkmark
+        self._detected_components_label.setText(
+            f"  ✓ <b>Selected {n_components} component{'s' if n_components > 1 else ''}</b> (p={p_value:.4e})"
+        )
+        self._detected_components_label.setStyleSheet(
+            "color: #2E7D32; font-style: italic; font-size: 10px; "
+            "background-color: #E8F5E9; padding: 4px; border-radius: 3px;"
+        )
+        self._detected_components_label.setVisible(True)
+
+        print(f"[DEBUG] _on_components_detected called: {n_components} components, p={p_value}")
+
     def _on_finished(self, success: bool, results, message: str):
         """Handle analysis completion."""
         self._run_btn.setEnabled(True)
@@ -762,41 +1865,100 @@ class AnalysisPanel(QWidget):
         """Get the current method as enum."""
         module = self._module_combo.currentIndex()
         method = self._method_combo.currentText()
-        
-        # Map to enum (simplified)
+
+        # Map to enum
         mapping = {
-            (0, "Single Cosinor"): AnalysisMethod.COSINORPY_SINGLE,
-            (0, "Multi-Component"): AnalysisMethod.COSINORPY_MULTI,
-            (0, "Population Mean"): AnalysisMethod.COSINORPY_POPULATION,
-            (0, "Compare Conditions"): AnalysisMethod.COSINORPY_COMPARE,
-            (0, "Count Data (Poisson)"): AnalysisMethod.COSINORPY_COUNT,
+            # CosinorPy - New Refactored Methods
+            (0, "Periodogram Analysis"): AnalysisMethod.COSINORPY_PERIODOGRAM,
+            (0, "Cosinor (Independent Data)"): AnalysisMethod.COSINORPY_INDEPENDENT,
+            (0, "Cosinor (Dependent Data)"): AnalysisMethod.COSINORPY_DEPENDENT,
+            (0, "Compare Conditions (Independent)"): AnalysisMethod.COSINORPY_COMPARE_INDEPENDENT,
+            (0, "Compare Conditions (Dependent)"): AnalysisMethod.COSINORPY_COMPARE_DEPENDENT,
+            (0, "Nonlinear (Independent Data)"): AnalysisMethod.COSINORPY_NONLINEAR_INDEPENDENT,
+            (0, "Nonlinear (Dependent Data)"): AnalysisMethod.COSINORPY_NONLINEAR_DEPENDENT,
+            (0, "Nonlinear Compare (Independent)"): AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT,
+            (0, "Nonlinear Compare (Dependent)"): AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_DEPENDENT,
+            # CircaCompare
             (1, "Single Fit"): AnalysisMethod.CIRCACOMPARE_SINGLE,
             (1, "Compare Groups"): AnalysisMethod.CIRCACOMPARE_COMPARE,
+            # Rhythm Analysis
             (2, "JTK Cycle"): AnalysisMethod.RHYTHM_JTK,
             (2, "AR-JTK"): AnalysisMethod.RHYTHM_AR_JTK,
             (2, "Cosinor (OLS)"): AnalysisMethod.RHYTHM_COSINOR,
             (2, "Harmonic Cosinor"): AnalysisMethod.RHYTHM_HARMONIC,
             (2, "Fourier F24"): AnalysisMethod.RHYTHM_F24,
             (2, "Lomb-Scargle"): AnalysisMethod.RHYTHM_LOMB,
+            (2, "Spectral Analysis (Periodogram)"): AnalysisMethod.RHYTHM_SPECTRAL,
             (2, "Wavelet (CWT)"): AnalysisMethod.RHYTHM_CWT,
             (2, "Linear Mixed Effects"): AnalysisMethod.RHYTHM_LME,
         }
-        
-        return mapping.get((module, method), AnalysisMethod.COSINORPY_SINGLE)
+
+        return mapping.get((module, method), AnalysisMethod.COSINORPY_PERIODOGRAM)
     
     def _get_current_parameters(self) -> Dict[str, Any]:
         """Get current parameter values."""
-        return {
-            'period': self._period_spin.value(),
-            'n_components': self._components_spin.value(),
-            'period_range': (self._period_min_spin.value(), self._period_max_spin.value()),
+        # Build period from spinboxes
+        period_min = self._period_min_spin.value()
+        period_max = self._period_max_spin.value()
+        period_step = self._period_step_spin.value()
+
+        # If min == max, single period; otherwise generate range
+        if period_min == period_max:
+            period = period_min
+        else:
+            # Generate list of periods from min to max with step
+            period = []
+            current = period_min
+            while current <= period_max:
+                period.append(current)
+                current += period_step
+
+        params = {
+            'n_components': self._parse_components(self._components_edit.text()),
+            'period': period,
+            'period_range': (period_min, period_max),
+            'period_step': period_step,
             'loss': self._loss_combo.currentText(),
             'f_scale': self._fscale_spin.value(),
             'max_iterations': self._max_iterations_spin.value(),
             'n_harmonics': self._harmonics_spin.value(),
-            'n_permutations': self._permutations_spin.value()
+            'n_permutations': self._permutations_spin.value(),
+            # Nonlinear cosinor parameters
+            'amplification': None if self._amplification_spin.value() == 0.0 else self._amplification_spin.value(),
+            'lin_comp': None if self._lin_comp_spin.value() == 0.0 else self._lin_comp_spin.value(),
+            'use_dependent_model': self._use_dependent_model_check.isChecked(),
+            # Periodogram parameters
+            'per_type': self._per_type_combo.currentText(),
+            'max_per': self._max_per_spin.value(),
+            'prominent': self._prominent_check.isChecked(),
+            # CosinorPy new parameters
+            'model_type': self._model_type_combo.currentText(),
+            'criterium': self._criterium_combo.currentText(),
+            'analysis_method': self._analysis_method_combo.currentText(),
+            'bootstrap_size': self._bootstrap_size_spin.value(),
+            'save_cosinorpy_plots': self._save_cosinorpy_plots_check.isChecked(),
+            # Compare Conditions parameters
+            'comparison_type': self._comparison_type_combo.currentText(),
+            'comparison_method': self._comparison_method_combo.currentText(),
+            'parameters_to_compare': self._get_selected_parameters_to_compare(),
+            'include_lin_comp': self._include_lin_comp_check.isChecked(),
+            # Period per condition (for Independent Models with 2 conditions)
+            'period1': self._period_cond1_spin.value(),
+            'period2': self._period_cond2_spin.value()
         }
-    
+        return params
+
+    def _get_selected_parameters_to_compare(self) -> list:
+        """Get list of selected parameters to compare."""
+        params = []
+        if self._param_amplitude_check.isChecked():
+            params.append('amplitude')
+        if self._param_acrophase_check.isChecked():
+            params.append('acrophase')
+        if self._param_mesor_check.isChecked():
+            params.append('mesor')
+        return params if params else ['amplitude', 'acrophase', 'mesor']  # Default to all if none selected
+
     # =========================================================================
     # PUBLIC API
     # =========================================================================
@@ -820,6 +1982,11 @@ class AnalysisPanel(QWidget):
             for var in variables:
                 item = QListWidgetItem(var)
                 self._var_list.addItem(item)
+
+            # Refresh method list based on whether subject column exists
+            # This ensures dependent methods are only shown when appropriate
+            current_module_index = self._module_combo.currentIndex()
+            self._on_module_changed(current_module_index)
 
         else:  # rosbash
             # Rosbash: Show all genes with search functionality
@@ -864,7 +2031,69 @@ class AnalysisPanel(QWidget):
         self._run_btn.setEnabled(True)
         self._available_variables = self._all_genes if source_type == 'rosbash' else variables
         self._available_conditions = conditions
+
+        # Detect and display data type information
+        self._detect_and_display_data_type()
     
+    def _detect_and_display_data_type(self):
+        """Detect data type and display appropriate recommendations."""
+        if self._loader is None or self._source_type != 'csv':
+            # self._data_info_frame.setVisible(False)
+            return
+
+        try:
+            # Use the loader's dataset info which has already correctly detected columns
+            info = self._loader.get_dataset_info()
+
+            # DEBUG: Print what loader detected
+            print(f"[DEBUG _detect_and_display_data_type]")
+            print(f"  subject_column from loader: {info.subject_column}")
+            print(f"  replicate_column from loader: {info.replicate_column}")
+
+            # Determine data type based on loader's detection
+            # If loader detected a subject column, it's DEPENDENT
+            # Otherwise (including replicate-only data), it's INDEPENDENT
+            if info.subject_column is not None:
+                data_type = "DEPENDENT (Longitudinal)"
+                description = "✓ Same subjects measured at multiple timepoints"
+                recommendation = "Recommended methods: <b>Population Mean</b>"
+                color_bg = "#E8F5E9"
+                color_border = "#4CAF50"
+            elif info.replicate_column is not None or info.subject_column is None:
+                # INDEPENDENT: either has replicate column, or no subject column
+                data_type = "INDEPENDENT"
+                description = "✓ Different subjects/replicates at each timepoint"
+                recommendation = "Recommended methods: <b>Single Cosinor</b>, <b>Multi-Component</b>"
+                color_bg = "#E3F2FD"
+                color_border = "#2196F3"
+            else:
+                data_type = "UNKNOWN"
+                description = "⚠ Could not determine data structure"
+                recommendation = "Check your data format. See documentation for details."
+                color_bg = "#FFF8E1"
+                color_border = "#FFC107"
+
+            # Update labels - DISABLED (panel removed)
+            # self._data_type_label.setText(f"<b>Data Type:</b> {data_type}<br>{description}")
+            # self._method_recommendation_label.setText(f"💡 {recommendation}")
+
+            # Update frame colors
+            # self._data_info_frame.setStyleSheet(f"""
+            #     QFrame {{
+            #         background-color: {color_bg};
+            #         border: 1px solid {color_border};
+            #         border-radius: 4px;
+            #         padding: 8px;
+            #     }}
+            # """)
+
+            # self._data_info_frame.setVisible(True)
+            pass
+
+        except Exception as e:
+            print(f"[DEBUG] Error detecting data type: {e}")
+            # self._data_info_frame.setVisible(False)
+
     def clear_data(self):
         """Clear loaded data."""
         self._loader = None
