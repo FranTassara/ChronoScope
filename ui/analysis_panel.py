@@ -68,6 +68,7 @@ class AnalysisConfig:
     conditions: List[str]
     parameters: Dict[str, Any]
     compare_conditions: Optional[tuple] = None  # (condition1, condition2)
+    clusters: Optional[List[str]] = None  # For Rosbash data: list of selected clusters
 
 
 class AnalysisWorker(QThread):
@@ -115,85 +116,120 @@ class AnalysisWorker(QThread):
             # Map UI method to engine AnalysisType
             analysis_type = self._map_method_to_type(self.config.method)
 
-            total = len(self.config.variables) * len(self.config.conditions)
+            # Calculate total number of analyses
+            # For Rosbash with clusters: variables * conditions * clusters
+            # For CSV or Rosbash without clusters: variables * conditions
+            if self.source_type == 'rosbash' and self.config.clusters:
+                total = len(self.config.variables) * len(self.config.conditions) * len(self.config.clusters)
+            else:
+                total = len(self.config.variables) * len(self.config.conditions)
             current = 0
 
             # Check if this is a pairwise comparison analysis (2 conditions)
             if self.config.compare_conditions:
                 # This is a pairwise comparison - use run_comparison
                 cond1, cond2 = self.config.compare_conditions
-                total = len(self.config.variables)
+
+                # Calculate total: For Rosbash with clusters, analyze each cluster separately
+                if self.source_type == 'rosbash' and self.config.clusters:
+                    total = len(self.config.variables) * len(self.config.clusters)
+                else:
+                    total = len(self.config.variables)
                 current = 0
 
                 for var in self.config.variables:
-                    self.progress.emit(
-                        int(current / total * 100),
-                        f"Comparing {var}: {cond1} vs {cond2}..."
-                    )
+                    # For Rosbash data, iterate over selected clusters
+                    clusters_to_analyze = self.config.clusters if (self.source_type == 'rosbash' and self.config.clusters) else [None]
 
-                    if self.source_type == 'csv':
-                        # Get CSV file path from loader for saving plots
-                        csv_path = getattr(self.loader, '_filepath', None)
-                        result = engine.run_comparison(
-                            data, var, cond1, cond2, analysis_type,
-                            time_col=time_col,
-                            condition_col=condition_col,
-                            parameters=self.config.parameters,
-                            data_file_path=csv_path
+                    for cluster in clusters_to_analyze:
+                        # Update progress message
+                        if cluster:
+                            progress_msg = f"Comparing {var} (cluster: {cluster}): {cond1} vs {cond2}..."
+                        else:
+                            progress_msg = f"Comparing {var}: {cond1} vs {cond2}..."
+
+                        self.progress.emit(
+                            int(current / total * 100),
+                            progress_msg
                         )
-                    else:  # rosbash
-                        # For Rosbash, need special handling
-                        result = None  # TODO: implement rosbash comparison
 
-                    if result and result.success:
-                        self.results.append(result.to_dict())
-                    elif result:
-                        self.results.append(result.to_dict())
+                        if self.source_type == 'csv':
+                            # Get CSV file path from loader for saving plots
+                            csv_path = getattr(self.loader, '_filepath', None)
+                            result = engine.run_comparison(
+                                data, var, cond1, cond2, analysis_type,
+                                time_col=time_col,
+                                condition_col=condition_col,
+                                parameters=self.config.parameters,
+                                data_file_path=csv_path
+                            )
+                        else:  # rosbash
+                            # For Rosbash, compare conditions within specific cluster
+                            result = self._run_rosbash_comparison(var, cond1, cond2, cluster, analysis_type)
 
-                    current += 1
+                        if result and result.success:
+                            self.results.append(result.to_dict())
+                        elif result:
+                            self.results.append(result.to_dict())
+
+                        current += 1
 
             # Special handling for Compare Conditions (all pairs) - Independent and Dependent
             elif analysis_type in (AnalysisType.COSINORPY_COMPARE_INDEPENDENT,
                                   AnalysisType.COSINORPY_COMPARE_DEPENDENT,
                                   AnalysisType.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT,
                                   AnalysisType.COSINORPY_NONLINEAR_COMPARE_DEPENDENT):
-                # Compare all conditions - run ONCE per variable (not per condition)
-                total = len(self.config.variables)
+                # Compare all conditions - run ONCE per variable (or per variable-cluster for Rosbash)
+                # For Rosbash with clusters: variables * clusters
+                if self.source_type == 'rosbash' and self.config.clusters:
+                    total = len(self.config.variables) * len(self.config.clusters)
+                else:
+                    total = len(self.config.variables)
                 current = 0
 
                 for var in self.config.variables:
-                    self.progress.emit(
-                        int(current / total * 100),
-                        f"Comparing all conditions for {var}..."
-                    )
+                    # For Rosbash data, iterate over selected clusters
+                    clusters_to_analyze = self.config.clusters if (self.source_type == 'rosbash' and self.config.clusters) else [None]
 
-                    if self.source_type == 'csv':
-                        # Get CSV file path from loader for saving plots
-                        csv_path = getattr(self.loader, '_filepath', None)
-
-                        # Use first condition as placeholder (engine will use all conditions)
-                        result = engine.run_analysis(
-                            data, var, self.config.conditions[0], analysis_type,
-                            time_col=time_col,
-                            condition_col=condition_col,
-                            parameters=self.config.parameters,
-                            data_file_path=csv_path
-                        )
-                    else:  # rosbash
-                        # For Rosbash, need special handling
-                        result = None  # TODO: implement rosbash comparison
-
-                    # Handle both single result and list of results
-                    if result:
-                        if isinstance(result, list):
-                            # Multiple comparison results (multiple pairs)
-                            for res in result:
-                                self.results.append(res.to_dict() if hasattr(res, 'to_dict') else res)
+                    for cluster in clusters_to_analyze:
+                        # Update progress message
+                        if cluster:
+                            progress_msg = f"Comparing all conditions for {var} (cluster: {cluster})..."
                         else:
-                            # Single result
-                            self.results.append(result.to_dict() if hasattr(result, 'to_dict') else result)
+                            progress_msg = f"Comparing all conditions for {var}..."
 
-                    current += 1
+                        self.progress.emit(
+                            int(current / total * 100),
+                            progress_msg
+                        )
+
+                        if self.source_type == 'csv':
+                            # Get CSV file path from loader for saving plots
+                            csv_path = getattr(self.loader, '_filepath', None)
+
+                            # Use first condition as placeholder (engine will use all conditions)
+                            result = engine.run_analysis(
+                                data, var, self.config.conditions[0], analysis_type,
+                                time_col=time_col,
+                                condition_col=condition_col,
+                                parameters=self.config.parameters,
+                                data_file_path=csv_path
+                            )
+                        else:  # rosbash
+                            # For Rosbash, prepare data with all conditions for specific cluster
+                            result = self._run_rosbash_compare_all(var, self.config.conditions, cluster, analysis_type)
+
+                        # Handle both single result and list of results
+                        if result:
+                            if isinstance(result, list):
+                                # Multiple comparison results (multiple pairs)
+                                for res in result:
+                                    self.results.append(res.to_dict() if hasattr(res, 'to_dict') else res)
+                            else:
+                                # Single result
+                                self.results.append(result.to_dict() if hasattr(result, 'to_dict') else result)
+
+                        current += 1
 
                 self.progress.emit(100, "Complete")
 
@@ -235,47 +271,57 @@ class AnalysisWorker(QThread):
                 # Regular single analysis
                 for var in self.config.variables:
                     for cond in self.config.conditions:
-                        self.progress.emit(
-                            int(current / total * 100),
-                            f"Analyzing {var} in {cond}..."
-                        )
+                        # For Rosbash data, iterate over selected clusters
+                        clusters_to_analyze = self.config.clusters if (self.source_type == 'rosbash' and self.config.clusters) else [None]
 
-                        if self.source_type == 'csv':
-                            # Get CSV file path from loader for saving plots
-                            csv_path = getattr(self.loader, '_filepath', None)
-                            result = engine.run_analysis(
-                                data, var, cond, analysis_type,
-                                time_col=time_col,
-                                condition_col=condition_col,
-                                parameters=self.config.parameters,
-                                data_file_path=csv_path
-                            )
-                        else:  # rosbash
-                            # For Rosbash, need special handling
-                            result = self._run_rosbash_analysis(var, cond, analysis_type)
-
-                        # Handle both single result and list of results (for multiple periods)
-                        if result:
-                            if isinstance(result, list):
-                                # Multiple results (e.g., multiple periods tested)
-                                for res in result:
-                                    if res.success:
-                                        self.results.append(res.to_dict())
+                        for cluster in clusters_to_analyze:
+                            # Update progress message
+                            if cluster:
+                                progress_msg = f"Analyzing {var} in {cond} (cluster: {cluster})..."
                             else:
-                                # Single result
-                                if result.success:
-                                    self.results.append(result.to_dict())
+                                progress_msg = f"Analyzing {var} in {cond}..."
 
-                                    # Check if auto-components was used and emit signal
-                                    if self.config.parameters.get('auto_components', False) and result.n_components is not None:
-                                        self.detected_n_components = result.n_components
-                                        self.components_detected.emit(result.n_components, result.p_value or 0.0)
-                                        print(f"[DEBUG Worker] Auto-components detected: {result.n_components} components, p-value: {result.p_value}")
-                        elif result:
-                            # Include failed results with error message
-                            self.results.append(result.to_dict())
+                            self.progress.emit(
+                                int(current / total * 100),
+                                progress_msg
+                            )
 
-                        current += 1
+                            if self.source_type == 'csv':
+                                # Get CSV file path from loader for saving plots
+                                csv_path = getattr(self.loader, '_filepath', None)
+                                result = engine.run_analysis(
+                                    data, var, cond, analysis_type,
+                                    time_col=time_col,
+                                    condition_col=condition_col,
+                                    parameters=self.config.parameters,
+                                    data_file_path=csv_path
+                                )
+                            else:  # rosbash
+                                # For Rosbash, need special handling with cluster
+                                result = self._run_rosbash_analysis(var, cond, cluster, analysis_type)
+
+                            # Handle both single result and list of results (for multiple periods)
+                            if result:
+                                if isinstance(result, list):
+                                    # Multiple results (e.g., multiple periods tested)
+                                    for res in result:
+                                        if res.success:
+                                            self.results.append(res.to_dict())
+                                else:
+                                    # Single result
+                                    if result.success:
+                                        self.results.append(result.to_dict())
+
+                                        # Check if auto-components was used and emit signal
+                                        if self.config.parameters.get('auto_components', False) and result.n_components is not None:
+                                            self.detected_n_components = result.n_components
+                                            self.components_detected.emit(result.n_components, result.p_value or 0.0)
+                                            print(f"[DEBUG Worker] Auto-components detected: {result.n_components} components, p-value: {result.p_value}")
+                            elif result:
+                                # Include failed results with error message
+                                self.results.append(result.to_dict())
+
+                            current += 1
 
             self.progress.emit(100, "Complete")
             self.finished.emit(True, self.results, "Analysis completed successfully")
@@ -317,20 +363,219 @@ class AnalysisWorker(QThread):
         }
         return mapping.get(method, AnalysisType.COSINORPY_PERIODOGRAM)
 
-    def _run_rosbash_analysis(self, gene: str, condition: str, analysis_type):
-        """Run analysis on Rosbash data (placeholder for now)."""
-        from core.analysis_engine import AnalysisResult
+    def _run_rosbash_analysis(self, gene: str, condition: str, cluster: Optional[str], analysis_type):
+        """Run analysis on Rosbash data."""
+        from core.analysis_engine import AnalysisEngine, AnalysisResult
 
-        # TODO: Implement Rosbash data analysis
-        # This would require extracting the gene expression data from the HDF5
-        # and formatting it properly for the analysis engine
-        return AnalysisResult(
-            variable=gene,
-            condition=condition,
-            method=analysis_type.value,
-            success=False,
-            message="Rosbash analysis not yet implemented"
-        )
+        try:
+            # Check if gene exists in dataset
+            if not self.loader.gene_exists(gene):
+                return AnalysisResult(
+                    variable=gene,
+                    condition=condition,
+                    method=analysis_type.value,
+                    success=False,
+                    message=f"Gene '{gene}' not found in dataset"
+                )
+
+            # Get gene expression data from Rosbash loader for specific cluster
+            try:
+                df = self.loader.get_gene_expression_df(
+                    gene=gene,
+                    condition=condition,
+                    cluster=cluster,  # Use specified cluster
+                    use_log1p=True  # Use log1p normalized data
+                )
+            except Exception as e:
+                return AnalysisResult(
+                    variable=gene,
+                    condition=condition,
+                    method=analysis_type.value,
+                    success=False,
+                    message=f"Failed to extract gene expression: {str(e)}"
+                )
+
+            # Run analysis using the engine
+            engine = AnalysisEngine()
+
+            # Include cluster in variable name if specified
+            variable_name = f"{gene} [{cluster}]" if cluster else gene
+
+            result = engine.run_analysis(
+                data=df,
+                variable=gene,  # Gene name (column in df) - must match column name
+                condition=condition,
+                analysis_type=analysis_type,
+                time_col='time',
+                condition_col='condition',
+                parameters=self.config.parameters,
+                data_file_path=None  # Rosbash doesn't have a file path
+            )
+
+            # Update result variable name to include cluster
+            if result and cluster:
+                result.variable = variable_name
+
+            return result
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return AnalysisResult(
+                variable=gene,
+                condition=condition,
+                method=analysis_type.value,
+                success=False,
+                message=f"Analysis error: {str(e)}"
+            )
+
+    def _run_rosbash_comparison(self, gene: str, cond1: str, cond2: str, cluster: Optional[str], analysis_type):
+        """Run pairwise comparison analysis on Rosbash data."""
+        from core.analysis_engine import AnalysisEngine, ComparisonResult
+
+        try:
+            # Check if gene exists
+            if not self.loader.gene_exists(gene):
+                return ComparisonResult(
+                    variable=gene,
+                    condition1=cond1,
+                    condition2=cond2,
+                    method=analysis_type.value,
+                    success=False,
+                    message=f"Gene '{gene}' not found in dataset"
+                )
+
+            # Get data for both conditions combined for specific cluster
+            try:
+                df = self.loader.prepare_for_circacompare(
+                    gene=gene,
+                    condition1=cond1,
+                    condition2=cond2,
+                    cluster=cluster  # Use specified cluster
+                )
+            except Exception as e:
+                return ComparisonResult(
+                    variable=gene,
+                    condition1=cond1,
+                    condition2=cond2,
+                    method=analysis_type.value,
+                    success=False,
+                    message=f"Failed to extract gene expression: {str(e)}"
+                )
+
+            # Run comparison using the engine
+            engine = AnalysisEngine()
+
+            # Include cluster in variable name if specified
+            variable_name = f"{gene} [{cluster}]" if cluster else gene
+
+            result = engine.run_comparison(
+                data=df,
+                variable=gene,  # Gene name (column in df) - must match column name
+                condition1=cond1,
+                condition2=cond2,
+                analysis_type=analysis_type,
+                time_col='time',
+                condition_col='condition',
+                parameters=self.config.parameters,
+                data_file_path=None
+            )
+
+            # Update result variable name to include cluster
+            if result and cluster:
+                result.variable = variable_name
+
+            return result
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return ComparisonResult(
+                variable=gene,
+                condition1=cond1,
+                condition2=cond2,
+                method=analysis_type.value,
+                success=False,
+                message=f"Comparison error: {str(e)}"
+            )
+
+    def _run_rosbash_compare_all(self, gene: str, conditions: List[str], cluster: Optional[str], analysis_type):
+        """Run compare-all analysis on Rosbash data."""
+        from core.analysis_engine import AnalysisEngine, AnalysisResult
+
+        try:
+            # Check if gene exists
+            if not self.loader.gene_exists(gene):
+                return AnalysisResult(
+                    variable=gene,
+                    condition='all',
+                    method=analysis_type.value,
+                    success=False,
+                    message=f"Gene '{gene}' not found in dataset"
+                )
+
+            # Get data for all conditions combined for specific cluster
+            try:
+                # Combine data from all conditions
+                dfs = []
+                for cond in conditions:
+                    df_cond = self.loader.get_gene_expression_df(
+                        gene=gene,
+                        condition=cond,
+                        cluster=cluster,  # Use specified cluster
+                        use_log1p=True
+                    )
+                    dfs.append(df_cond)
+
+                df = pd.concat(dfs, ignore_index=True)
+            except Exception as e:
+                return AnalysisResult(
+                    variable=gene,
+                    condition='all',
+                    method=analysis_type.value,
+                    success=False,
+                    message=f"Failed to extract gene expression: {str(e)}"
+                )
+
+            # Run analysis using the engine (it will handle multiple conditions)
+            engine = AnalysisEngine()
+
+            # Include cluster in variable name if specified
+            variable_name = f"{gene} [{cluster}]" if cluster else gene
+
+            result = engine.run_analysis(
+                data=df,
+                variable=gene,  # Gene name (column in df) - must match column name
+                condition=conditions[0],  # Placeholder, engine will use all
+                analysis_type=analysis_type,
+                time_col='time',
+                condition_col='condition',
+                parameters=self.config.parameters,
+                data_file_path=None
+            )
+
+            # Update result variable name(s) to include cluster
+            if cluster:
+                if result:
+                    if isinstance(result, list):
+                        for res in result:
+                            if hasattr(res, 'variable'):
+                                res.variable = variable_name
+                    elif hasattr(result, 'variable'):
+                        result.variable = variable_name
+
+            return result
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return AnalysisResult(
+                variable=gene,
+                condition='all',
+                method=analysis_type.value,
+                success=False,
+                message=f"Compare-all error: {str(e)}"
+            )
 
 
 class ParameterWidget(QWidget):
@@ -506,7 +751,7 @@ class AnalysisPanel(QWidget):
 
         self._var_list = QListWidget()
         self._var_list.setSelectionMode(QAbstractItemView.MultiSelection)
-        self._var_list.setMaximumHeight(120)
+        # self._var_list.setMaximumHeight(120)  # Commented to allow dynamic resizing
         var_layout.addWidget(self._var_list)
 
         var_btn_layout = QHBoxLayout()
@@ -525,14 +770,14 @@ class AnalysisPanel(QWidget):
         var_btn_layout.addWidget(self._clock_genes_btn)
         var_layout.addLayout(var_btn_layout)
 
-        main_h_layout.addLayout(var_layout)
+        main_h_layout.addLayout(var_layout, 1)  # stretch factor 1
 
         # Conditions
         cond_layout = QVBoxLayout()
         cond_layout.addWidget(QLabel("Conditions:"))
         self._cond_list = QListWidget()
         self._cond_list.setSelectionMode(QAbstractItemView.MultiSelection)
-        self._cond_list.setMaximumHeight(120)
+        # self._cond_list.setMaximumHeight(120)  # Commented to allow dynamic resizing
         cond_layout.addWidget(self._cond_list)
 
         cond_btn_layout = QHBoxLayout()
@@ -544,18 +789,15 @@ class AnalysisPanel(QWidget):
         cond_btn_layout.addWidget(clear_sel_c)
         cond_layout.addLayout(cond_btn_layout)
 
-        main_h_layout.addLayout(cond_layout)
-
-        layout.addLayout(main_h_layout)
+        main_h_layout.addLayout(cond_layout, 1)  # stretch factor 1
 
         # Rosbash-specific: Cluster selection (hidden for CSV)
-        self._cluster_frame = QFrame()
-        cluster_layout = QVBoxLayout(self._cluster_frame)
-        cluster_layout.setContentsMargins(0, 0, 0, 0)
+        # Now added to the horizontal layout instead of below
+        cluster_layout = QVBoxLayout()
         cluster_layout.addWidget(QLabel("Clusters:"))
         self._cluster_list = QListWidget()
         self._cluster_list.setSelectionMode(QAbstractItemView.MultiSelection)
-        self._cluster_list.setMaximumHeight(100)
+        # self._cluster_list.setMaximumHeight(120)  # Commented to allow dynamic resizing
         cluster_layout.addWidget(self._cluster_list)
 
         cluster_btn_layout = QHBoxLayout()
@@ -567,8 +809,14 @@ class AnalysisPanel(QWidget):
         cluster_btn_layout.addWidget(clear_sel_cl)
         cluster_layout.addLayout(cluster_btn_layout)
 
-        self._cluster_frame.setVisible(False)
-        layout.addWidget(self._cluster_frame)
+        # Create a container widget for the cluster layout so we can hide/show it
+        self._cluster_container = QWidget()
+        self._cluster_container.setLayout(cluster_layout)
+        self._cluster_container.setVisible(False)
+
+        main_h_layout.addWidget(self._cluster_container, 1)  # stretch factor 1
+
+        layout.addLayout(main_h_layout)
         
         # Comparison selection (for comparison methods)
         self._compare_frame = QFrame()
@@ -585,7 +833,30 @@ class AnalysisPanel(QWidget):
         
         self._compare_frame.setVisible(False)
         layout.addWidget(self._compare_frame)
-        
+
+        # Rosbash comparison type selection (conditions vs clusters)
+        self._rosbash_compare_type_frame = QFrame()
+        rosbash_compare_layout = QVBoxLayout(self._rosbash_compare_type_frame)
+        rosbash_compare_layout.setContentsMargins(0, 5, 0, 5)
+
+        rosbash_label = QLabel("Comparison Type:")
+        rosbash_label.setStyleSheet("font-weight: bold;")
+        rosbash_compare_layout.addWidget(rosbash_label)
+
+        self._rosbash_compare_type_combo = QComboBox()
+        self._rosbash_compare_type_combo.addItems([
+            "Compare Conditions (LD vs DD)"
+            # "Compare Clusters" - Coming in future version
+        ])
+        self._rosbash_compare_type_combo.setToolTip(
+            "Compare Conditions: Compares LD vs DD within each selected cluster\n\n"
+            "Note: Cluster comparison (e.g., LNd vs DN1a) will be available in a future update"
+        )
+        rosbash_compare_layout.addWidget(self._rosbash_compare_type_combo)
+
+        self._rosbash_compare_type_frame.setVisible(False)
+        layout.addWidget(self._rosbash_compare_type_frame)
+
         return group
     
     def _create_parameters_section(self) -> QGroupBox:
@@ -596,7 +867,7 @@ class AnalysisPanel(QWidget):
         # Scroll area for parameters
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setMaximumHeight(250)
+        # scroll.setMaximumHeight(250)  # Commented to allow dynamic resizing
         
         self._params_widget = QWidget()
         self._params_layout = QFormLayout(self._params_widget)
@@ -708,7 +979,7 @@ class AnalysisPanel(QWidget):
         self._period_max_spin.valueChanged.connect(self._on_period_changed)
         pr_layout.addWidget(self._period_max_spin)
 
-        pr_layout.addWidget(QLabel("step"))
+        pr_layout.addWidget(QLabel("Step:"))
 
         self._period_step_spin = QDoubleSpinBox()
         self._period_step_spin.setRange(0.1, 10.0)
@@ -1013,6 +1284,155 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("", self._save_cosinorpy_plots_check)
 
+        # =====================================================================
+        # RHYTHM ANALYSIS - SPECIFIC PARAMETERS
+        # =====================================================================
+
+        # Asymmetry (for JTK and AR-JTK)
+        self._asymmetry_spin = QDoubleSpinBox()
+        self._asymmetry_spin.setRange(0.0, 1.0)
+        self._asymmetry_spin.setValue(0.5)
+        self._asymmetry_spin.setSingleStep(0.1)
+        self._asymmetry_spin.setDecimals(1)
+        self._asymmetry_spin.setToolTip(
+            "Waveform asymmetry (0.0 to 1.0):\n"
+            "- 0.5: Symmetric waveform (default)\n"
+            "- <0.5: Peak earlier in cycle\n"
+            "- >0.5: Peak later in cycle"
+        )
+        self._params_layout.addRow("Asymmetry:", self._asymmetry_spin)
+
+        # AR Order/Lag (for AR-JTK)
+        self._ar_lag_spin = QSpinBox()
+        self._ar_lag_spin.setRange(1, 3)
+        self._ar_lag_spin.setValue(1)
+        self._ar_lag_spin.setToolTip(
+            "Autoregressive lag order:\n"
+            "- 1: Standard (default)\n"
+            "- 2-3: For very noisy data"
+        )
+        self._params_layout.addRow("AR Lag:", self._ar_lag_spin)
+
+        # Pre-whiten (for AR-JTK)
+        self._prewhiten_check = QCheckBox("Force pre-whitening")
+        self._prewhiten_check.setChecked(False)
+        self._prewhiten_check.setToolTip(
+            "Force or disable data pre-whitening before analysis"
+        )
+        self._params_layout.addRow("", self._prewhiten_check)
+
+        # Resolution/Interval (for Cosine-Kendall)
+        self._resolution_spin = QDoubleSpinBox()
+        self._resolution_spin.setRange(0.1, 10.0)
+        self._resolution_spin.setValue(1.0)
+        self._resolution_spin.setSingleStep(0.1)
+        self._resolution_spin.setDecimals(1)
+        self._resolution_spin.setSuffix(" h")
+        self._resolution_spin.setToolTip(
+            "Time resolution for template interpolation.\n"
+            "Smaller values = higher resolution but slower."
+        )
+        self._params_layout.addRow("Resolution:", self._resolution_spin)
+
+        # Search Mode (for Cosinor OLS)
+        self._search_mode_combo = QComboBox()
+        self._search_mode_combo.addItems(['Fixed Period', 'Optimize Period'])
+        self._search_mode_combo.setToolTip(
+            "Period search mode:\n"
+            "- Fixed Period: Use single specified period (e.g., 24h)\n"
+            "- Optimize Period: Search for best period within range"
+        )
+        self._search_mode_combo.currentTextChanged.connect(self._on_search_mode_changed)
+        self._params_layout.addRow("Search Mode:", self._search_mode_combo)
+
+        # Target Period (for Fourier F24)
+        self._target_period_spin = QDoubleSpinBox()
+        self._target_period_spin.setRange(1, 72)
+        self._target_period_spin.setValue(24.0)
+        self._target_period_spin.setSuffix(" h")
+        self._target_period_spin.setToolTip(
+            "Target period to test (typically 24h for circadian rhythms)"
+        )
+        self._params_layout.addRow("Target Period:", self._target_period_spin)
+
+        # N Periods (for Lomb-Scargle oversampling)
+        self._n_periods_spin = QSpinBox()
+        self._n_periods_spin.setRange(100, 10000)
+        self._n_periods_spin.setValue(1000)
+        self._n_periods_spin.setSingleStep(100)
+        self._n_periods_spin.setToolTip(
+            "Number of periods to evaluate in the specified range.\n"
+            "Higher values = more precise peak detection but slower."
+        )
+        self._params_layout.addRow("Oversampling:", self._n_periods_spin)
+
+        # Significance Threshold (for Lomb-Scargle)
+        self._alpha_combo = QComboBox()
+        self._alpha_combo.addItems(['0.05', '0.01', '0.001'])
+        self._alpha_combo.setToolTip(
+            "Significance threshold (alpha level) for rhythm detection"
+        )
+        self._params_layout.addRow("Significance Level:", self._alpha_combo)
+
+        # Wavelet Type (for CWT)
+        self._wavelet_combo = QComboBox()
+        self._wavelet_combo.addItems(['Morlet (cmor1.5-1.0)', 'Ricker (Mexican Hat)'])
+        self._wavelet_combo.setToolTip(
+            "Wavelet type for CWT analysis:\n"
+            "- Morlet: Standard for biological rhythms (default)\n"
+            "- Ricker (Mexican Hat): Alternative wavelet"
+        )
+        self._params_layout.addRow("Wavelet Type:", self._wavelet_combo)
+
+        # Sampling Interval (for CWT)
+        self._sampling_interval_spin = QDoubleSpinBox()
+        self._sampling_interval_spin.setRange(0.1, 24.0)
+        self._sampling_interval_spin.setValue(0.0)  # 0 = auto-detect
+        self._sampling_interval_spin.setSingleStep(0.1)
+        self._sampling_interval_spin.setDecimals(1)
+        self._sampling_interval_spin.setSuffix(" h")
+        self._sampling_interval_spin.setSpecialValueText("Auto-detect")
+        self._sampling_interval_spin.setToolTip(
+            "Sampling interval in hours:\n"
+            "- Auto-detect: Automatically calculate from data (default)\n"
+            "- Manual: Specify if auto-detection fails"
+        )
+        self._params_layout.addRow("Sampling Interval:", self._sampling_interval_spin)
+
+        # Detrending (for Spectral Analysis)
+        self._detrending_check = QCheckBox("Detrend data (remove mean/linear trend)")
+        self._detrending_check.setChecked(True)
+        self._detrending_check.setToolTip(
+            "Remove mean or linear trend before spectral analysis.\n"
+            "Important for FFT-based methods."
+        )
+        self._params_layout.addRow("", self._detrending_check)
+
+        # LME Parameters
+        # Dependent Variable (for LME)
+        self._dependent_var_combo = QComboBox()
+        self._dependent_var_combo.setToolTip(
+            "Dependent variable for Linear Mixed Effects model"
+        )
+        self._params_layout.addRow("Dependent Variable:", self._dependent_var_combo)
+
+        # Fixed Effects (for LME) - Using QListWidget for multi-select
+        self._fixed_effects_list = QListWidget()
+        self._fixed_effects_list.setSelectionMode(QAbstractItemView.MultiSelection)
+        self._fixed_effects_list.setMaximumHeight(80)
+        self._fixed_effects_list.setToolTip(
+            "Select fixed effects (e.g., Genotype, Treatment).\n"
+            "Hold Ctrl to select multiple."
+        )
+        self._params_layout.addRow("Fixed Effects:", self._fixed_effects_list)
+
+        # Random Effect (for LME)
+        self._random_effect_combo = QComboBox()
+        self._random_effect_combo.setToolTip(
+            "Random effect grouping variable (e.g., Subject ID, Day)"
+        )
+        self._params_layout.addRow("Random Effect:", self._random_effect_combo)
+
         # Update visibility based on current method
         self._update_parameter_visibility()
 
@@ -1092,6 +1512,50 @@ class AnalysisPanel(QWidget):
         method_text = self._method_combo.currentText()
         if method_text == "Cosinor (Independent Data)":
             self._update_cosinor_independent_params_visibility()
+
+    def _on_search_mode_changed(self):
+        """Handle changes to Cosinor OLS search mode."""
+        method_text = self._method_combo.currentText()
+        if method_text == "Cosinor (OLS)":
+            self._update_cosinor_ols_period_visibility()
+
+    def _update_cosinor_ols_period_visibility(self):
+        """Update period widget visibility based on search mode for Cosinor OLS."""
+        search_mode = self._search_mode_combo.currentText()
+
+        # Get the period widget (it's a composite widget with min, max, step)
+        # We need to find it in the layout
+        for i in range(self._params_layout.rowCount()):
+            label_item = self._params_layout.itemAt(i, QFormLayout.LabelRole)
+            if label_item and label_item.widget():
+                label_widget = label_item.widget()
+                if label_widget.text() == "Period:":
+                    field_item = self._params_layout.itemAt(i, QFormLayout.FieldRole)
+                    if field_item and field_item.widget():
+                        period_widget = field_item.widget()
+                        # The period widget is a QWidget containing HBoxLayout with min, "to", max, "Step:", step
+                        layout = period_widget.layout()
+                        if layout:
+                            if search_mode == "Fixed Period":
+                                # Show only the first spinbox (min), hide the rest
+                                # Items: 0=min, 1="to", 2=max, 3="Step:", 4=step
+                                layout.itemAt(0).widget().setVisible(True)  # min spinbox (used as fixed period)
+                                layout.itemAt(1).widget().setVisible(False) # "to" label
+                                layout.itemAt(2).widget().setVisible(False) # max spinbox
+                                layout.itemAt(3).widget().setVisible(False) # "Step:" label
+                                layout.itemAt(4).widget().setVisible(False) # step spinbox
+                                # Update tooltip for clarity
+                                layout.itemAt(0).widget().setToolTip("Fixed period for cosinor analysis (e.g., 24h)")
+                            else:  # "Optimize Period"
+                                # Show all widgets (min, "to", max, "Step:", step)
+                                layout.itemAt(0).widget().setVisible(True)
+                                layout.itemAt(1).widget().setVisible(True)
+                                layout.itemAt(2).widget().setVisible(True)
+                                layout.itemAt(3).widget().setVisible(True)
+                                layout.itemAt(4).widget().setVisible(True)
+                                # Restore original tooltip
+                                layout.itemAt(0).widget().setToolTip("")
+                    break
 
     def _update_cosinor_independent_params_visibility(self):
         """Update parameter visibility for Cosinor (Independent Data) based on n_components and period."""
@@ -1373,6 +1837,21 @@ class AnalysisPanel(QWidget):
         self._hide_checkbox(self._save_cosinorpy_plots_check)
         self._hide_checkbox(self._include_lin_comp_check)
         self._period_multi_cond_info.setVisible(False)
+        # Hide Rhythm Analysis specific parameters
+        self._hide_param("Asymmetry:")
+        self._hide_param("AR Lag:")
+        self._hide_checkbox(self._prewhiten_check)
+        self._hide_param("Resolution:")
+        self._hide_param("Search Mode:")
+        self._hide_param("Target Period:")
+        self._hide_param("Oversampling:")
+        self._hide_param("Significance Level:")
+        self._hide_param("Wavelet Type:")
+        self._hide_param("Sampling Interval:")
+        self._hide_checkbox(self._detrending_check)
+        self._hide_param("Dependent Variable:")
+        self._hide_param("Fixed Effects:")
+        self._hide_param("Random Effect:")
 
         # =====================================================================
         # COSINORPY - NEW REFACTORED METHODS
@@ -1474,24 +1953,64 @@ class AnalysisPanel(QWidget):
         # RHYTHM ANALYSIS
         # =====================================================================
         elif module_text == "Rhythm Analysis":
-            if "Harmonic" in method_text:
-                self._show_param("Period:")
+
+            # 1. JTK Cycle (Python-JTK)
+            if method_text == "JTK Cycle":
+                self._show_param("Period:")  # Period Range (Min-Max-Step)
+                self._show_param("Asymmetry:")
+
+            # 2. AR-JTK
+            elif method_text == "AR-JTK":
+                self._show_param("Period:")  # Period Range (Min-Max-Step)
+                self._show_param("Asymmetry:")
+                self._show_param("AR Lag:")
+                self._show_checkbox(self._prewhiten_check)
+
+            # 3. Cosine-Kendall
+            elif method_text == "Cosine-Kendall":
+                self._show_param("Period:")  # Period Range (Min-Max-Step)
+                self._show_param("Resolution:")
+
+            # 4. Cosinor (OLS)
+            elif method_text == "Cosinor (OLS)":
+                self._show_param("Search Mode:")
+                self._show_param("Period:")  # Period Range (for optimization mode)
+                # Update period widget visibility based on search mode
+                self._update_cosinor_ols_period_visibility()
+
+            # 5. Harmonic Cosinor
+            elif method_text == "Harmonic Cosinor":
+                self._show_param("Period:")  # Fixed Period (single value expected)
                 self._show_param("Harmonics:")
 
-            if "JTK" in method_text or "Lomb" in method_text or "OLS" in method_text:
-                self._show_param("Period Range:")
-
-            if "F24" in method_text:
-                self._show_param("Period:")
+            # 6. Fourier F24
+            elif method_text == "Fourier F24":
+                self._show_param("Target Period:")
                 self._show_param("Permutations:")
 
-            if "Spectral Analysis" in method_text:
+            # 7. Lomb-Scargle
+            elif method_text == "Lomb-Scargle":
+                self._show_param("Period:")  # Period Range (Min-Max)
+                self._show_param("Oversampling:")
+                self._show_param("Significance Level:")
+
+            # 8. Wavelet (CWT)
+            elif method_text == "Wavelet (CWT)":
+                self._show_param("Period:")  # Period Range (Min-Max)
+                self._show_param("Wavelet Type:")
+                self._show_param("Sampling Interval:")
+
+            # 9. Spectral Analysis (Periodogram)
+            elif method_text == "Spectral Analysis (Periodogram)":
                 self._show_param("Periodogram Type:")
                 self._show_param("Max Period:")
-                self._show_param("Period Range:")
+                self._show_checkbox(self._detrending_check)
 
-            if "Wavelet" in method_text or "Linear Mixed" in method_text:
-                self._show_param("Period:")
+            # 10. Linear Mixed Effects
+            elif method_text == "Linear Mixed Effects":
+                self._show_param("Dependent Variable:")
+                self._show_param("Fixed Effects:")
+                self._show_param("Random Effect:")
 
         # =====================================================================
         # COMPARISON FRAME VISIBILITY
@@ -1516,7 +2035,16 @@ class AnalysisPanel(QWidget):
             # For normal single-group methods, show condition list with selection enabled
             self._cond_list.setVisible(True)
             self._cond_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-    
+
+        # =====================================================================
+        # ROSBASH COMPARISON TYPE VISIBILITY
+        # =====================================================================
+        # Show comparison type selector for Rosbash data with comparison methods
+        is_rosbash = self._source_type == 'rosbash'
+        is_comparison_method = (is_pairwise_comparison or is_compare_all_or_conditions)
+
+        self._rosbash_compare_type_frame.setVisible(is_rosbash and is_comparison_method)
+
     def _show_param(self, label: str):
         """Show a parameter row."""
         for i in range(self._params_layout.rowCount()):
@@ -1662,6 +2190,7 @@ class AnalysisPanel(QWidget):
             methods = [
                 ("JTK Cycle", "Nonparametric rhythm detection"),
                 ("AR-JTK", "JTK with autoregressive correction"),
+                ("Cosine-Kendall", "Nonparametric cosine template correlation"),
                 ("Cosinor (OLS)", "Parametric cosinor with period search"),
                 ("Harmonic Cosinor", "Multi-modal rhythm detection"),
                 ("Fourier F24", "Effect size measure (requires 2 replicates)"),
@@ -1780,14 +2309,36 @@ class AnalysisPanel(QWidget):
             if not selected_conds:
                 QMessageBox.warning(self, "No Conditions", "Please select at least one condition.")
                 return
-        
+
+        # Get selected clusters (for Rosbash data only)
+        selected_clusters = None
+        rosbash_compare_type = None
+        if self._source_type == 'rosbash':
+            selected_clusters = [
+                self._cluster_list.item(i).text()
+                for i in range(self._cluster_list.count())
+                if self._cluster_list.item(i).isSelected()
+            ]
+            if not selected_clusters:
+                QMessageBox.warning(self, "No Clusters", "Please select at least one cluster for Rosbash data.")
+                return
+
+            # Get comparison type if visible (for comparison methods)
+            if self._rosbash_compare_type_frame.isVisible():
+                rosbash_compare_type = self._rosbash_compare_type_combo.currentText()
+
         # Build configuration
+        params = self._get_current_parameters()
+        if rosbash_compare_type:
+            params['rosbash_compare_type'] = rosbash_compare_type
+
         config = AnalysisConfig(
             method=self._get_current_method_enum(),
             variables=selected_vars,
             conditions=selected_conds,
-            parameters=self._get_current_parameters(),
-            compare_conditions=compare_conditions
+            parameters=params,
+            compare_conditions=compare_conditions,
+            clusters=selected_clusters
         )
         
         # Start worker
@@ -1884,6 +2435,7 @@ class AnalysisPanel(QWidget):
             # Rhythm Analysis
             (2, "JTK Cycle"): AnalysisMethod.RHYTHM_JTK,
             (2, "AR-JTK"): AnalysisMethod.RHYTHM_AR_JTK,
+            (2, "Cosine-Kendall"): AnalysisMethod.RHYTHM_COSINE_KENDALL,
             (2, "Cosinor (OLS)"): AnalysisMethod.RHYTHM_COSINOR,
             (2, "Harmonic Cosinor"): AnalysisMethod.RHYTHM_HARMONIC,
             (2, "Fourier F24"): AnalysisMethod.RHYTHM_F24,
@@ -1912,6 +2464,13 @@ class AnalysisPanel(QWidget):
             while current <= period_max:
                 period.append(current)
                 current += period_step
+
+        # Get selected fixed effects for LME (if applicable)
+        fixed_effects = [
+            self._fixed_effects_list.item(i).text()
+            for i in range(self._fixed_effects_list.count())
+            if self._fixed_effects_list.item(i).isSelected()
+        ]
 
         params = {
             'n_components': self._parse_components(self._components_edit.text()),
@@ -1944,7 +2503,23 @@ class AnalysisPanel(QWidget):
             'include_lin_comp': self._include_lin_comp_check.isChecked(),
             # Period per condition (for Independent Models with 2 conditions)
             'period1': self._period_cond1_spin.value(),
-            'period2': self._period_cond2_spin.value()
+            'period2': self._period_cond2_spin.value(),
+            # Rhythm Analysis specific parameters
+            'asymmetry': self._asymmetry_spin.value(),
+            'ar_lag': self._ar_lag_spin.value(),
+            'prewhiten': self._prewhiten_check.isChecked(),
+            'resolution': self._resolution_spin.value(),
+            'search_mode': self._search_mode_combo.currentText(),
+            'target_period': self._target_period_spin.value(),
+            'n_periods': self._n_periods_spin.value(),
+            'alpha': float(self._alpha_combo.currentText()),
+            'wavelet': 'cmor1.5-1.0' if 'Morlet' in self._wavelet_combo.currentText() else 'ricker',
+            'sampling_interval': None if self._sampling_interval_spin.value() == 0.0 else self._sampling_interval_spin.value(),
+            'detrending': self._detrending_check.isChecked(),
+            # LME parameters
+            'dependent_variable': self._dependent_var_combo.currentText(),
+            'fixed_effects': fixed_effects,
+            'random_effect': self._random_effect_combo.currentText()
         }
         return params
 
@@ -1976,7 +2551,7 @@ class AnalysisPanel(QWidget):
             self._var_label.setText("Variables:")
             self._gene_search.setVisible(False)
             self._clock_genes_btn.setVisible(False)
-            self._cluster_frame.setVisible(False)
+            self._cluster_container.setVisible(False)
 
             variables = loader.get_variable_columns()
             for var in variables:
@@ -1993,7 +2568,7 @@ class AnalysisPanel(QWidget):
             self._var_label.setText("Genes:")
             self._gene_search.setVisible(True)
             self._clock_genes_btn.setVisible(True)
-            self._cluster_frame.setVisible(True)
+            self._cluster_container.setVisible(True)
 
             # Store all genes for filtering
             self._all_genes = loader.get_gene_names()
@@ -2032,9 +2607,55 @@ class AnalysisPanel(QWidget):
         self._available_variables = self._all_genes if source_type == 'rosbash' else variables
         self._available_conditions = conditions
 
+        # Populate LME comboboxes with available columns (for CSV data)
+        if source_type == 'csv':
+            self._populate_lme_columns(loader)
+
         # Detect and display data type information
         self._detect_and_display_data_type()
     
+    def _populate_lme_columns(self, loader):
+        """Populate LME parameter comboboxes with available columns from the dataset."""
+        try:
+            # Get all columns from the dataset
+            data = loader.get_data()
+            all_columns = data.columns.tolist()
+
+            # Filter out time and condition columns
+            time_col = loader.get_time_column()
+            condition_col = loader._condition_col if hasattr(loader, '_condition_col') and loader._condition_col else 'condition'
+
+            # Get variable columns (numeric columns that are not time/condition)
+            variable_cols = loader.get_variable_columns()
+
+            # Get potential grouping columns (non-numeric or categorical)
+            grouping_cols = [col for col in all_columns if col not in variable_cols and col not in [time_col, condition_col]]
+
+            # Populate dependent variable combobox (typically numeric variables)
+            self._dependent_var_combo.clear()
+            for var in variable_cols:
+                self._dependent_var_combo.addItem(var)
+
+            # Populate fixed effects list (can include time, condition, and other grouping variables)
+            self._fixed_effects_list.clear()
+            potential_fixed_effects = [time_col, condition_col] + grouping_cols
+            for effect in potential_fixed_effects:
+                if effect:  # Skip None values
+                    self._fixed_effects_list.addItem(effect)
+
+            # Populate random effect combobox (typically grouping variables like Subject, Replicate, etc.)
+            self._random_effect_combo.clear()
+            for col in grouping_cols:
+                self._random_effect_combo.addItem(col)
+
+            # If there's a 'subject' column, set it as default for random effect
+            if 'subject' in [c.lower() for c in grouping_cols]:
+                idx = next(i for i, c in enumerate(grouping_cols) if c.lower() == 'subject')
+                self._random_effect_combo.setCurrentIndex(idx)
+
+        except Exception as e:
+            print(f"[WARNING] Failed to populate LME columns: {e}")
+
     def _detect_and_display_data_type(self):
         """Detect data type and display appropriate recommendations."""
         if self._loader is None or self._source_type != 'csv':
@@ -2106,7 +2727,7 @@ class AnalysisPanel(QWidget):
         self._gene_search.clear()
         self._gene_search.setVisible(False)
         self._clock_genes_btn.setVisible(False)
-        self._cluster_frame.setVisible(False)
+        self._cluster_container.setVisible(False)
         self._var_label.setText("Variables:")
         self._run_btn.setEnabled(False)
         if hasattr(self, '_all_genes'):

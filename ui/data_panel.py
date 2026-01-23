@@ -231,7 +231,7 @@ class DataPanel(QWidget):
         layout = QVBoxLayout(group)
         
         self._preview_table = QTableWidget()
-        self._preview_table.setMaximumHeight(200)
+        # self._preview_table.setMaximumHeight(200)  # Commented to allow dynamic resizing
         self._preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         layout.addWidget(self._preview_table)
         

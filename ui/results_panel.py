@@ -471,8 +471,8 @@ class ResultsPanel(QWidget):
         # Check if we have nonlinear comparison results
         has_nonlinear_comparison = any(r.get('amplification_diff') is not None or r.get('lin_comp_diff') is not None for r in self._results)
 
-        # Check if we have periodogram results (Spectral Analysis - shows data)
-        has_spectral = any(r.get('periods') is not None and r.get('method') == 'spectral_analysis' for r in self._results)
+        # Check if we have periodogram results (Spectral Analysis, Lomb-Scargle, F24)
+        has_periodogram = any(r.get('periods') is not None and r.get('method') in ['spectral_analysis', 'lomb_scargle', 'fourier_f24'] for r in self._results)
 
         # Check if we have CosinorPy periodogram (just shows message)
         has_cosinorpy_periodogram = any(r.get('method') == 'cosinorpy_periodogram' for r in self._results)
@@ -503,10 +503,10 @@ class ResultsPanel(QWidget):
             if has_cosinorpy_periodogram:
                 columns = ['variable', 'condition', 'method', 'message']
                 headers = ['Variable', 'Condition', 'Method', 'Status']
-            # For Spectral Analysis, show detailed periodogram data
-            elif has_spectral:
-                columns = ['variable', 'condition', 'method', 'dominant_period', 'message']
-                headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'Peaks']
+            # For periodogram-based methods (Spectral, Lomb-Scargle, F24)
+            elif has_periodogram:
+                columns = ['variable', 'condition', 'method', 'dominant_period', 'p_value', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'P-value', 'Notes']
             else:
                 # Basic identification
                 columns = ['variable', 'condition', 'method', 'n_components']
@@ -706,17 +706,17 @@ class ResultsPanel(QWidget):
         if acrophases:
             self._polar_canvas.plot_polar_acrophase(acrophases, labels)
 
-        # Update periodogram if we have Spectral Analysis results (not CosinorPy periodogram)
-        spectral_results = [r for r in self._results if r.get('periods') is not None and r.get('method') == 'spectral_analysis']
-        if spectral_results:
-            self._update_periodogram_plot(spectral_results[0])
+        # Update periodogram if we have periodogram-based results (not CosinorPy periodogram)
+        periodogram_results = [r for r in self._results if r.get('periods') is not None and r.get('method') in ['spectral_analysis', 'lomb_scargle', 'fourier_f24']]
+        if periodogram_results:
+            self._update_periodogram_plot(periodogram_results[0])
 
         # Update fit plot with first result
         if self._results:
             self._update_fit_plot(self._results[0])
     
     def _update_fit_plot(self, result: Dict):
-        """Update cosinor fit plot for selected result."""
+        """Update plot for selected result based on analysis method."""
         # Check if this is a comparison result (has different structure)
         is_comparison = 'condition1' in result and 'condition2' in result
 
@@ -725,6 +725,30 @@ class ResultsPanel(QWidget):
             self._plot_comparison_fit(result)
             return
 
+        # Get the analysis method to determine plot type
+        method = result.get('method', '')
+
+        # Methods that show PERIODOGRAM instead of cosinor fit
+        if method in ['lomb_scargle', 'spectral_analysis', 'fourier_f24']:
+            self._plot_periodogram_result(result)
+            return
+
+        # Methods that show SCALOGRAM (wavelet)
+        if method == 'cwt':
+            self._plot_scalogram_result(result)
+            return
+
+        # Methods that show only TEXT/TABLE (no fit plot)
+        if method == 'lme':
+            self._plot_lme_result(result)
+            return
+
+        # Default: Show cosinor fit for methods that have fitted curves
+        # (jtk, ar_jtk, cosine_kendall, cosinor_ols, harmonic_cosinor)
+        self._plot_cosinor_result(result)
+
+    def _plot_cosinor_result(self, result: Dict):
+        """Plot cosinor fit for rhythm methods."""
         mesor = result.get('mesor')
         amplitude = result.get('amplitude')
         acrophase_rad = result.get('acrophase', result.get('acrophase_rad'))
@@ -756,6 +780,115 @@ class ResultsPanel(QWidget):
             times, values, mesor, amplitude, acrophase_rad,
             period, title=variable, condition=condition
         )
+
+    def _plot_periodogram_result(self, result: Dict):
+        """Plot periodogram for Lomb-Scargle, Spectral Analysis, or Fourier F24."""
+        self._fit_canvas.clear()
+        ax = self._fit_canvas.axes
+
+        method = result.get('method', '')
+        variable = result.get('variable', '')
+        condition = result.get('condition', '')
+
+        # Get periodogram data
+        periods = result.get('periods')
+        power_spectrum = result.get('power_spectrum')
+
+        if periods is not None and power_spectrum is not None:
+            # Plot power spectrum
+            ax.plot(periods, power_spectrum, 'b-', linewidth=2, label='Power')
+
+            # Mark dominant period
+            dominant_period = result.get('dominant_period')
+            if dominant_period is not None:
+                ax.axvline(x=dominant_period, color='green', linestyle='--',
+                          linewidth=2, label=f'Peak: {dominant_period:.2f}h')
+
+            # Add significance threshold if available
+            if method == 'lomb_scargle':
+                fap = result.get('p_value')  # False Alarm Probability
+                if fap is not None and fap < 1.0:
+                    # Estimate threshold from FAP (simplified)
+                    # For Lomb-Scargle, power threshold ≈ -ln(FAP)
+                    threshold = -np.log(max(fap, 1e-10))
+                    ax.axhline(y=threshold, color='red', linestyle='--',
+                              linewidth=1, label=f'Threshold (FAP={fap:.3f})')
+
+            elif method == 'spectral_analysis':
+                threshold = result.get('threshold')
+                if threshold is not None:
+                    ax.axhline(y=threshold, color='red', linestyle='--',
+                              linewidth=1, label=f'Threshold (p=0.05)')
+
+            ax.set_xlabel('Period (hours)', fontsize=10)
+            ax.set_ylabel('Power', fontsize=10)
+            ax.set_title(f'{method.upper()}: {variable} - {condition}', fontsize=11, fontweight='bold')
+            ax.legend(loc='best')
+            ax.grid(True, alpha=0.3)
+        else:
+            # No periodogram data available
+            ax.text(0.5, 0.5, f'No periodogram data available\n({method})',
+                   ha='center', va='center', transform=ax.transAxes,
+                   fontsize=12, color='gray')
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+
+        self._fit_canvas.draw()
+
+    def _plot_scalogram_result(self, result: Dict):
+        """Plot scalogram for Wavelet (CWT) analysis."""
+        self._fit_canvas.clear()
+        ax = self._fit_canvas.axes
+
+        variable = result.get('variable', '')
+        condition = result.get('condition', '')
+        dominant_period = result.get('dominant_period', result.get('period'))
+
+        # For now, show a message indicating CWT results
+        # Full scalogram plotting would require storing the full CWT coefficients
+        message = f"Wavelet (CWT) Analysis\n\n"
+        message += f"Variable: {variable}\n"
+        message += f"Condition: {condition}\n\n"
+        if dominant_period is not None:
+            message += f"Dominant Period: {dominant_period:.2f} h\n"
+
+        mean_power = result.get('power')
+        if mean_power is not None:
+            message += f"Mean Power: {mean_power:.4f}\n"
+
+        ax.text(0.5, 0.5, message,
+               ha='center', va='center', transform=ax.transAxes,
+               fontsize=11, family='monospace',
+               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+
+        self._fit_canvas.draw()
+
+    def _plot_lme_result(self, result: Dict):
+        """Plot Linear Mixed Effects results (text summary)."""
+        self._fit_canvas.clear()
+        ax = self._fit_canvas.axes
+
+        variable = result.get('variable', '')
+        condition = result.get('condition', '')
+
+        # Show text summary of LME results
+        message = f"Linear Mixed Effects Model\n\n"
+        message += f"Variable: {variable}\n"
+        message += f"Condition: {condition}\n\n"
+        message += "See results table for detailed statistics"
+
+        ax.text(0.5, 0.5, message,
+               ha='center', va='center', transform=ax.transAxes,
+               fontsize=11, family='monospace',
+               bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+
+        self._fit_canvas.draw()
 
     def _plot_comparison_fit(self, result: Dict):
         """Plot cosinor fits for both conditions in a comparison."""

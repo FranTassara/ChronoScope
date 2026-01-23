@@ -1994,14 +1994,28 @@ class AnalysisEngine:
         from .rhythm_analysis import _run_discrete_jtk
         import pandas as pd
 
-        period_range = parameters.get('period_range', None)
-        if period_range is None:
+        # Get period range - support both period_range tuple and period list
+        period = parameters.get('period', None)
+        if period is not None:
+            if isinstance(period, list):
+                period_range = [int(p) for p in period]
+            else:
+                period_range = [int(period)]
+        else:
             period_range = list(range(20, 29))  # Default circadian range
+
+        # Get asymmetry parameter (default: 0.5 for symmetric)
+        asymmetry = parameters.get('asymmetry', 0.5)
+        asymmetries = [asymmetry] if asymmetry else [0.5]
 
         # Create series with time as index
         series = pd.Series(values, index=times)
 
-        result = _run_discrete_jtk(series, period_range=period_range)
+        result = _run_discrete_jtk(
+            series,
+            period_range=period_range,
+            asymmetries=asymmetries
+        )
 
         if result is None:
             return AnalysisResult(
@@ -2035,9 +2049,28 @@ class AnalysisEngine:
         """Run OLS cosinor with period search."""
         from .rhythm_analysis import _fit_cosinor, DefaultPeriodRanges
 
-        period_range = parameters.get('period_range', None)
-        if period_range is None:
-            period_range = DefaultPeriodRanges.CIRCADIAN
+        # Handle search mode
+        search_mode = parameters.get('search_mode', 'Optimize Period')
+        period = parameters.get('period', None)
+
+        if search_mode == 'Fixed Period':
+            # Use single fixed period
+            if period is not None:
+                if isinstance(period, list):
+                    period_range = [period[0]]  # Use first value if list
+                else:
+                    period_range = [period]
+            else:
+                period_range = [24.0]  # Default to 24h
+        else:
+            # Optimize Period mode - use period range
+            if period is not None:
+                if isinstance(period, list):
+                    period_range = period
+                else:
+                    period_range = DefaultPeriodRanges.CIRCADIAN
+            else:
+                period_range = DefaultPeriodRanges.CIRCADIAN
 
         result = _fit_cosinor(times, values, period_range=period_range)
 
@@ -2990,9 +3023,19 @@ class AnalysisEngine:
         from .rhythm_analysis import _run_ar_jtk
         import pandas as pd
 
-        period_range = parameters.get('period_range', None)
-        if period_range is None:
+        # Get period range - support both period_range tuple and period list
+        period = parameters.get('period', None)
+        if period is not None:
+            if isinstance(period, list):
+                period_range = [int(p) for p in period]
+            else:
+                period_range = [int(period)]
+        else:
             period_range = list(range(20, 29))  # Default circadian range
+
+        # Get asymmetry parameter (default: 0.5 for symmetric)
+        asymmetry = parameters.get('asymmetry', 0.5)
+        asymmetries = [asymmetry] if asymmetry else [0.5]
 
         ar_lag = parameters.get('ar_lag', 1)
         ljungbox_lag = parameters.get('ljungbox_lag', 10)
@@ -3004,6 +3047,7 @@ class AnalysisEngine:
             result, autocorr_detected = _run_ar_jtk(
                 series,
                 period_range=period_range,
+                asymmetries=asymmetries,
                 ar_lag=ar_lag,
                 ljungbox_lag=ljungbox_lag
             )
@@ -3050,11 +3094,18 @@ class AnalysisEngine:
         from .rhythm_analysis import _run_cosine_kendall, DefaultPeriodRanges
         import pandas as pd
 
-        period_range = parameters.get('period_range', None)
-        if period_range is None:
+        # Get period range - support both period_range tuple and period list
+        period = parameters.get('period', None)
+        if period is not None:
+            if isinstance(period, list):
+                period_range = period
+            else:
+                period_range = DefaultPeriodRanges.CIRCADIAN
+        else:
             period_range = DefaultPeriodRanges.CIRCADIAN
 
-        interval = parameters.get('interval', 1.0)
+        # Get resolution/interval parameter
+        interval = parameters.get('resolution', parameters.get('interval', 1.0))
 
         try:
             # Create series with time as index
@@ -4281,13 +4332,11 @@ class AnalysisEngine:
 
             plot_folder = get_cosinorpy_plot_folder(data_file_path) if save_cosinorpy_plots else None
 
-            # Convert all conditions to CosinorPy format
-            df_cosinorpy = pd.DataFrame()
-            for cond in conditions:
-                df_cond = self._convert_to_cosinorpy_format(
-                    data, variable, cond, time_col, condition_col
-                )
-                df_cosinorpy = pd.concat([df_cosinorpy, df_cond], ignore_index=True)
+            # Convert all conditions to CosinorPy format for comparison
+            # Use the specialized function that formats with hyphen (not underscore)
+            df_cosinorpy = self._convert_to_cosinorpy_format_all_conditions(
+                data, variable, time_col, condition_col
+            )
 
             # Load data
             self._cosinor.load_data(df_cosinorpy, DataType.INDEPENDENT)
@@ -4383,13 +4432,11 @@ class AnalysisEngine:
             plot_folder = get_cosinorpy_plot_folder(data_file_path) if save_cosinorpy_plots else None
             print(f"[DEBUG] save_cosinorpy_plots={save_cosinorpy_plots}, data_file_path={data_file_path}, plot_folder={plot_folder}")
 
-            # Convert all conditions to CosinorPy format (dependent/population format)
-            df_cosinorpy = pd.DataFrame()
-            for cond in conditions:
-                df_cond = self._convert_to_cosinorpy_format(
-                    data, variable, cond, time_col, condition_col, subject_col
-                )
-                df_cosinorpy = pd.concat([df_cosinorpy, df_cond], ignore_index=True)
+            # Convert all conditions to CosinorPy format for comparison (dependent/population format)
+            # Use the specialized function that formats with hyphen (not underscore)
+            df_cosinorpy = self._convert_to_cosinorpy_format_population_all_conditions(
+                data, variable, time_col, condition_col, subject_col
+            )
 
             print(f"[DEBUG] Converted DataFrame shape: {df_cosinorpy.shape}")
             print(f"[DEBUG] Unique test values: {df_cosinorpy['test'].unique()}")

@@ -286,7 +286,8 @@ https://github.com/FranTassara/circascope
             info = loader.get_dataset_info()
             status = f"CSV: {info.n_rows} rows, {len(info.variable_columns)} variables"
         else:
-            status = f"Rosbash: {len(loader._selected_genes)} genes selected"
+            info = loader.get_dataset_info()
+            status = f"Rosbash: {info.n_genes} genes, {info.n_cells} cells"
         
         self._data_status.setText(status)
         self._data_status.setStyleSheet("color: green;")
