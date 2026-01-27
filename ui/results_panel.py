@@ -27,6 +27,65 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
 
+# =============================================================================
+# METHOD GROUPS FOR TAB VISIBILITY
+# =============================================================================
+
+# Methods that show Cosinor Fit, Polar Acrophase, Parameter Bars
+COSINOR_METHODS = {
+    'cosinorpy_independent',
+    'cosinorpy_dependent',
+    'cosinorpy_nonlinear_independent',
+    'cosinorpy_nonlinear_dependent',
+    'cosinorpy_single',
+    'cosinorpy_multi',
+    'cosinorpy_population',
+    'cosinorpy_nonlinear',
+    'jtk',
+    'ar_jtk',
+    'cosine_kendall',
+    'cosinor_ols',
+    'harmonic_cosinor',
+}
+
+# Methods that show Periodogram, Polar (if acrophase), Parameter Bars
+PERIODOGRAM_METHODS = {
+    'lomb_scargle',
+    'spectral_analysis',
+    'fourier_f24',
+}
+
+# Methods that show only text summary (Scalogram/CWT results)
+SCALOGRAM_METHODS = {
+    'cwt',
+}
+
+# Methods that show only text summary (LME results)
+TEXT_ONLY_METHODS = {
+    'lme',
+}
+
+# CosinorPy periodogram - saves plots to directory, no visualization in tabs
+COSINORPY_PERIODOGRAM_METHOD = 'cosinorpy_periodogram'
+
+# Comparison methods
+COMPARISON_METHODS = {
+    'cosinorpy_compare',
+    'cosinorpy_compare_pooled',
+    'cosinorpy_compare_independent_models',
+    'cosinorpy_compare_multi',
+    'cosinorpy_compare_limorhyde',
+    'cosinorpy_compare_independent',
+    'cosinorpy_compare_dependent',
+    'cosinorpy_nonlinear_compare_independent',
+    'cosinorpy_nonlinear_compare_dependent',
+    'cosinorpy_compare_all',
+    'cosinorpy_compare_all_limo',
+    'cosinorpy_limorhyde',
+    'cosinorpy_compare_nonlinear',
+}
+
+
 class PlotCanvas(FigureCanvas):
     """Matplotlib canvas widget for embedding plots."""
     
@@ -65,8 +124,9 @@ class PlotCanvas(FigureCanvas):
         ax.scatter(times, values, alpha=0.6, label='Data', color='steelblue')
         
         # Plot fit curve
+        # Formula: y = mesor + amplitude * cos(2π * t / period - acrophase)
         t_fit = np.linspace(0, period, 200)
-        y_fit = mesor + amplitude * np.cos(2 * np.pi * t_fit / period + acrophase_rad)
+        y_fit = mesor + amplitude * np.cos(2 * np.pi * t_fit / period - acrophase_rad)
         ax.plot(t_fit, y_fit, 'r-', linewidth=2, label='Cosinor Fit')
         
         # Add horizontal line at MESOR
@@ -95,16 +155,17 @@ class PlotCanvas(FigureCanvas):
         t_fit = np.linspace(0, period, 200)
         
         # Group 0
+        # Formula: y = mesor + amplitude * cos(2π * t / period - acrophase)
         mesor_g0 = result.get('mesor_g0', 0)
         amp_g0 = result.get('amplitude_g0', 0)
         acr_g0 = result.get('acrophase_g0', 0)
-        y_g0 = mesor_g0 + amp_g0 * np.cos(2 * np.pi * t_fit / period + acr_g0)
+        y_g0 = mesor_g0 + amp_g0 * np.cos(2 * np.pi * t_fit / period - acr_g0)
 
         # Group 1
         mesor_g1 = result.get('mesor_g1', 0)
         amp_g1 = result.get('amplitude_g1', 0)
         acr_g1 = result.get('acrophase_g1', 0)
-        y_g1 = mesor_g1 + amp_g1 * np.cos(2 * np.pi * t_fit / period + acr_g1)
+        y_g1 = mesor_g1 + amp_g1 * np.cos(2 * np.pi * t_fit / period - acr_g1)
         
         cond1 = result.get('condition1', 'Group 0')
         cond2 = result.get('condition2', 'Group 1')
@@ -128,14 +189,15 @@ class PlotCanvas(FigureCanvas):
         period: float = 24.0,
         title: str = "Acrophase Distribution"
     ):
-        """Plot acrophases on a polar plot."""
+        """Plot acrophases on a polar plot with legend on the side."""
         self.fig.clear()
+
+        # Create subplot with space for legend on the right
         ax = self.fig.add_subplot(111, projection='polar')
 
         # Filter out None values and convert hours to radians
         valid_data = [(h, l) for h, l in zip(acrophases_hours, labels) if h is not None]
         if not valid_data:
-            # No valid data to plot
             ax.text(0.5, 0.5, 'No acrophase data available',
                    ha='center', va='center', transform=ax.transAxes)
             self.draw()
@@ -143,27 +205,36 @@ class PlotCanvas(FigureCanvas):
 
         valid_hours, valid_labels = zip(*valid_data)
         thetas = [2 * np.pi * h / period for h in valid_hours]
-        
-        # Plot each point
+
+        # Plot each point with label for legend
         colors = plt.cm.tab10(np.linspace(0, 1, len(thetas)))
 
         for theta, label, color in zip(thetas, valid_labels, colors):
             ax.scatter(theta, 1, s=100, c=[color], label=label, zorder=5)
-            ax.annotate(label, (theta, 1.15), ha='center', fontsize=8)
-        
+
         # Configure polar plot
         ax.set_theta_zero_location('N')  # 0 at top (ZT0)
         ax.set_theta_direction(-1)  # Clockwise
-        
+
         # Set ticks for 24-hour clock
         ax.set_xticks(np.linspace(0, 2*np.pi, 9)[:-1])
         ax.set_xticklabels([f'ZT{int(h)}' for h in np.linspace(0, 24, 9)[:-1]])
-        
-        ax.set_ylim(0, 1.3)
+
+        ax.set_ylim(0, 1.2)
         ax.set_yticks([])
         ax.set_title(title, y=1.08)
-        
+
+        # Add legend outside the plot on the right side
+        ax.legend(
+            loc='center left',
+            bbox_to_anchor=(1.15, 0.5),
+            fontsize=8,
+            framealpha=0.9
+        )
+
+        # Adjust layout to make room for the legend
         self.fig.tight_layout()
+        self.fig.subplots_adjust(right=0.75)
         self.draw()
     
     def plot_bar_parameters(
@@ -226,16 +297,373 @@ class PlotCanvas(FigureCanvas):
         """Plot Lomb-Scargle or other periodogram."""
         self.clear()
         ax = self.axes
-        
+
         ax.plot(periods, power, 'b-', linewidth=1)
         ax.axvline(x=dominant_period, color='red', linestyle='--',
                    label=f'Peak: {dominant_period:.1f}h')
-        
+
         ax.set_xlabel('Period (hours)')
         ax.set_ylabel('Power')
         ax.set_title(title)
         ax.legend()
-        
+
+        self.fig.tight_layout()
+        self.draw()
+
+    def plot_activity_profile(
+        self,
+        profile_data: dict,
+        conditions: list,
+        title: str = "Activity Profile"
+    ):
+        """
+        Plot daily activity profile as heatmap(s) - one per condition.
+
+        Each heatmap shows:
+        - X-axis: ZT time (0-24 hours)
+        - Y-axis: Day number (1, 2, 3, ...)
+        - Color: Mean activity (averaged across all subjects for that day/ZT)
+
+        Args:
+            profile_data: Dict mapping condition name to dict with:
+                - 'days': list of day numbers
+                - 'zt_times': list of ZT timepoints
+                - 'activity_matrix': 2D list [day][zt] of mean activity values
+            conditions: List of condition names
+            title: Plot title
+        """
+        self.fig.clear()
+
+        n_conditions = len(conditions)
+
+        # Find global min/max for consistent color scale across conditions
+        all_values = []
+        for cond in conditions:
+            if cond in profile_data:
+                matrix = profile_data[cond]['activity_matrix']
+                all_values.extend([v for row in matrix for v in row if v is not None])
+
+        if all_values:
+            vmin, vmax = min(all_values), max(all_values)
+        else:
+            vmin, vmax = 0, 1
+
+        # Plot each condition
+        for idx, cond in enumerate(conditions):
+            # Create subplot with space for light/dark bar at top
+            ax = self.fig.add_subplot(n_conditions, 1, idx + 1)
+
+            if cond not in profile_data:
+                ax.text(0.5, 0.5, f'No data for {cond}', ha='center', va='center')
+                continue
+
+            data = profile_data[cond]
+            days = data['days']
+            zt_times = data['zt_times']
+            matrix = np.array(data['activity_matrix'])
+
+            # Extend Y range to add space for light/dark bar above day 1
+            min_day = min(days)
+            max_day = max(days)
+            y_min = min_day - 1.5  # Extra space above for light/dark bar
+
+            # Create heatmap
+            im = ax.imshow(
+                matrix,
+                aspect='auto',
+                cmap='YlOrRd',  # Yellow-Orange-Red colormap
+                vmin=vmin,
+                vmax=vmax,
+                extent=[min(zt_times), max(zt_times), max_day + 0.5, min_day - 0.5],
+                interpolation='nearest'
+            )
+
+            # Add light/dark phase indicator ABOVE the data (in the extra space)
+            bar_y_bottom = min_day - 1.3
+            bar_y_top = min_day - 0.7
+            ax.fill_between([0, 12], bar_y_bottom, bar_y_top, color='yellow', alpha=0.9)
+            ax.fill_between([12, 24], bar_y_bottom, bar_y_top, color='gray', alpha=0.9)
+            ax.text(6, (bar_y_bottom + bar_y_top) / 2, 'Light', ha='center', va='center', fontsize=8)
+            ax.text(18, (bar_y_bottom + bar_y_top) / 2, 'Dark', ha='center', va='center', fontsize=8, color='white')
+
+            # Configure axes
+            ax.set_xlim(0, 24)
+            ax.set_ylim(max_day + 0.5, y_min)
+            ax.set_xlabel('ZT Time (hours)')
+            ax.set_ylabel('Day')
+            ax.set_title(f'{cond}')
+            ax.set_xticks([0, 6, 12, 18, 24])
+            ax.set_xticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'])
+
+            # Set y-ticks to show day numbers (only actual days, not the bar area)
+            if len(days) <= 20:
+                ax.set_yticks(days)
+            else:
+                ax.set_yticks([d for d in days if d % 5 == 0 or d == 1])
+
+            # Add colorbar
+            cbar = self.fig.colorbar(im, ax=ax, shrink=0.8)
+            cbar.set_label('Activity')
+
+        # Add overall title
+        self.fig.suptitle(title, fontsize=12, fontweight='bold')
+        self.fig.tight_layout()
+        self.draw()
+
+    def plot_activity_profile_averaged(
+        self,
+        profile_data: dict,
+        conditions: list,
+        title: str = "Daily Activity Profile (Average)"
+    ):
+        """
+        Plot daily activity profile averaged across all days with mean ± SEM.
+
+        Args:
+            profile_data: Dict mapping condition name to dict with:
+                - 'days': list of day numbers
+                - 'zt_times': list of ZT timepoints
+                - 'activity_matrix': 2D list [day][zt] of mean activity values
+            conditions: List of condition names
+            title: Plot title
+        """
+        self.clear()
+        ax = self.axes
+
+        # Color palette for conditions
+        colors = plt.cm.tab10(np.linspace(0, 1, len(conditions)))
+
+        # Add light/dark phase background
+        ax.axvspan(0, 12, alpha=0.15, color='yellow', label='_Light')
+        ax.axvspan(12, 24, alpha=0.15, color='gray', label='_Dark')
+
+        # Plot each condition
+        for i, cond in enumerate(conditions):
+            if cond not in profile_data:
+                continue
+
+            data = profile_data[cond]
+            zt_times = np.array(data['zt_times'])
+            matrix = np.array(data['activity_matrix'])  # [days][zt]
+
+            # Calculate mean and SEM across days (axis=0)
+            mean = np.nanmean(matrix, axis=0)
+            sem = np.nanstd(matrix, axis=0) / np.sqrt(matrix.shape[0])
+
+            color = colors[i]
+
+            # Plot mean line
+            ax.plot(zt_times, mean, '-', color=color, linewidth=2, label=cond)
+
+            # Plot SEM shading
+            ax.fill_between(zt_times, mean - sem, mean + sem, color=color, alpha=0.3)
+
+        # Configure axes
+        ax.set_xlabel('ZT Time (hours)')
+        ax.set_ylabel('Activity (mean ± SEM)')
+        ax.set_title(title)
+        ax.set_xlim(0, 24)
+        ax.set_xticks([0, 6, 12, 18, 24])
+        ax.set_xticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'])
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+
+        self.fig.tight_layout()
+        self.draw()
+
+    def plot_actogram(
+        self,
+        actogram_data: dict,
+        conditions: list,
+        title: str = "Actogram (Double-Plotted)"
+    ):
+        """
+        Plot double-plotted actogram.
+
+        Shows 48h on X-axis (current day 0-24h, next day 0-24h).
+        Days on Y-axis. Classic visualization for circadian rhythms.
+
+        Args:
+            actogram_data: Dict mapping condition to dict with 'days', 'zt_times', 'matrix'
+            conditions: List of condition names
+            title: Plot title
+        """
+        self.fig.clear()
+
+        n_conditions = len(conditions)
+
+        for idx, cond in enumerate(conditions):
+            ax = self.fig.add_subplot(n_conditions, 1, idx + 1)
+
+            if cond not in actogram_data:
+                ax.text(0.5, 0.5, f'No data for {cond}', ha='center', va='center')
+                continue
+
+            data = actogram_data[cond]
+            days = data['days']
+            zt_times = data['zt_times']
+            matrix = np.array(data['matrix'])
+
+            if len(matrix) == 0:
+                ax.text(0.5, 0.5, f'No data for {cond}', ha='center', va='center')
+                continue
+
+            # Create actogram using bar representation
+            n_days = len(days)
+            n_bins = len(matrix[0]) if len(matrix) > 0 else 0
+            bin_width = 48.0 / n_bins if n_bins > 0 else 1
+
+            # Normalize for display
+            max_val = np.max(matrix) if np.max(matrix) > 0 else 1
+
+            for i, day in enumerate(days):
+                row = matrix[i]
+                for j, val in enumerate(row):
+                    if val > 0:
+                        x = j * bin_width
+                        height = 0.8 * (val / max_val)
+                        ax.bar(x, height, width=bin_width, bottom=n_days - i - 1,
+                               color='black', align='edge', linewidth=0)
+
+            # Add light/dark shading (0-12 light, 12-24 dark, 24-36 light, 36-48 dark)
+            ax.axvspan(0, 12, alpha=0.1, color='yellow')
+            ax.axvspan(12, 24, alpha=0.1, color='gray')
+            ax.axvspan(24, 36, alpha=0.1, color='yellow')
+            ax.axvspan(36, 48, alpha=0.1, color='gray')
+
+            # Configure axes
+            ax.set_xlim(0, 48)
+            ax.set_ylim(0, n_days)
+            ax.set_xlabel('Time (hours)')
+            ax.set_ylabel('Day')
+            ax.set_title(f'{cond}')
+            ax.set_xticks([0, 6, 12, 18, 24, 30, 36, 42, 48])
+            ax.set_xticklabels(['0', '6', '12', '18', '24', '30', '36', '42', '48'])
+
+            # Y-ticks: show day numbers
+            if n_days <= 20:
+                ax.set_yticks([n_days - d for d in days])
+                ax.set_yticklabels([str(d) for d in days])
+            else:
+                tick_days = [d for d in days if d % 5 == 0 or d == 1]
+                ax.set_yticks([n_days - d for d in tick_days])
+                ax.set_yticklabels([str(d) for d in tick_days])
+
+        self.fig.suptitle(title, fontsize=12, fontweight='bold')
+        self.fig.tight_layout()
+        self.draw()
+
+    def plot_total_activity(
+        self,
+        total_activity_data: dict,
+        conditions: list,
+        title: str = "Total Daily Activity"
+    ):
+        """
+        Plot total activity per day for each condition.
+
+        Args:
+            total_activity_data: Dict mapping condition to dict with 'days', 'mean', 'sem'
+            conditions: List of condition names
+            title: Plot title
+        """
+        self.clear()
+        ax = self.axes
+
+        colors = plt.cm.tab10(np.linspace(0, 1, len(conditions)))
+
+        for i, cond in enumerate(conditions):
+            if cond not in total_activity_data:
+                continue
+
+            data = total_activity_data[cond]
+            days = np.array(data['days'])
+            mean = np.array(data['mean'])
+            sem = np.array(data['sem'])
+
+            color = colors[i]
+
+            # Plot line with error band
+            ax.plot(days, mean, '-o', color=color, linewidth=2, markersize=4, label=cond)
+            ax.fill_between(days, mean - sem, mean + sem, color=color, alpha=0.3)
+
+        ax.set_xlabel('Day')
+        ax.set_ylabel('Total Activity (mean ± SEM)')
+        ax.set_title(title)
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+
+        # Set x-ticks to integers
+        all_days = []
+        for cond in conditions:
+            if cond in total_activity_data:
+                all_days.extend(total_activity_data[cond]['days'])
+        if all_days:
+            ax.set_xlim(min(all_days) - 0.5, max(all_days) + 0.5)
+
+        self.fig.tight_layout()
+        self.draw()
+
+    def plot_activity_onset(
+        self,
+        onset_data: dict,
+        conditions: list,
+        title: str = "Activity Onset/Offset"
+    ):
+        """
+        Plot activity onset and offset times for each day.
+
+        Args:
+            onset_data: Dict mapping condition to dict with 'days', 'onset_times', 'offset_times'
+            conditions: List of condition names
+            title: Plot title
+        """
+        self.clear()
+        ax = self.axes
+
+        colors = plt.cm.tab10(np.linspace(0, 1, len(conditions)))
+
+        # Add light/dark phase background
+        ax.axhspan(0, 12, alpha=0.15, color='yellow')
+        ax.axhspan(12, 24, alpha=0.15, color='gray')
+
+        for i, cond in enumerate(conditions):
+            if cond not in onset_data:
+                continue
+
+            data = onset_data[cond]
+            days = data['days']
+            onset_times = data['onset_times']
+            offset_times = data.get('offset_times', [None] * len(days))
+
+            color = colors[i]
+
+            # Plot onset (filled circles)
+            valid_onset = [(d, o) for d, o in zip(days, onset_times) if o is not None]
+            if valid_onset:
+                onset_days, onset_vals = zip(*valid_onset)
+                ax.scatter(onset_days, onset_vals, color=color, s=50, marker='o',
+                          label=f'{cond} onset', alpha=0.8)
+                ax.plot(onset_days, onset_vals, '-', color=color, linewidth=1, alpha=0.4)
+
+            # Plot offset (open triangles)
+            valid_offset = [(d, o) for d, o in zip(days, offset_times) if o is not None]
+            if valid_offset:
+                offset_days, offset_vals = zip(*valid_offset)
+                ax.scatter(offset_days, offset_vals, color=color, s=50, marker='^',
+                          facecolors='none', edgecolors=color, linewidths=1.5,
+                          label=f'{cond} offset', alpha=0.8)
+                ax.plot(offset_days, offset_vals, '--', color=color, linewidth=1, alpha=0.4)
+
+        ax.set_xlabel('Day')
+        ax.set_ylabel('Time (ZT)')
+        ax.set_title(title)
+        ax.set_ylim(0, 24)
+        ax.set_yticks([0, 6, 12, 18, 24])
+        ax.set_yticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'])
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+
         self.fig.tight_layout()
         self.draw()
 
@@ -243,12 +671,12 @@ class PlotCanvas(FigureCanvas):
 class ResultsPanel(QWidget):
     """
     Panel for displaying and exporting analysis results.
-    
+
     Features:
     - Summary table with expandable details
     - Multiple plot types (cosinor fit, polar, bar, periodogram)
     - Export to CSV/Excel and image formats
-    
+
     Signals:
         export_requested: Emitted when user wants to export
     """
@@ -403,9 +831,18 @@ class ResultsPanel(QWidget):
         period_layout.addWidget(period_toolbar)
         period_layout.addWidget(self._period_canvas)
         self._viz_tabs.addTab(period_widget, "Periodogram")
-        
+
+        # Onset plot (for Activity Profile - Activity Onset times)
+        self._onset_canvas = PlotCanvas(self, width=6, height=4)
+        onset_widget = QWidget()
+        onset_layout = QVBoxLayout(onset_widget)
+        onset_toolbar = NavigationToolbar(self._onset_canvas, self)
+        onset_layout.addWidget(onset_toolbar)
+        onset_layout.addWidget(self._onset_canvas)
+        self._viz_tabs.addTab(onset_widget, "Activity Onset")
+
         layout.addWidget(self._viz_tabs)
-        
+
         return group
     
     # =========================================================================
@@ -425,16 +862,6 @@ class ResultsPanel(QWidget):
     
     def add_results(self, results: List[Dict[str, Any]]):
         """Add new results to existing."""
-        print(f"[DEBUG] ResultsPanel.add_results() called with {len(results)} results")
-        if results:
-            print(f"[DEBUG] First result keys: {list(results[0].keys())[:10]}...")
-            print(f"[DEBUG] First result variable: {results[0].get('variable')}")
-            print(f"[DEBUG] First result condition: {results[0].get('condition')}")
-            print(f"[DEBUG] First result mesor: {results[0].get('mesor')}")
-            print(f"[DEBUG] First result amplitude: {results[0].get('amplitude')}")
-            print(f"[DEBUG] First result acrophase_hours: {results[0].get('acrophase_hours')}")
-            print(f"[DEBUG] First result p_value: {results[0].get('p_value')}")
-
         self._results.extend(results)
         self._update_table()
         self._update_plots()
@@ -443,7 +870,6 @@ class ResultsPanel(QWidget):
         self._results_label.setText(
             f"{len(self._results)} results ({n_sig} significant)"
         )
-        print(f"[DEBUG] ResultsPanel updated: {len(self._results)} total results")
     
     def clear_results(self):
         """Clear all results."""
@@ -453,6 +879,7 @@ class ResultsPanel(QWidget):
         self._polar_canvas.clear()
         self._bar_canvas.clear()
         self._period_canvas.clear()
+        self._onset_canvas.clear()
         self._results_label.setText("No results")
         self._current_result_index = -1
     
@@ -499,8 +926,13 @@ class ResultsPanel(QWidget):
                 headers.extend(['Amplif-1', 'Amplif-2', 'Amplif-Diff', 'p-Amplif', 'q-Amplif', 'CI-Amplif',
                                'LinComp-1', 'LinComp-2', 'LinComp-Diff', 'p-LinComp', 'q-LinComp', 'CI-LinComp'])
         else:
+            # Check if this is an Activity Profile visualization
+            is_activity_profile = any(r.get('type') == 'activity_profile' for r in self._results)
+            if is_activity_profile:
+                columns = ['variable', 'method', 'conditions', 'message']
+                headers = ['Variable', 'Method', 'Conditions', 'Status']
             # For CosinorPy periodogram, show just message
-            if has_cosinorpy_periodogram:
+            elif has_cosinorpy_periodogram:
                 columns = ['variable', 'condition', 'method', 'message']
                 headers = ['Variable', 'Condition', 'Method', 'Status']
             # For periodogram-based methods (Spectral, Lomb-Scargle, F24)
@@ -587,9 +1019,13 @@ class ResultsPanel(QWidget):
                         else:
                             value = 'N/A'
                     elif isinstance(value, list):
-                        # Format lists (peak_times, trough_times) as comma-separated values
+                        # Format lists as comma-separated values
                         if value:
-                            value = ', '.join([f'{v:.2f}' for v in value])
+                            # Check if numeric list or string list
+                            if all(isinstance(v, (int, float)) for v in value):
+                                value = ', '.join([f'{v:.2f}' for v in value])
+                            else:
+                                value = ', '.join([str(v) for v in value])
                         else:
                             value = 'N/A'
                     elif value is None:
@@ -660,56 +1096,219 @@ class ResultsPanel(QWidget):
             self._current_result_index = row
             self._update_fit_plot(filtered[row])
     
+    def _configure_tabs_for_method(self, method: str, is_comparison: bool = False):
+        """Configure tab visibility and names based on the analysis method.
+
+        Args:
+            method: The analysis method identifier
+            is_comparison: Whether this is a comparison result
+        """
+        # Default: hide all tabs first
+        for i in range(self._viz_tabs.count()):
+            self._viz_tabs.setTabVisible(i, False)
+
+        # Activity Profile - all 5 specialized tabs
+        # (handled separately in _update_plots before this is called)
+
+        # CosinorPy Periodogram - no tabs (plots saved to directory)
+        if method == COSINORPY_PERIODOGRAM_METHOD:
+            # All tabs hidden, show message in first tab
+            self._viz_tabs.setTabVisible(0, True)
+            self._viz_tabs.setTabText(0, "Info")
+            return
+
+        # Cosinor-based methods (including comparisons)
+        if method in COSINOR_METHODS or method in COMPARISON_METHODS or is_comparison:
+            # Show: Cosinor Fit, Phase Plot, Parameter Comparison
+            self._viz_tabs.setTabVisible(0, True)
+            self._viz_tabs.setTabVisible(1, True)
+            self._viz_tabs.setTabVisible(2, True)
+            self._viz_tabs.setTabText(0, "Cosinor Fit")
+            self._viz_tabs.setTabText(1, "Phase Plot")
+            self._viz_tabs.setTabText(2, "Parameter Comparison")
+            return
+
+        # Periodogram-based methods
+        if method in PERIODOGRAM_METHODS:
+            # Show: Periodogram, Phase Plot (if acrophase), Parameter Comparison
+            self._viz_tabs.setTabVisible(0, True)  # Periodogram in first tab
+            self._viz_tabs.setTabVisible(1, True)  # Phase Plot
+            self._viz_tabs.setTabVisible(2, True)  # Parameter Comparison
+            self._viz_tabs.setTabText(0, "Periodogram")
+            self._viz_tabs.setTabText(1, "Phase Plot")
+            self._viz_tabs.setTabText(2, "Parameter Comparison")
+            return
+
+        # CWT/Scalogram methods
+        if method in SCALOGRAM_METHODS:
+            # Show: Scalogram only
+            self._viz_tabs.setTabVisible(0, True)
+            self._viz_tabs.setTabText(0, "Scalogram")
+            return
+
+        # LME and other text-only methods
+        if method in TEXT_ONLY_METHODS:
+            # Show: Summary only
+            self._viz_tabs.setTabVisible(0, True)
+            self._viz_tabs.setTabText(0, "Summary")
+            return
+
+        # Default fallback: show first 3 tabs with default names
+        self._viz_tabs.setTabVisible(0, True)
+        self._viz_tabs.setTabVisible(1, True)
+        self._viz_tabs.setTabVisible(2, True)
+        self._viz_tabs.setTabText(0, "Cosinor Fit")
+        self._viz_tabs.setTabText(1, "Phase Plot")
+        self._viz_tabs.setTabText(2, "Parameter Comparison")
+
     def _update_plots(self):
-        """Update all plots."""
+        """Update all plots based on the analysis method."""
         if not self._results:
             return
 
-        # Check if these are CosinorPy periodogram results (no plots needed)
-        is_periodogram = self._results[0].get('method') == 'cosinorpy_periodogram'
-        if is_periodogram:
-            # Clear all plots and show message
-            self._fit_canvas.clear()
-            self._polar_canvas.clear()
-            self._bar_canvas.clear()
-            self._period_canvas.clear()
-            return
+        # Get the method from first result
+        method = self._results[0].get('method', '')
 
-        # Check if these are comparison results
+        # Check if this is a comparison result
         is_comparison = 'condition1' in self._results[0] and 'condition2' in self._results[0]
 
+        # =====================================================================
+        # ACTIVITY PROFILE - Special case with 5 custom tabs
+        # =====================================================================
+        if self._results[0].get('type') == 'activity_profile':
+            result = self._results[0]
+            profile_data = result.get('profile_data', {})
+            actogram_data = result.get('actogram_data', {})
+            total_activity_data = result.get('total_activity_data', {})
+            onset_data = result.get('onset_data', {})
+            conditions = result.get('conditions', [])
+            n_days = result.get('n_days', 1)
+
+            # Show and rename all 5 tabs for Activity Profile
+            for i in range(5):
+                self._viz_tabs.setTabVisible(i, True)
+            self._viz_tabs.setTabText(0, "Heatmap")
+            self._viz_tabs.setTabText(1, "Daily Average")
+            self._viz_tabs.setTabText(2, "Actogram")
+            self._viz_tabs.setTabText(3, "Total Activity")
+            self._viz_tabs.setTabText(4, "Onset/Offset")
+
+            # Plot each visualization
+            self._fit_canvas.plot_activity_profile(
+                profile_data=profile_data,
+                conditions=conditions,
+                title=f"Activity Heatmap ({n_days} days)"
+            )
+            self._polar_canvas.plot_activity_profile_averaged(
+                profile_data=profile_data,
+                conditions=conditions,
+                title=f"Daily Activity Profile (mean ± SEM, n={n_days} days)"
+            )
+            self._bar_canvas.plot_actogram(
+                actogram_data=actogram_data,
+                conditions=conditions,
+                title="Actogram (Double-Plotted)"
+            )
+            self._period_canvas.plot_total_activity(
+                total_activity_data=total_activity_data,
+                conditions=conditions,
+                title="Total Daily Activity"
+            )
+            self._onset_canvas.plot_activity_onset(
+                onset_data=onset_data,
+                conditions=conditions,
+                title="Activity Onset Time"
+            )
+            return
+
+        # =====================================================================
+        # Configure tabs based on method
+        # =====================================================================
+        self._configure_tabs_for_method(method, is_comparison)
+
+        # =====================================================================
+        # COSINORPY PERIODOGRAM - No plots (saved to directory)
+        # =====================================================================
+        if method == COSINORPY_PERIODOGRAM_METHOD:
+            self._fit_canvas.clear()
+            ax = self._fit_canvas.axes
+            message = self._results[0].get('message', 'Periodogram plots saved to directory')
+            ax.text(0.5, 0.5, message,
+                   ha='center', va='center', transform=ax.transAxes,
+                   fontsize=11, wrap=True,
+                   bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.5))
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.axis('off')
+            self._fit_canvas.draw()
+            return
+
+        # =====================================================================
+        # PERIODOGRAM METHODS (Lomb-Scargle, Spectral, F24)
+        # =====================================================================
+        if method in PERIODOGRAM_METHODS:
+            # Plot periodogram in first tab
+            self._update_fit_plot(self._results[0])
+
+            # Update polar plot if we have acrophase data
+            acrophases = [r.get('acrophase_hours') for r in self._results
+                         if r.get('acrophase_hours') is not None]
+            labels = [f"{r.get('variable', '')}_{r.get('condition', '')}"
+                     for r in self._results if r.get('acrophase_hours') is not None]
+            if acrophases:
+                self._polar_canvas.plot_polar_acrophase(acrophases, labels)
+            else:
+                self._polar_canvas.clear()
+                ax = self._polar_canvas.axes
+                ax.text(0.5, 0.5, 'No acrophase data available',
+                       ha='center', va='center', transform=ax.transAxes)
+                self._polar_canvas.draw()
+
+            # Update bar plot
+            self._update_bar_plot()
+            return
+
+        # =====================================================================
+        # CWT/SCALOGRAM METHODS
+        # =====================================================================
+        if method in SCALOGRAM_METHODS:
+            self._update_fit_plot(self._results[0])
+            return
+
+        # =====================================================================
+        # LME/TEXT-ONLY METHODS
+        # =====================================================================
+        if method in TEXT_ONLY_METHODS:
+            self._update_fit_plot(self._results[0])
+            return
+
+        # =====================================================================
+        # COSINOR METHODS (including comparisons)
+        # =====================================================================
         # Update bar plot
         self._update_bar_plot()
 
         # Update polar plot with all acrophases
         if is_comparison:
-            # For comparisons, show acrophases from both groups
             acrophases = []
             labels = []
             for r in self._results:
-                # Group 0 (condition1)
                 if r.get('acrophase_g0') is not None:
-                    # Convert radians to hours
                     acro_hours = (r.get('acrophase_g0') * 24.0) / (2 * np.pi)
                     acrophases.append(acro_hours)
                     labels.append(f"{r.get('variable', '')}_{r.get('condition1', '')}")
-                # Group 1 (condition2)
                 if r.get('acrophase_g1') is not None:
                     acro_hours = (r.get('acrophase_g1') * 24.0) / (2 * np.pi)
                     acrophases.append(acro_hours)
                     labels.append(f"{r.get('variable', '')}_{r.get('condition2', '')}")
         else:
-            # Regular single analysis results
-            acrophases = [r.get('acrophase_hours') for r in self._results if 'acrophase_hours' in r]
-            labels = [f"{r.get('variable', '')}_{r.get('condition', '')}" for r in self._results if 'acrophase_hours' in r]
+            acrophases = [r.get('acrophase_hours') for r in self._results
+                         if r.get('acrophase_hours') is not None]
+            labels = [f"{r.get('variable', '')}_{r.get('condition', '')}"
+                     for r in self._results if r.get('acrophase_hours') is not None]
 
         if acrophases:
             self._polar_canvas.plot_polar_acrophase(acrophases, labels)
-
-        # Update periodogram if we have periodogram-based results (not CosinorPy periodogram)
-        periodogram_results = [r for r in self._results if r.get('periods') is not None and r.get('method') in ['spectral_analysis', 'lomb_scargle', 'fourier_f24']]
-        if periodogram_results:
-            self._update_periodogram_plot(periodogram_results[0])
 
         # Update fit plot with first result
         if self._results:
@@ -717,58 +1316,76 @@ class ResultsPanel(QWidget):
     
     def _update_fit_plot(self, result: Dict):
         """Update plot for selected result based on analysis method."""
-        # Check if this is a comparison result (has different structure)
+        # Check if this is a comparison result
         is_comparison = 'condition1' in result and 'condition2' in result
 
         if is_comparison:
-            # For comparison results, plot both conditions
             self._plot_comparison_fit(result)
             return
 
-        # Get the analysis method to determine plot type
         method = result.get('method', '')
 
-        # Methods that show PERIODOGRAM instead of cosinor fit
-        if method in ['lomb_scargle', 'spectral_analysis', 'fourier_f24']:
+        # Periodogram methods
+        if method in PERIODOGRAM_METHODS:
             self._plot_periodogram_result(result)
             return
 
-        # Methods that show SCALOGRAM (wavelet)
-        if method == 'cwt':
+        # Scalogram/CWT methods
+        if method in SCALOGRAM_METHODS:
             self._plot_scalogram_result(result)
             return
 
-        # Methods that show only TEXT/TABLE (no fit plot)
-        if method == 'lme':
+        # Text-only methods (LME)
+        if method in TEXT_ONLY_METHODS:
             self._plot_lme_result(result)
             return
 
-        # Default: Show cosinor fit for methods that have fitted curves
-        # (jtk, ar_jtk, cosine_kendall, cosinor_ols, harmonic_cosinor)
+        # Default: Cosinor fit for all cosinor-based methods
         self._plot_cosinor_result(result)
 
     def _plot_cosinor_result(self, result: Dict):
         """Plot cosinor fit for rhythm methods."""
         mesor = result.get('mesor')
         amplitude = result.get('amplitude')
-        acrophase_rad = result.get('acrophase', result.get('acrophase_rad'))
         period = result.get('period', 24.0)
 
-        # Convert None to 0 for plotting
-        mesor = mesor if mesor is not None else 0
-        amplitude = amplitude if amplitude is not None else 0
-        acrophase_rad = acrophase_rad if acrophase_rad is not None else 0
+        # Get acrophase - prefer radians, convert from hours if needed
+        acrophase_rad = result.get('acrophase', result.get('acrophase_rad'))
+        if acrophase_rad is None:
+            acrophase_hours = result.get('acrophase_hours')
+            if acrophase_hours is not None:
+                # Convert hours to radians
+                acrophase_rad = 2 * np.pi * acrophase_hours / period
+            else:
+                acrophase_rad = 0
 
-        # Get times and values from result, or generate synthetic data
+        # Get times and values from result
         times_data = result.get('times')
         values_data = result.get('values')
 
         if times_data is not None and values_data is not None:
-            # Convert from list to numpy array if needed
             times = np.array(times_data) if not isinstance(times_data, np.ndarray) else times_data
             values = np.array(values_data) if not isinstance(values_data, np.ndarray) else values_data
         else:
-            # Generate synthetic data points if not available
+            times = None
+            values = None
+
+        # Calculate MESOR from data if not provided (for JTK, AR-JTK, Cosine-Kendall, etc.)
+        if mesor is None:
+            if values is not None and len(values) > 0:
+                mesor = float(np.mean(values))
+            else:
+                mesor = 0
+
+        # Handle amplitude - if None, estimate from data range
+        if amplitude is None:
+            if values is not None and len(values) > 0:
+                amplitude = (np.max(values) - np.min(values)) / 2
+            else:
+                amplitude = 0
+
+        # Generate synthetic data if not available
+        if times is None or values is None:
             times = np.linspace(0, period, 24)
             values = mesor + amplitude * np.cos(
                 2 * np.pi * times / period - acrophase_rad) + np.random.normal(0, amplitude * 0.1, len(times))
@@ -1083,7 +1700,7 @@ class ResultsPanel(QWidget):
         """Export current plot to file."""
         # Get current canvas
         tab_idx = self._viz_tabs.currentIndex()
-        canvases = [self._fit_canvas, self._polar_canvas, self._bar_canvas, self._period_canvas]
+        canvases = [self._fit_canvas, self._polar_canvas, self._bar_canvas, self._period_canvas, self._onset_canvas]
         canvas = canvases[tab_idx]
         
         filepath, _ = QFileDialog.getSaveFileName(
@@ -1111,6 +1728,7 @@ class ResultsPanel(QWidget):
                 self._polar_canvas.fig.savefig(dir_path / "phase_plot.png", dpi=300)
                 self._bar_canvas.fig.savefig(dir_path / "parameter_comparison.png", dpi=300)
                 self._period_canvas.fig.savefig(dir_path / "periodogram.png", dpi=300)
+                self._onset_canvas.fig.savefig(dir_path / "activity_onset.png", dpi=300)
                 
                 QMessageBox.information(
                     self, "Export Complete",
@@ -1130,5 +1748,5 @@ class ResultsPanel(QWidget):
     def get_current_figure(self) -> Figure:
         """Get current matplotlib figure."""
         tab_idx = self._viz_tabs.currentIndex()
-        canvases = [self._fit_canvas, self._polar_canvas, self._bar_canvas, self._period_canvas]
+        canvases = [self._fit_canvas, self._polar_canvas, self._bar_canvas, self._period_canvas, self._onset_canvas]
         return canvases[tab_idx].fig

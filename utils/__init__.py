@@ -21,6 +21,15 @@ from .rosbash_loader import (
     get_available_clock_genes
 )
 
+from .dam_loader import (
+    DAMDataLoader,
+    DAMConfig,
+    DAMSummary,
+    DAMChannelInfo,
+    MultiDAMDataLoader,
+    MonitorEntry
+)
+
 from .export import (
     ResultExporter,
     ExcelReportWriter,
@@ -42,6 +51,13 @@ __all__ = [
     'GeneExpressionData',
     'load_rosbash_dataset',
     'get_available_clock_genes',
+    # DAM loader
+    'DAMDataLoader',
+    'DAMConfig',
+    'DAMSummary',
+    'DAMChannelInfo',
+    'MultiDAMDataLoader',
+    'MonitorEntry',
     # Export
     'ResultExporter',
     'ExcelReportWriter',

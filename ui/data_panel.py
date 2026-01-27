@@ -7,21 +7,24 @@ Panel for loading and configuring data sources (CSV or Rosbash dataset).
 
 from typing import Optional, List, Dict, Any
 from pathlib import Path
+from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QPushButton, QComboBox, QFileDialog, QTableWidget,
     QTableWidgetItem, QHeaderView, QSpinBox, QCheckBox,
     QListWidget, QListWidgetItem, QAbstractItemView,
-    QSplitter, QFrame, QLineEdit, QMessageBox, QProgressBar
+    QSplitter, QFrame, QLineEdit, QMessageBox, QProgressBar,
+    QDoubleSpinBox, QDateEdit, QTimeEdit, QScrollArea
 )
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import Qt, Signal, QThread, QDate, QTime
 from PySide6.QtGui import QFont
 
 import pandas as pd
 
 from utils.data_loader import CircadianDataLoader, DatasetInfo
 from utils.rosbash_loader import RosbashDataLoader, get_available_clock_genes
+from utils.dam_loader import DAMDataLoader, DAMConfig, MultiDAMDataLoader, MonitorEntry
 
 
 class DataLoadWorker(QThread):
@@ -76,8 +79,9 @@ class DataPanel(QWidget):
         
         self._csv_loader: Optional[CircadianDataLoader] = None
         self._rosbash_loader: Optional[RosbashDataLoader] = None
+        self._dam_loader: Optional[MultiDAMDataLoader] = None
         self._current_source: Optional[str] = None
-        
+
         self._setup_ui()
     
     def _setup_ui(self):
@@ -92,12 +96,15 @@ class DataPanel(QWidget):
         # Stacked panels for each source type
         self._csv_panel = self._create_csv_panel()
         self._rosbash_panel = self._create_rosbash_panel()
-        
+        self._dam_panel = self._create_dam_panel()
+
         # Initially show CSV panel
         self._rosbash_panel.setVisible(False)
-        
+        self._dam_panel.setVisible(False)
+
         layout.addWidget(self._csv_panel)
         layout.addWidget(self._rosbash_panel)
+        layout.addWidget(self._dam_panel)
         
         # Data preview
         preview_group = self._create_preview_panel()
@@ -123,7 +130,8 @@ class DataPanel(QWidget):
         self._source_combo = QComboBox()
         self._source_combo.addItems([
             "User CSV File",
-            "Rosbash scRNA-seq Dataset"
+            "Rosbash scRNA-seq Dataset",
+            "DAM Monitor File"
         ])
         self._source_combo.currentIndexChanged.connect(self._on_source_changed)
         
@@ -224,7 +232,393 @@ class DataPanel(QWidget):
         layout.addWidget(self._h5_load_btn)
         
         return group
-    
+
+    def _create_dam_panel(self) -> QGroupBox:
+        """Create DAM Monitor file configuration panel with multi-monitor support."""
+        group = QGroupBox("DAM Data Configuration")
+        layout = QVBoxLayout(group)
+
+        # =====================================================================
+        # Monitor List Section
+        # =====================================================================
+        monitors_group = QGroupBox("DAM Files")
+        monitors_layout = QVBoxLayout(monitors_group)
+
+        # Buttons for add/remove
+        btn_layout = QHBoxLayout()
+        self._dam_add_btn = QPushButton("+ Add Monitor")
+        self._dam_add_btn.clicked.connect(self._add_dam_monitor)
+        self._dam_remove_btn = QPushButton("- Remove Selected")
+        self._dam_remove_btn.clicked.connect(self._remove_dam_monitor)
+        self._dam_remove_btn.setEnabled(False)
+        btn_layout.addWidget(self._dam_add_btn)
+        btn_layout.addWidget(self._dam_remove_btn)
+        btn_layout.addStretch()
+        monitors_layout.addLayout(btn_layout)
+
+        # Table for monitors
+        self._dam_monitors_table = QTableWidget()
+        self._dam_monitors_table.setColumnCount(4)
+        self._dam_monitors_table.setHorizontalHeaderLabels(["File", "Condition", "Live", "Status"])
+        self._dam_monitors_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._dam_monitors_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._dam_monitors_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._dam_monitors_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self._dam_monitors_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._dam_monitors_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._dam_monitors_table.setMinimumHeight(120)
+        self._dam_monitors_table.itemSelectionChanged.connect(self._on_dam_selection_changed)
+        self._dam_monitors_table.cellChanged.connect(self._on_dam_condition_edited)
+        monitors_layout.addWidget(self._dam_monitors_table)
+
+        layout.addWidget(monitors_group)
+
+        # =====================================================================
+        # Shared Settings Section
+        # =====================================================================
+        # Time Settings
+        time_group = QGroupBox("Time Settings (shared)")
+        time_layout = QHBoxLayout(time_group)
+
+        # Binning
+        bin_layout = QVBoxLayout()
+        bin_layout.addWidget(QLabel("Binning:"))
+        self._dam_bin_combo = QComboBox()
+        self._dam_bin_combo.addItems(["1 min", "5 min", "15 min", "30 min", "60 min"])
+        self._dam_bin_combo.setCurrentIndex(3)  # Default: 30 min
+        self._dam_bin_combo.currentIndexChanged.connect(self._update_dam_preview)
+        bin_layout.addWidget(self._dam_bin_combo)
+        time_layout.addLayout(bin_layout)
+
+        # Lights ON time (ZT0)
+        zt_layout = QVBoxLayout()
+        zt_layout.addWidget(QLabel("Lights ON (ZT0):"))
+        self._dam_lights_on = QTimeEdit()
+        self._dam_lights_on.setTime(QTime(8, 0))
+        self._dam_lights_on.setDisplayFormat("HH:mm")
+        zt_layout.addWidget(self._dam_lights_on)
+        time_layout.addLayout(zt_layout)
+
+        layout.addWidget(time_group)
+
+        # Date Range
+        date_group = QGroupBox("Date Range (shared)")
+        date_layout = QVBoxLayout(date_group)
+
+        self._dam_use_all_dates = QCheckBox("Use all available dates")
+        self._dam_use_all_dates.setChecked(True)
+        self._dam_use_all_dates.stateChanged.connect(self._on_dam_date_checkbox_changed)
+        date_layout.addWidget(self._dam_use_all_dates)
+
+        date_range_layout = QHBoxLayout()
+        date_range_layout.addWidget(QLabel("Start:"))
+        self._dam_start_date = QDateEdit()
+        self._dam_start_date.setCalendarPopup(True)
+        self._dam_start_date.setEnabled(False)
+        date_range_layout.addWidget(self._dam_start_date)
+
+        date_range_layout.addWidget(QLabel("End:"))
+        self._dam_end_date = QDateEdit()
+        self._dam_end_date.setCalendarPopup(True)
+        self._dam_end_date.setEnabled(False)
+        date_range_layout.addWidget(self._dam_end_date)
+
+        date_layout.addLayout(date_range_layout)
+        layout.addWidget(date_group)
+
+        # Dead Fly Filter
+        death_group = QGroupBox("Dead Fly Filter (shared)")
+        death_layout = QVBoxLayout(death_group)
+
+        self._dam_exclude_dead = QCheckBox("Exclude dead flies")
+        self._dam_exclude_dead.setChecked(True)
+        self._dam_exclude_dead.stateChanged.connect(self._update_dam_preview)
+        death_layout.addWidget(self._dam_exclude_dead)
+
+        threshold_layout = QHBoxLayout()
+        threshold_layout.addWidget(QLabel("Death threshold:"))
+        self._dam_death_threshold = QDoubleSpinBox()
+        self._dam_death_threshold.setRange(1.0, 48.0)
+        self._dam_death_threshold.setValue(6.0)
+        self._dam_death_threshold.setSuffix(" hours")
+        self._dam_death_threshold.setToolTip("Hours of zero activity to consider fly dead")
+        self._dam_death_threshold.valueChanged.connect(self._update_dam_preview)
+        threshold_layout.addWidget(self._dam_death_threshold)
+        threshold_layout.addStretch()
+
+        death_layout.addLayout(threshold_layout)
+        layout.addWidget(death_group)
+
+        # =====================================================================
+        # Summary Section
+        # =====================================================================
+        preview_group = QGroupBox("Data Summary")
+        preview_layout = QVBoxLayout(preview_group)
+        self._dam_preview_label = QLabel("Add DAM files to see summary...")
+        self._dam_preview_label.setStyleSheet("color: gray; font-style: italic;")
+        preview_layout.addWidget(self._dam_preview_label)
+        layout.addWidget(preview_group)
+
+        # Load button
+        self._dam_load_btn = QPushButton("Load DAM Data")
+        self._dam_load_btn.clicked.connect(self._load_dam_data)
+        self._dam_load_btn.setEnabled(False)
+        layout.addWidget(self._dam_load_btn)
+
+        # Initialize the multi-loader
+        self._dam_loader = MultiDAMDataLoader()
+
+        return group
+
+    def _add_dam_monitor(self):
+        """Add a new DAM monitor file to the list."""
+        filepaths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select DAM Monitor File(s)",
+            "",
+            "DAM Files (*.txt);;All Files (*)"
+        )
+
+        if not filepaths:
+            return
+
+        for filepath in filepaths:
+            try:
+                # Add to multi-loader
+                index = self._dam_loader.add_monitor(filepath)
+                monitors = self._dam_loader.get_monitors()
+                entry = monitors[index]
+
+                # Add row to table
+                row = self._dam_monitors_table.rowCount()
+                self._dam_monitors_table.insertRow(row)
+
+                # File name (read-only)
+                file_item = QTableWidgetItem(Path(filepath).name)
+                file_item.setFlags(file_item.flags() & ~Qt.ItemIsEditable)
+                file_item.setToolTip(filepath)
+                self._dam_monitors_table.setItem(row, 0, file_item)
+
+                # Condition name (editable)
+                cond_item = QTableWidgetItem(entry.condition_name)
+                self._dam_monitors_table.setItem(row, 1, cond_item)
+
+                # Live channels
+                live_count = entry.summary.live_channels if entry.summary else 0
+                live_item = QTableWidgetItem(str(live_count))
+                live_item.setFlags(live_item.flags() & ~Qt.ItemIsEditable)
+                self._dam_monitors_table.setItem(row, 2, live_item)
+
+                # Status
+                if entry.is_loaded:
+                    status_item = QTableWidgetItem("✓ OK")
+                    status_item.setForeground(Qt.darkGreen)
+                else:
+                    status_item = QTableWidgetItem("✗ Error")
+                    status_item.setForeground(Qt.red)
+                    status_item.setToolTip(entry.error_message or "Unknown error")
+                status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
+                self._dam_monitors_table.setItem(row, 3, status_item)
+
+            except Exception as e:
+                QMessageBox.warning(self, "Load Error", f"Could not load {Path(filepath).name}: {e}")
+
+        # Update UI state
+        self._update_dam_ui_state()
+        self._update_dam_preview()
+
+    def _remove_dam_monitor(self):
+        """Remove the selected monitor from the list."""
+        selected_rows = self._dam_monitors_table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+
+        row = selected_rows[0].row()
+
+        # Remove from loader
+        self._dam_loader.remove_monitor(row)
+
+        # Remove from table
+        self._dam_monitors_table.removeRow(row)
+
+        # Update UI state
+        self._update_dam_ui_state()
+        self._update_dam_preview()
+
+    def _on_dam_selection_changed(self):
+        """Handle selection change in monitors table."""
+        has_selection = len(self._dam_monitors_table.selectionModel().selectedRows()) > 0
+        self._dam_remove_btn.setEnabled(has_selection)
+
+    def _on_dam_condition_edited(self, row: int, column: int):
+        """Handle condition name edit in table."""
+        if column != 1:  # Only condition column is editable
+            return
+
+        item = self._dam_monitors_table.item(row, column)
+        if item:
+            new_name = item.text().strip()
+            if new_name:
+                self._dam_loader.update_condition_name(row, new_name)
+
+    def _update_dam_ui_state(self):
+        """Update UI elements based on current state."""
+        monitor_count = self._dam_loader.get_monitor_count()
+        self._dam_load_btn.setEnabled(monitor_count > 0)
+        self._dam_remove_btn.setEnabled(
+            len(self._dam_monitors_table.selectionModel().selectedRows()) > 0
+        )
+
+        # Update date range from first monitor if available
+        monitors = self._dam_loader.get_monitors()
+        if monitors and monitors[0].is_loaded and monitors[0].loader:
+            start_dt, end_dt = monitors[0].loader.get_available_dates()
+            if start_dt and end_dt:
+                self._dam_start_date.setDate(QDate(start_dt.year, start_dt.month, start_dt.day))
+                self._dam_end_date.setDate(QDate(end_dt.year, end_dt.month, end_dt.day))
+
+    def _on_dam_date_checkbox_changed(self, state: int):
+        """Handle 'use all dates' checkbox change."""
+        use_all = state == Qt.Checked
+        self._dam_start_date.setEnabled(not use_all)
+        self._dam_end_date.setEnabled(not use_all)
+
+    def _update_dam_preview(self):
+        """Update DAM preview summary."""
+        if self._dam_loader is None or self._dam_loader.get_monitor_count() == 0:
+            self._dam_preview_label.setText("Add DAM files to see summary...")
+            self._dam_preview_label.setStyleSheet("color: gray; font-style: italic;")
+            return
+
+        try:
+            # Build config from UI and apply to all monitors
+            config = self._build_dam_config()
+            self._dam_loader.set_shared_config(config)
+
+            # Refresh table with updated live counts
+            monitors = self._dam_loader.get_monitors()
+            for row, entry in enumerate(monitors):
+                if row < self._dam_monitors_table.rowCount():
+                    live_count = entry.summary.live_channels if entry.summary else 0
+                    live_item = self._dam_monitors_table.item(row, 2)
+                    if live_item:
+                        live_item.setText(str(live_count))
+
+            # Get combined summary
+            summary = self._dam_loader.get_channel_summary()
+
+            # Build preview text
+            n_monitors = summary.get('total_monitors', 0)
+            conditions = [e.condition_name for e in monitors if e.is_loaded]
+            conditions_str = ", ".join(conditions) if conditions else "-"
+
+            preview_text = (
+                f"Monitors: {n_monitors} | Conditions: {conditions_str}\n"
+                f"Total Channels: {summary.get('total_channels', 0)} | "
+                f"Live: {summary.get('live_channels', 0)} | "
+                f"Dead: {summary.get('dead_channels', 0)}\n"
+                f"Date range: {summary.get('start_date', '')} to {summary.get('end_date', '')}\n"
+                f"Timepoints after binning: {summary.get('timepoints_after_binning', 0)}"
+            )
+
+            self._dam_preview_label.setText(preview_text)
+            self._dam_preview_label.setStyleSheet("color: black;")
+
+        except Exception as e:
+            self._dam_preview_label.setText(f"Error: {e}")
+            self._dam_preview_label.setStyleSheet("color: red;")
+
+    def _build_dam_config(self) -> DAMConfig:
+        """Build DAMConfig from UI settings (shared config for all monitors)."""
+        # Parse binning
+        bin_text = self._dam_bin_combo.currentText()
+        bin_minutes = int(bin_text.split()[0])
+
+        # Parse lights on time
+        lights_on_time = self._dam_lights_on.time()
+
+        # Parse date range
+        start_dt = None
+        end_dt = None
+        if not self._dam_use_all_dates.isChecked():
+            start_qdate = self._dam_start_date.date()
+            end_qdate = self._dam_end_date.date()
+            start_dt = datetime(start_qdate.year(), start_qdate.month(), start_qdate.day())
+            end_dt = datetime(end_qdate.year(), end_qdate.month(), end_qdate.day(), 23, 59, 59)
+
+        return DAMConfig(
+            bin_size_minutes=bin_minutes,
+            lights_on_hour=lights_on_time.hour(),
+            lights_on_minute=lights_on_time.minute(),
+            start_datetime=start_dt,
+            end_datetime=end_dt,
+            exclude_dead=self._dam_exclude_dead.isChecked(),
+            death_threshold_hours=self._dam_death_threshold.value()
+        )
+
+    def _load_dam_data(self):
+        """Load DAM data with current configuration."""
+        if self._dam_loader is None or self._dam_loader.get_monitor_count() == 0:
+            return
+
+        try:
+            self._progress_bar.setVisible(True)
+            self._progress_bar.setValue(30)
+
+            # Apply shared config to all monitors
+            config = self._build_dam_config()
+            self._dam_loader.set_shared_config(config)
+
+            self._progress_bar.setValue(50)
+
+            # Process all monitors and combine data
+            self._dam_loader.process()
+
+            self._progress_bar.setValue(70)
+
+            # Validate
+            is_valid, issues = self._dam_loader.validate_for_analysis()
+            if not is_valid:
+                QMessageBox.warning(
+                    self, "Validation Issues",
+                    "Data loaded with issues:\n- " + "\n- ".join(issues)
+                )
+
+            self._current_source = 'dam'
+
+            # Update info labels
+            info = self._dam_loader.get_dataset_info()
+            n_channels = self._dam_loader.get_channel_count()
+            n_monitors = self._dam_loader.get_monitor_count()
+            conditions = self._dam_loader.get_conditions()
+
+            self._rows_label.setText(f"Rows: {info.n_rows}")
+            self._cols_label.setText(f"Channels: {n_channels}")
+            self._conditions_label.setText(f"Conditions: {len(conditions)}")
+            self._timepoints_label.setText(f"Timepoints: {len(info.timepoints)}")
+
+            # DAM data is DEPENDENT: same fly (subject) measured repeatedly over time
+            self._analysis_type_label.setText("Analysis Type: DEPENDENT")
+            self._analysis_type_label.setStyleSheet("font-weight: bold; color: blue;")
+
+            self._progress_bar.setValue(100)
+            self._status_label.setText(f"✓ DAM loaded: {n_monitors} monitors, {len(conditions)} conditions")
+            self._status_label.setStyleSheet("color: green;")
+
+            # Update preview table
+            self._update_preview_table(self._dam_loader.get_preview(10))
+
+            # Emit signal
+            self.data_loaded.emit(self._dam_loader, 'dam')
+
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Failed to load DAM data: {e}")
+            self._status_label.setText(f"✗ Load failed: {e}")
+            self._status_label.setStyleSheet("color: red;")
+
+        finally:
+            self._progress_bar.setVisible(False)
+
     def _create_preview_panel(self) -> QGroupBox:
         """Create data preview panel."""
         group = QGroupBox("Data Preview")
@@ -261,12 +655,9 @@ class DataPanel(QWidget):
     
     def _on_source_changed(self, index: int):
         """Handle data source selection change."""
-        if index == 0:  # CSV
-            self._csv_panel.setVisible(True)
-            self._rosbash_panel.setVisible(False)
-        else:  # Rosbash
-            self._csv_panel.setVisible(False)
-            self._rosbash_panel.setVisible(True)
+        self._csv_panel.setVisible(index == 0)
+        self._rosbash_panel.setVisible(index == 1)
+        self._dam_panel.setVisible(index == 2)
     
     def _browse_csv(self):
         """Open file dialog to select CSV file."""
@@ -520,6 +911,8 @@ class DataPanel(QWidget):
             return self._csv_loader
         elif self._current_source == 'rosbash':
             return self._rosbash_loader
+        elif self._current_source == 'dam':
+            return self._dam_loader
         return None
     
     def get_current_source_type(self) -> Optional[str]:
@@ -532,6 +925,8 @@ class DataPanel(QWidget):
             return self._csv_loader.get_variable_columns()
         elif self._current_source == 'rosbash' and self._rosbash_loader:
             return self._rosbash_loader.get_gene_names()
+        elif self._current_source == 'dam' and self._dam_loader:
+            return self._dam_loader.get_variable_columns()
         return []
     
     def get_available_conditions(self) -> List[str]:
@@ -541,6 +936,8 @@ class DataPanel(QWidget):
         elif self._current_source == 'rosbash' and self._rosbash_loader:
             info = self._rosbash_loader.get_dataset_info()
             return info.conditions
+        elif self._current_source == 'dam' and self._dam_loader:
+            return self._dam_loader.get_conditions()
         return []
 
     def get_available_clusters(self) -> List[str]:
@@ -553,10 +950,24 @@ class DataPanel(QWidget):
         """Clear all loaded data."""
         self._csv_loader = None
         self._rosbash_loader = None
+        self._dam_loader = MultiDAMDataLoader()  # Reset to empty multi-loader
         self._current_source = None
-        
+
+        # Clear DAM monitors table
+        self._dam_monitors_table.setRowCount(0)
+        self._update_dam_ui_state()
+
         self._preview_table.clear()
         self._status_label.setText("No data loaded")
         self._status_label.setStyleSheet("color: gray; font-style: italic;")
-        
+
         self.data_cleared.emit()
+
+    def set_source(self, source_type: str):
+        """Set the current source type programmatically."""
+        if source_type == 'csv':
+            self._source_combo.setCurrentIndex(0)
+        elif source_type == 'rosbash':
+            self._source_combo.setCurrentIndex(1)
+        elif source_type == 'dam':
+            self._source_combo.setCurrentIndex(2)

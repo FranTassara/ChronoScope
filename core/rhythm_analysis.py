@@ -979,12 +979,24 @@ def _fit_harmonic_cosinor(
     acrophases = [round(a, 2) for a, _ in acrophase_amp_pairs]
     peak_amps = [round(a, 4) for _, a in acrophase_amp_pairs]
 
+    # Calculate data mean (MESOR) for proper vertical centering of the fit
+    data_mean = float(np.mean(y))
+
+    # Normalize model waves and center at data mean
+    # The normalized wave goes from 0 to 1, we want it centered at data_mean
+    # So we shift it: data_mean - amp_est/2 + amp_est * norm_model_wave
+    # This gives a wave that oscillates around data_mean with amplitude amp_est/2
+    model_wave_centered = data_mean - amp_est / 2 + amp_est * norm_model_wave
+    model_wave_full_norm = (model_wave_full - np.min(model_wave)) / (np.ptp(model_wave) + 1e-10)
+    model_wave_full_centered = data_mean - amp_est / 2 + amp_est * model_wave_full_norm
+
     # Return model wave parameters for plotting
     fit_model = {
         't_grid': t_grid,
-        'model_wave': amp_est * norm_model_wave,
+        'model_wave': model_wave_centered,
         't_grid_full': t_grid_full,
-        'model_wave_full': amp_est * (model_wave_full - np.min(model_wave)) / (np.ptp(model_wave) + 1e-10),
+        'model_wave_full': model_wave_full_centered,
+        'mesor': data_mean,  # Store the data mean for reference
         'params': {
             'period': best_per,
             'lag': best_lag,

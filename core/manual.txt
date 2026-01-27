@@ -1,0 +1,181 @@
+================================================================================
+                        CIRCASCOPE USER MANUAL
+              Comprehensive Guide to Circadian Analysis Modules
+================================================================================
+
+Version: 1.0.0
+Date: January 2026
+Module Description: This document details the methodological foundations, usage, and parameter configuration for the three core analysis modules integrated into the CircaScope GUI.
+
+TABLE OF CONTENTS:
+1. MODULE I: RHYTHM ANALYSIS (rhythm_analysis.py)
+   - Non-parametric & Spectral Methods
+2. MODULE II: ADVANCED COSINOR ANALYSIS (cosinor_analysis.py)
+   - CosinorPy Wrapper & Population Statistics
+3. MODULE III: ROBUST DIFFERENTIAL RHYTHMICITY (circacompare_analysis.py)
+   - CircaCompare Wrapper & Robust Regression
+4. PARAMETER IMPACT GUIDE
+5. GLOSARY OF TERMS
+
+================================================================================
+1. MODULE I: RHYTHM ANALYSIS (rhythm_analysis.py)
+================================================================================
+This module provides a broad suite of algorithms for rhythm detection, ranging 
+from classical parametric methods to robust non-parametric tests. It is designed 
+for initial screening of rhythmicity in diverse datasets.
+
+1.1. Python-JTK (JTK_CYCLE)
+---------------------------
+- Purpose: The gold standard for detecting rhythmicity in datasets with non-normal 
+  distributions, outliers, or low sampling resolution.
+- Mechanism: A non-parametric test that compares the rank order of data 
+  against a series of reference templates (cosine or triangle curves).
+- Key Parameters:
+  * Period Range: The window of cycle lengths to test (e.g., 20-28h). 
+  * Asymmetry: Defines the skewness of the reference template (default 0.5 for symmetric).
+    [Impact]: Changing asymmetry helps detect "sawtooth" patterns (fast rise, slow decay).
+
+1.2. AR-JTK (AutoRegressive JTK)
+--------------------------------
+- Purpose: Designed for time-series data where sequential points are correlated 
+  (red noise), common in high-resolution bioluminescence recordings.
+- Mechanism: Pre-whitens the residuals using an AutoRegressive (AR) model 
+  before applying the standard JTK algorithm.
+- Key Parameters:
+  * AR Lag: The number of previous time points influencing the current point.
+    [Impact]: Higher lags correct for longer-term dependencies but require longer time series.
+
+1.3. LOMB-SCARGLE PERIODOGRAM
+-----------------------------
+- Purpose: The preferred method for unequally sampled data or data with missing points.
+- Mechanism: Least-squares spectral analysis that estimates the frequency spectrum 
+  without requiring a constant sampling rate.
+- Key Parameters:
+  * Period Range: Min/Max period to scan.
+  * Oversampling Factor (internal): Determines the resolution of the frequency grid.
+
+1.4. HARMONIC COSINOR
+---------------------
+- Purpose: Detecting rhythms that deviate from a perfect sine wave (e.g., square waves, 
+  bimodal peaks).
+- Mechanism: Fits a regression model composed of the fundamental frequency plus 
+  higher-order harmonics (multiples of the fundamental frequency).
+- Key Parameters:
+  * n_harmonics: Number of cosine waves to sum.
+    [Impact]: n=1 is standard cosinor. n=2 detects bimodal rhythms. High n values 
+    may overfit noise.
+
+1.5. FOURIER F24 (Wijnen et al., 2006)
+--------------------------------------
+- Purpose: An effect-size measure rather than a significance test. Scores the strength 
+  of the 24h rhythm relative to background noise.
+- Mechanism: Calculates the power at the target period divided by the mean power 
+  of randomized permutations of the data.
+- Key Parameters:
+  * Target Period: Usually 24.0h.
+  * n_permutations: Number of shuffles to determine the noise baseline.
+
+1.6. CONTINUOUS WAVELET TRANSFORM (CWT)
+---------------------------------------
+- Purpose: Analyzing non-stationary signals where the period or amplitude changes 
+  over time (e.g., damping rhythms).
+- Mechanism: Convolves the signal with a wavelet function (Morlet) across different scales.
+- Key Parameters:
+  * Wavelet: The shape of the probing function (default: 'cmor').
+  * Sampling Interval: Time between data points.
+
+================================================================================
+2. MODULE II: ADVANCED COSINOR ANALYSIS (cosinor_analysis.py)
+================================================================================
+A wrapper for the `CosinorPy` library, enabling complex statistical modeling 
+and population-level comparisons.
+
+2.1. INDEPENDENT VS. DEPENDENT (POPULATION) ANALYSIS
+----------------------------------------------------
+- Independent: Assumes each data point comes from a separate subject (e.g., tissue 
+  collected from different animals at different times).
+- Dependent: Assumes repeated measures on the same subjects (e.g., longitudinal 
+  actigraphy or luminescence from the same dish).
+
+2.2. MULTI-COMPONENT COSINOR
+----------------------------
+- Purpose: Automatically determining the complexity of the waveform.
+- Mechanism: Fits models with 1, 2, or 3 components and selects the best one 
+  using information criteria (AIC/BIC).
+- Key Parameters:
+  * n_components: List of components to test (e.g., [1, 2, 3]).
+    [Impact]: Setting this to [1] forces a simple sine fit. Setting [1, 2, 3] 
+    allows the model to adapt to complex shapes.
+
+2.3. GENERALIZED NON-LINEAR COSINOR
+-----------------------------------
+- Purpose: Modeling systems with unstable amplitudes (e.g., damped oscillators 
+  in cell culture).
+- Mechanism: Adds a linear trend and an amplification factor to the standard cosine equation.
+  Equation: Y = Mesor + Amp * exp(decay * t) * cos(...)
+- Key Parameters:
+  * Amplification: If detected, indicates growing or shrinking rhythm magnitude.
+
+2.4. COUNT DATA MODELS
+----------------------
+- Purpose: Analyzing discrete data (e.g., RNA-seq counts) where normal distribution 
+  assumptions fail.
+- Mechanism: Uses Generalized Linear Models (GLM).
+- Key Parameters:
+  * Model Type:
+    - 'normal': Gaussian distribution (standard).
+    - 'poisson': For count data.
+    - 'negative_binomial': For overdispersed count data (high variance).
+
+================================================================================
+3. MODULE III: ROBUST DIFFERENTIAL RHYTHMICITY (circacompare_analysis.py)
+================================================================================
+A wrapper for the `CircaCompare` method. This module uses non-linear least squares 
+optimization to statistically compare rhythm parameters between two groups.
+
+3.1. CIRCA SINGLE (Robust Fitting)
+----------------------------------
+- Purpose: Determining phase and amplitude with high resistance to outliers.
+- Mechanism: Non-linear regression (scipy.optimize.least_squares) with configurable loss functions.
+- Key Parameters:
+  * Loss Function:
+    - 'linear': Standard least squares (sensitive to outliers).
+    - 'soft_l1' / 'huber': Robust loss functions. Reduces the influence of outliers.
+    - 'cauchy': Highly robust. Ignores extreme outliers almost entirely.
+  * f_scale: Defines the "soft margin" between inliers and outliers.
+    [Impact]: Lower f_scale makes the model stricter (rejects more data as outliers).
+
+3.2. CIRCA COMPARE (Differential Analysis)
+------------------------------------------
+- Purpose: Testing if two groups differ significantly in Mesor, Amplitude, or Phase.
+- Mechanism: Fits a unified model with shared parameters vs. a model with 
+  group-specific parameters. It calculates the confidence intervals (CI) for the 
+  difference (delta) between groups.
+- Interpretation: If the 95% CI for "d_amplitude" does not cross zero, the 
+  groups have significantly different amplitudes.
+
+================================================================================
+4. PARAMETER IMPACT GUIDE
+================================================================================
+
+| Parameter | Recommended Default | Impact of Increasing | Impact of Decreasing |
+|-----------|---------------------|----------------------|----------------------|
+| Period Range | 20h - 28h | Increases computation time; detects non-circadian rhythms. | Risk of missing the true period if it drifts (e.g., free-running). |
+| n_harmonics / components | 1 | Fits complex shapes better; risk of overfitting noise. | Forces a smooth sine wave; may miss secondary peaks. |
+| AR Lag | 1 | Corrects for long-term trends/correlations. | Assumes noise is independent (white noise). |
+| Bootstrap Size | 1000 | Increases statistical precision and p-value accuracy. | Faster computation; less reliable Confidence Intervals. |
+| f_scale | 1.0 | Model becomes more like standard Least Squares (accepts outliers). | Model becomes very aggressive in rejecting data points. |
+
+================================================================================
+5. GLOSSARY OF TERMS
+================================================================================
+
+- ACROPHASE: The time at which the rhythm peaks.
+- AMPLITUDE: The distance from the Mesor to the Peak (half the range of oscillation).
+- MESOR: Midline Estimating Statistic Of Rhythm. The rhythm-adjusted mean level.
+- PERIOD: The duration of one complete cycle (e.g., ~24 hours).
+- Q-VALUE: The p-value corrected for multiple hypothesis testing (False Discovery Rate).
+- RESIDUALS: The difference between the observed data and the fitted model.
+- STATIONARITY: A property of a rhythm where period and amplitude remain constant over time.
+
+================================================================================

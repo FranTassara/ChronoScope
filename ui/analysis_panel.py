@@ -59,6 +59,9 @@ class AnalysisMethod(Enum):
     RHYTHM_CWT = "Wavelet (CWT)"
     RHYTHM_LME = "Linear Mixed Effects"
 
+    # Visualization methods (primarily for DAM data)
+    VISUALIZATION_ACTIVITY_PROFILE = "Visualization: Activity Profile"
+
 
 @dataclass
 class AnalysisConfig:
@@ -89,16 +92,21 @@ class AnalysisWorker(QThread):
 
     def run(self):
         try:
+            # Handle visualization methods separately (they don't use the analysis engine)
+            if self.config.method == AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE:
+                self._run_activity_profile_visualization()
+                return
+
             # Import analysis engine
             from core.analysis_engine import AnalysisEngine, AnalysisType
 
             engine = AnalysisEngine()
 
             # Get the full dataset
-            if self.source_type == 'csv':
+            if self.source_type == 'csv' or self.source_type == 'dam':
                 data = self.loader.get_data()
                 time_col = self.loader.get_time_column()
-                condition_col = self.loader._condition_col or 'condition'
+                condition_col = self.loader._condition_col if hasattr(self.loader, '_condition_col') else 'condition'
             else:  # rosbash
                 # For Rosbash, we need to prepare data differently
                 # This is a simplified placeholder - you may need to adjust
@@ -153,8 +161,8 @@ class AnalysisWorker(QThread):
                             progress_msg
                         )
 
-                        if self.source_type == 'csv':
-                            # Get CSV file path from loader for saving plots
+                        if self.source_type == 'csv' or self.source_type == 'dam':
+                            # Get CSV/DAM file path from loader for saving plots
                             csv_path = getattr(self.loader, '_filepath', None)
                             result = engine.run_comparison(
                                 data, var, cond1, cond2, analysis_type,
@@ -203,8 +211,8 @@ class AnalysisWorker(QThread):
                             progress_msg
                         )
 
-                        if self.source_type == 'csv':
-                            # Get CSV file path from loader for saving plots
+                        if self.source_type == 'csv' or self.source_type == 'dam':
+                            # Get CSV/DAM file path from loader for saving plots
                             csv_path = getattr(self.loader, '_filepath', None)
 
                             # Use first condition as placeholder (engine will use all conditions)
@@ -237,8 +245,8 @@ class AnalysisWorker(QThread):
             elif analysis_type == AnalysisType.COSINORPY_PERIODOGRAM:
                 self.progress.emit(10, "Generating periodograms...")
 
-                if self.source_type == 'csv':
-                    # Get CSV file path from loader for saving plots
+                if self.source_type == 'csv' or self.source_type == 'dam':
+                    # Get CSV/DAM file path from loader for saving plots
                     csv_path = getattr(self.loader, '_filepath', None)
 
                     # Call periodogram with ALL selected variables and conditions
@@ -286,8 +294,8 @@ class AnalysisWorker(QThread):
                                 progress_msg
                             )
 
-                            if self.source_type == 'csv':
-                                # Get CSV file path from loader for saving plots
+                            if self.source_type == 'csv' or self.source_type == 'dam':
+                                # Get CSV/DAM file path from loader for saving plots
                                 csv_path = getattr(self.loader, '_filepath', None)
                                 result = engine.run_analysis(
                                     data, var, cond, analysis_type,
@@ -576,6 +584,194 @@ class AnalysisWorker(QThread):
                 success=False,
                 message=f"Compare-all error: {str(e)}"
             )
+
+    def _run_activity_profile_visualization(self):
+        """Generate Activity Profile visualization for DAM data.
+
+        Creates a heatmap showing activity for each day (Y-axis) across ZT times (X-axis).
+        Each cell is the mean activity across all subjects at that day and ZT time.
+        """
+        try:
+            self.progress.emit(10, "Preparing activity profile data...")
+
+            # Get the data
+            data = self.loader.get_data()
+            if data is None or data.empty:
+                self.finished.emit(False, None, "No data available for visualization")
+                return
+
+            self.progress.emit(30, "Calculating ZT times and days...")
+
+            # Convert time to ZT (mod 24) and calculate day number
+            df = data.copy()
+            df['zt'] = (df['time'] % 24).round(2)
+            df['day'] = (df['time'] // 24).astype(int) + 1  # Day 1, 2, 3, ...
+
+            # Calculate number of days in the data
+            n_days = df['day'].max()
+
+            # Get unique conditions
+            conditions = df['condition'].unique().tolist()
+
+            # Get unique subjects per condition for sample size info
+            n_subjects = {}
+            if 'subject' in df.columns:
+                for cond in conditions:
+                    n_subjects[cond] = df[df['condition'] == cond]['subject'].nunique()
+
+            self.progress.emit(50, "Computing mean activity by day and ZT...")
+
+            # Calculate mean for each condition, day, and ZT time
+            # This averages across all subjects FOR EACH DAY separately
+            profile_data = {}
+            for cond in conditions:
+                cond_df = df[df['condition'] == cond]
+                # Group by day and ZT time, calculate mean across subjects
+                grouped = cond_df.groupby(['day', 'zt'])['activity'].mean().reset_index()
+                grouped.columns = ['day', 'zt', 'mean']
+
+                # Pivot to create matrix: rows=days, columns=ZT times
+                pivot = grouped.pivot(index='day', columns='zt', values='mean')
+
+                # Fill any NaN values with 0
+                pivot = pivot.fillna(0)
+
+                profile_data[cond] = {
+                    'days': pivot.index.tolist(),
+                    'zt_times': pivot.columns.tolist(),
+                    'activity_matrix': pivot.values.tolist()  # 2D array: [day][zt]
+                }
+
+            self.progress.emit(60, "Computing actogram data...")
+
+            # ===== ACTOGRAM DATA (double-plotted) =====
+            # For actogram, we need 48h on X-axis (current day + next day)
+            actogram_data = {}
+            for cond in conditions:
+                cond_df = df[df['condition'] == cond]
+                # Group by day and ZT, average across subjects
+                grouped = cond_df.groupby(['day', 'zt'])['activity'].mean().reset_index()
+                # Column is 'activity' after reset_index()
+
+                # Create double-plotted data: each row has 48h (day N: 0-24h, day N+1: 0-24h)
+                days = sorted(grouped['day'].unique())
+                zt_times = sorted(grouped['zt'].unique())
+                double_plot_matrix = []
+
+                for i, day in enumerate(days[:-1]):  # Exclude last day (no next day)
+                    day_data = grouped[grouped['day'] == day].set_index('zt')['activity']
+                    next_day_data = grouped[grouped['day'] == days[i + 1]].set_index('zt')['activity']
+
+                    # Combine: first 24h from current day, next 24h from next day
+                    row = []
+                    for zt in zt_times:
+                        row.append(day_data.get(zt, 0))
+                    for zt in zt_times:
+                        row.append(next_day_data.get(zt, 0))
+                    double_plot_matrix.append(row)
+
+                actogram_data[cond] = {
+                    'days': days[:-1],  # Days for which we have double-plot
+                    'zt_times': zt_times,
+                    'matrix': double_plot_matrix  # 2D: [day][48h bins]
+                }
+
+            self.progress.emit(70, "Computing total daily activity...")
+
+            # ===== TOTAL ACTIVITY PER DAY =====
+            total_activity_data = {}
+            for cond in conditions:
+                cond_df = df[df['condition'] == cond]
+                # Sum activity per day (across all subjects and timepoints)
+                daily_totals = cond_df.groupby('day')['activity'].sum().reset_index()
+                # Also get per-subject totals for SEM
+                if 'subject' in cond_df.columns:
+                    subject_daily = cond_df.groupby(['day', 'subject'])['activity'].sum().reset_index()
+                    daily_stats = subject_daily.groupby('day')['activity'].agg(['mean', 'sem']).reset_index()
+                    daily_stats['sem'] = daily_stats['sem'].fillna(0)
+                else:
+                    daily_stats = daily_totals.copy()
+                    daily_stats['mean'] = daily_stats['activity']
+                    daily_stats['sem'] = 0
+
+                total_activity_data[cond] = {
+                    'days': daily_stats['day'].tolist(),
+                    'mean': daily_stats['mean'].tolist(),
+                    'sem': daily_stats['sem'].tolist() if 'sem' in daily_stats.columns else [0] * len(daily_stats)
+                }
+
+            self.progress.emit(80, "Computing activity onset/offset times...")
+
+            # ===== ACTIVITY ONSET AND OFFSET PER DAY =====
+            # Onset: first time bin where activity exceeds threshold (mean + 0.5*std of that day)
+            # Offset: last time bin where activity exceeds threshold
+            onset_data = {}
+            for cond in conditions:
+                cond_df = df[df['condition'] == cond]
+                days_list = []
+                onset_times = []
+                offset_times = []
+
+                for day in sorted(cond_df['day'].unique()):
+                    day_df = cond_df[cond_df['day'] == day]
+                    # Average across subjects for each ZT
+                    day_profile = day_df.groupby('zt')['activity'].mean().sort_index()
+
+                    if len(day_profile) > 0:
+                        threshold = day_profile.mean() + 0.5 * day_profile.std()
+                        # Find bins where activity > threshold
+                        above_threshold = day_profile[day_profile > threshold]
+                        if len(above_threshold) > 0:
+                            onset_zt = above_threshold.index[0]   # First
+                            offset_zt = above_threshold.index[-1]  # Last
+                        else:
+                            onset_zt = None
+                            offset_zt = None
+                    else:
+                        onset_zt = None
+                        offset_zt = None
+
+                    days_list.append(day)
+                    onset_times.append(onset_zt)
+                    offset_times.append(offset_zt)
+
+                onset_data[cond] = {
+                    'days': days_list,
+                    'onset_times': onset_times,
+                    'offset_times': offset_times
+                }
+
+            self.progress.emit(90, "Preparing visualization result...")
+
+            # Build info message
+            subjects_info = ", ".join([f"{cond}: n={n_subjects.get(cond, '?')}" for cond in conditions])
+            message = f"Activity profile: {n_days} days, {len(conditions)} condition(s) ({subjects_info})"
+
+            # Create result dictionary with data for plotting
+            result = {
+                'type': 'activity_profile',
+                'success': True,
+                'variable': 'activity',
+                'conditions': conditions,
+                'profile_data': profile_data,
+                'actogram_data': actogram_data,
+                'total_activity_data': total_activity_data,
+                'onset_data': onset_data,
+                'n_days': n_days,
+                'n_subjects': n_subjects,
+                'method': 'Activity Profile',
+                'message': message
+            }
+
+            self.results.append(result)
+
+            self.progress.emit(100, "Complete")
+            self.finished.emit(True, self.results, f"Activity profile: {n_days} days, {len(conditions)} conditions")
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.finished.emit(False, None, f"Visualization error: {str(e)}")
 
 
 class ParameterWidget(QWidget):
@@ -1715,7 +1911,7 @@ class AnalysisPanel(QWidget):
 
             if comparison_type == "Independent Models":
                 # Count unique conditions in data
-                if hasattr(self, '_loader') and self._loader and self._source_type == 'csv':
+                if hasattr(self, '_loader') and self._loader and self._source_type in ('csv', 'dam'):
                     dataset_info = self._loader.get_dataset_info()
                     n_conditions = len(dataset_info.conditions) if dataset_info.conditions else 0
 
@@ -2013,6 +2209,14 @@ class AnalysisPanel(QWidget):
                 self._show_param("Random Effect:")
 
         # =====================================================================
+        # VISUALIZATION (DAM data)
+        # =====================================================================
+        elif module_text == "Visualization":
+            # Activity Profile doesn't require any parameters
+            # All parameters are hidden by default
+            pass
+
+        # =====================================================================
         # COMPARISON FRAME VISIBILITY
         # =====================================================================
         # Show comparison frame ONLY for pairwise comparison methods (user selects 2 specific conditions)
@@ -2161,7 +2365,7 @@ class AnalysisPanel(QWidget):
 
         # Check if subject column exists (for dependent data methods)
         has_subject_col = False
-        if hasattr(self, '_loader') and self._loader and self._source_type == 'csv':
+        if hasattr(self, '_loader') and self._loader and self._source_type in ('csv', 'dam'):
             dataset_info = self._loader.get_dataset_info()
             has_subject_col = dataset_info.subject_column is not None
 
@@ -2186,7 +2390,7 @@ class AnalysisPanel(QWidget):
                 ("Single Fit", "Robust cosinor fitting"),
                 ("Compare Groups", "Compare parameters between groups")
             ]
-        else:  # Rhythm Analysis
+        elif index == 2:  # Rhythm Analysis
             methods = [
                 ("JTK Cycle", "Nonparametric rhythm detection"),
                 ("AR-JTK", "JTK with autoregressive correction"),
@@ -2199,6 +2403,12 @@ class AnalysisPanel(QWidget):
                 ("Wavelet (CWT)", "Time-frequency analysis"),
                 ("Linear Mixed Effects", "Hierarchical modeling")
             ]
+        elif index == 3:  # Visualization (available for DAM data)
+            methods = [
+                ("Activity Profile", "Daily activity profile with mean ± SEM by condition")
+            ]
+        else:
+            methods = []
 
         for name, desc in methods:
             self._method_combo.addItem(name, desc)
@@ -2443,6 +2653,8 @@ class AnalysisPanel(QWidget):
             (2, "Spectral Analysis (Periodogram)"): AnalysisMethod.RHYTHM_SPECTRAL,
             (2, "Wavelet (CWT)"): AnalysisMethod.RHYTHM_CWT,
             (2, "Linear Mixed Effects"): AnalysisMethod.RHYTHM_LME,
+            # Visualization
+            (3, "Activity Profile"): AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE,
         }
 
         return mapping.get((module, method), AnalysisMethod.COSINORPY_PERIODOGRAM)
@@ -2546,9 +2758,12 @@ class AnalysisPanel(QWidget):
         # Update variable list
         self._var_list.clear()
 
-        if source_type == 'csv':
-            # CSV: Show all available variables
-            self._var_label.setText("Variables:")
+        if source_type == 'csv' or source_type == 'dam':
+            # CSV/DAM: Show all available variables
+            if source_type == 'dam':
+                self._var_label.setText("Activity:")
+            else:
+                self._var_label.setText("Variables:")
             self._gene_search.setVisible(False)
             self._clock_genes_btn.setVisible(False)
             self._cluster_container.setVisible(False)
@@ -2558,12 +2773,15 @@ class AnalysisPanel(QWidget):
                 item = QListWidgetItem(var)
                 self._var_list.addItem(item)
 
+            # Add/remove Visualization module based on source type
+            self._update_module_combo_for_source(source_type)
+
             # Refresh method list based on whether subject column exists
             # This ensures dependent methods are only shown when appropriate
             current_module_index = self._module_combo.currentIndex()
             self._on_module_changed(current_module_index)
 
-        else:  # rosbash
+        elif source_type == 'rosbash':
             # Rosbash: Show all genes with search functionality
             self._var_label.setText("Genes:")
             self._gene_search.setVisible(True)
@@ -2584,12 +2802,15 @@ class AnalysisPanel(QWidget):
                 item.setSelected(True)  # Select all by default
                 self._cluster_list.addItem(item)
 
+            # Update module combo (remove Visualization for rosbash)
+            self._update_module_combo_for_source(source_type)
+
         # Update condition list
         self._cond_list.clear()
         self._cond1_combo.clear()
         self._cond2_combo.clear()
 
-        if source_type == 'csv':
+        if source_type == 'csv' or source_type == 'dam':
             conditions = loader.get_conditions()
         else:  # rosbash
             info = loader.get_dataset_info()
@@ -2607,8 +2828,8 @@ class AnalysisPanel(QWidget):
         self._available_variables = self._all_genes if source_type == 'rosbash' else variables
         self._available_conditions = conditions
 
-        # Populate LME comboboxes with available columns (for CSV data)
-        if source_type == 'csv':
+        # Populate LME comboboxes with available columns (for CSV/DAM data)
+        if source_type == 'csv' or source_type == 'dam':
             self._populate_lme_columns(loader)
 
         # Detect and display data type information
@@ -2714,6 +2935,27 @@ class AnalysisPanel(QWidget):
         except Exception as e:
             print(f"[DEBUG] Error detecting data type: {e}")
             # self._data_info_frame.setVisible(False)
+
+    def _update_module_combo_for_source(self, source_type: str):
+        """Add or remove Visualization module based on data source type."""
+        # Check if Visualization module exists
+        has_visualization = False
+        for i in range(self._module_combo.count()):
+            if self._module_combo.itemText(i) == "Visualization":
+                has_visualization = True
+                break
+
+        if source_type == 'dam':
+            # Add Visualization module for DAM data
+            if not has_visualization:
+                self._module_combo.addItem("Visualization")
+        else:
+            # Remove Visualization module for non-DAM data
+            if has_visualization:
+                for i in range(self._module_combo.count()):
+                    if self._module_combo.itemText(i) == "Visualization":
+                        self._module_combo.removeItem(i)
+                        break
 
     def clear_data(self):
         """Clear loaded data."""

@@ -93,7 +93,11 @@ class MainWindow(QMainWindow):
         open_h5 = QAction("Open Rosbash Dataset...", self)
         open_h5.triggered.connect(self._open_h5)
         file_menu.addAction(open_h5)
-        
+
+        open_dam = QAction("Open DAM Monitor File...", self)
+        open_dam.triggered.connect(self._open_dam)
+        file_menu.addAction(open_dam)
+
         file_menu.addSeparator()
         
         export_results = QAction("Export Results...", self)
@@ -216,7 +220,13 @@ class MainWindow(QMainWindow):
         self._tabs.setCurrentIndex(0)
         self._data_panel._source_combo.setCurrentIndex(1)
         self._data_panel._browse_h5()
-    
+
+    def _open_dam(self):
+        """Open DAM monitor file dialog."""
+        self._tabs.setCurrentIndex(0)
+        self._data_panel.set_source('dam')
+        self._data_panel._browse_dam()
+
     def _run_analysis(self):
         """Trigger analysis run."""
         self._tabs.setCurrentIndex(1)
@@ -281,18 +291,22 @@ https://github.com/FranTassara/circascope
         """Handle data loaded signal."""
         self._analysis_panel.set_data(loader, source_type)
         self._run_action.setEnabled(True)
-        
+
         if source_type == 'csv':
             info = loader.get_dataset_info()
             status = f"CSV: {info.n_rows} rows, {len(info.variable_columns)} variables"
+        elif source_type == 'dam':
+            n_channels = loader.get_channel_count()
+            info = loader.get_dataset_info()
+            status = f"DAM: {n_channels} channels, {len(info.timepoints)} timepoints"
         else:
             info = loader.get_dataset_info()
             status = f"Rosbash: {info.n_genes} genes, {info.n_cells} cells"
-        
+
         self._data_status.setText(status)
         self._data_status.setStyleSheet("color: green;")
         self._status_label.setText("Data loaded successfully")
-        
+
         # Switch to analysis tab
         self._tabs.setCurrentIndex(1)
     

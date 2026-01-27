@@ -3574,7 +3574,7 @@ class AnalysisEngine:
             print(f"[DEBUG] ERROR: CosinorPy not available")
             return AnalysisResult(
                 variable="Periodogram", condition="All",
-                method="CosinorPy Periodogram",
+                method="cosinorpy_periodogram",
                 success=False, message="CosinorPy not available"
             )
 
@@ -3683,7 +3683,7 @@ class AnalysisEngine:
             traceback.print_exc()
             return AnalysisResult(
                 variable=variable, condition=condition,
-                method="CosinorPy Periodogram",
+                method="cosinorpy_periodogram",
                 success=False, message=f"Error: {str(e)}"
             )
 
@@ -3701,7 +3701,7 @@ class AnalysisEngine:
         if self._cosinor is None:
             return AnalysisResult(
                 variable=variable, condition=condition,
-                method="CosinorPy Independent",
+                method="cosinorpy_independent",
                 success=False, message="CosinorPy not available"
             )
 
@@ -3792,7 +3792,7 @@ class AnalysisEngine:
                     analysis_results.append(AnalysisResult(
                         variable=variable,
                         condition=condition,
-                        method="CosinorPy Independent",
+                        method="cosinorpy_independent",
                         mesor=res_dict.get('mesor'),
                         amplitude=res_dict.get('amplitude'),
                         acrophase=acrophase_rad,
@@ -3837,7 +3837,7 @@ class AnalysisEngine:
                 return AnalysisResult(
                     variable=variable,
                     condition=condition,
-                    method="CosinorPy Independent",
+                    method="cosinorpy_independent",
                     mesor=result.get('mesor'),
                     amplitude=result.get('amplitude'),
                     acrophase=acrophase_rad,
@@ -3879,7 +3879,7 @@ class AnalysisEngine:
             traceback.print_exc()
             return AnalysisResult(
                 variable=variable, condition=condition,
-                method="CosinorPy Independent",
+                method="cosinorpy_independent",
                 success=False, message=f"Error: {str(e)}"
             )
 
@@ -3902,7 +3902,7 @@ class AnalysisEngine:
         if self._cosinor is None:
             return AnalysisResult(
                 variable=variable, condition=condition,
-                method="CosinorPy Dependent",
+                method="cosinorpy_dependent",
                 success=False, message="CosinorPy not available"
             )
 
@@ -3995,7 +3995,7 @@ class AnalysisEngine:
                     analysis_results.append(AnalysisResult(
                         variable=variable,
                         condition=condition,
-                        method="CosinorPy Dependent",
+                        method="cosinorpy_dependent",
                         mesor=res_dict.get('mesor'),
                         amplitude=res_dict.get('amplitude'),
                         acrophase=res_dict.get('acrophase'),
@@ -4031,7 +4031,7 @@ class AnalysisEngine:
                 return AnalysisResult(
                     variable=variable,
                     condition=condition,
-                    method="CosinorPy Dependent",
+                    method="cosinorpy_dependent",
                     mesor=result.get('mesor'),
                     amplitude=result.get('amplitude'),
                     acrophase=result.get('acrophase'),
@@ -4068,7 +4068,7 @@ class AnalysisEngine:
             traceback.print_exc()
             return AnalysisResult(
                 variable=variable, condition=condition,
-                method="CosinorPy Dependent",
+                method="cosinorpy_dependent",
                 success=False, message=f"Error: {str(e)}"
             )
 
@@ -4112,19 +4112,18 @@ class AnalysisEngine:
             if isinstance(period, (list, np.ndarray)):
                 period = period[0] if len(period) > 0 else 24.0
 
-            # Build method string
-            method_parts = []
+            # Build method string (normalized snake_case format)
             if comparison_type == 'pooled_model':
-                method_parts.append('Pooled Model')
+                method_str = 'cosinorpy_compare_pooled'
             elif comparison_type == 'independent_models':
-                method_parts.append('Independent Models')
+                method_str = 'cosinorpy_compare_independent_models'
             elif comparison_type.startswith('multi_'):
-                method_parts.append(f'Multi-component {comparison_method}')
-                n_comp = row.get('n_components', row.get('n_components1'))
-                if n_comp is not None:
-                    method_parts.append(f'({int(n_comp)} comp)')
-
-            method_str = ' '.join(method_parts) if method_parts else 'CosinorPy Comparison'
+                if comparison_method.lower() == 'limorhyde':
+                    method_str = 'cosinorpy_compare_limorhyde'
+                else:
+                    method_str = 'cosinorpy_compare_multi'
+            else:
+                method_str = 'cosinorpy_compare'
 
             # Extract parameters for condition 1 (g0 or 1)
             # CosinorPy uses different naming: amplitude_g0/g1 OR amplitude1/amplitude2
@@ -4493,7 +4492,7 @@ class AnalysisEngine:
         if self._cosinor is None:
             return AnalysisResult(
                 variable=variable, condition=condition,
-                method="CosinorPy Nonlinear Independent",
+                method="cosinorpy_nonlinear_independent",
                 success=False, message="CosinorPy not available"
             )
 
@@ -4571,7 +4570,7 @@ class AnalysisEngine:
                     analysis_results.append(AnalysisResult(
                         variable=variable,
                         condition=condition,
-                        method="CosinorPy Nonlinear Independent",
+                        method="cosinorpy_nonlinear_independent",
                         mesor=res_dict.get('mesor'),
                         amplitude=res_dict.get('amplitude'),
                         acrophase=acrophase_rad,
@@ -4610,7 +4609,7 @@ class AnalysisEngine:
                 return AnalysisResult(
                     variable=variable,
                     condition=condition,
-                    method="CosinorPy Nonlinear Independent",
+                    method="cosinorpy_nonlinear_independent",
                     mesor=result.get('mesor'),
                     amplitude=result.get('amplitude'),
                     acrophase=acrophase_rad,
@@ -4645,7 +4644,7 @@ class AnalysisEngine:
             traceback.print_exc()
             return AnalysisResult(
                 variable=variable, condition=condition,
-                method="CosinorPy Nonlinear Independent",
+                method="cosinorpy_nonlinear_independent",
                 success=False, message=f"Error: {str(e)}"
             )
 
@@ -4669,7 +4668,7 @@ class AnalysisEngine:
         if self._cosinor is None:
             return AnalysisResult(
                 variable=variable, condition=condition,
-                method="CosinorPy Nonlinear Dependent",
+                method="cosinorpy_nonlinear_dependent",
                 success=False, message="CosinorPy not available"
             )
 
@@ -4740,7 +4739,7 @@ class AnalysisEngine:
                     analysis_results.append(AnalysisResult(
                         variable=variable,
                         condition=condition,
-                        method="CosinorPy Nonlinear Dependent",
+                        method="cosinorpy_nonlinear_dependent",
                         mesor=res_dict.get('mesor'),
                         amplitude=res_dict.get('amplitude'),
                         acrophase=acrophase_rad,
@@ -4782,7 +4781,7 @@ class AnalysisEngine:
                 return AnalysisResult(
                     variable=variable,
                     condition=condition,
-                    method="CosinorPy Nonlinear Dependent",
+                    method="cosinorpy_nonlinear_dependent",
                     mesor=result.get('mesor'),
                     amplitude=result.get('amplitude'),
                     acrophase=acrophase_rad,
@@ -4820,7 +4819,7 @@ class AnalysisEngine:
             traceback.print_exc()
             return AnalysisResult(
                 variable=variable, condition=condition,
-                method="CosinorPy Nonlinear Dependent",
+                method="cosinorpy_nonlinear_dependent",
                 success=False, message=f"Error: {str(e)}"
             )
 
@@ -4895,7 +4894,7 @@ class AnalysisEngine:
                     variable=variable,
                     condition1=res_dict.get('condition1', ''),
                     condition2=res_dict.get('condition2', ''),
-                    method="CosinorPy Nonlinear Compare Independent",
+                    method="cosinorpy_nonlinear_compare_independent",
                     # Differences
                     amplitude_diff=res_dict.get('d_amplitude'),
                     acrophase_diff=res_dict.get('d_acrophase'),
@@ -5000,7 +4999,7 @@ class AnalysisEngine:
                     variable=variable,
                     condition1=res_dict.get('condition1', ''),
                     condition2=res_dict.get('condition2', ''),
-                    method="CosinorPy Nonlinear Compare Dependent",
+                    method="cosinorpy_nonlinear_compare_dependent",
                     # Differences
                     amplitude_diff=res_dict.get('d_amplitude'),
                     acrophase_diff=res_dict.get('d_acrophase'),
