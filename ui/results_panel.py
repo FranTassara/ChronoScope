@@ -145,38 +145,71 @@ class PlotCanvas(FigureCanvas):
         result: Dict[str, Any],
         title: str = ""
     ):
-        """Plot comparison between two conditions."""
+        """Plot comparison between two conditions with raw data."""
         self.clear()
         ax = self.axes
-        
+
         period = result.get('period', 24.0)
-        t_fit = np.linspace(0, period, 200)
-        
-        # Group 0
+
+        # Get raw data for plotting (if available)
+        times_g0 = result.get('times_g0')
+        values_g0 = result.get('values_g0')
+        times_g1 = result.get('times_g1')
+        values_g1 = result.get('values_g1')
+
+        cond1 = result.get('condition1', 'Group 0')
+        cond2 = result.get('condition2', 'Group 1')
+
+        # Determine time range from raw data
+        t_min, t_max = 0, period
+        if times_g0 is not None and values_g0 is not None:
+            times_g0 = np.array(times_g0) if not isinstance(times_g0, np.ndarray) else times_g0
+            values_g0 = np.array(values_g0) if not isinstance(values_g0, np.ndarray) else values_g0
+            t_min = min(t_min, np.min(times_g0))
+            t_max = max(t_max, np.max(times_g0))
+
+        if times_g1 is not None and values_g1 is not None:
+            times_g1 = np.array(times_g1) if not isinstance(times_g1, np.ndarray) else times_g1
+            values_g1 = np.array(values_g1) if not isinstance(values_g1, np.ndarray) else values_g1
+            t_min = min(t_min, np.min(times_g1))
+            t_max = max(t_max, np.max(times_g1))
+
+        # Plot raw data points for group 0 if available
+        if times_g0 is not None and values_g0 is not None:
+            ax.scatter(times_g0, values_g0, alpha=0.5, s=30, color='steelblue',
+                      label=f'{cond1} data', zorder=1)
+
+        # Plot raw data points for group 1 if available
+        if times_g1 is not None and values_g1 is not None:
+            ax.scatter(times_g1, values_g1, alpha=0.5, s=30, color='coral',
+                      label=f'{cond2} data', zorder=1)
+
+        # Generate time points for smooth curves covering the full data range
+        n_points = max(200, int((t_max - t_min) / period * 200))
+        t_fit = np.linspace(t_min, t_max, n_points)
+
+        # Group 0 fit curve
         # Formula: y = mesor + amplitude * cos(2π * t / period - acrophase)
         mesor_g0 = result.get('mesor_g0', 0)
         amp_g0 = result.get('amplitude_g0', 0)
         acr_g0 = result.get('acrophase_g0', 0)
         y_g0 = mesor_g0 + amp_g0 * np.cos(2 * np.pi * t_fit / period - acr_g0)
 
-        # Group 1
+        # Group 1 fit curve
         mesor_g1 = result.get('mesor_g1', 0)
         amp_g1 = result.get('amplitude_g1', 0)
         acr_g1 = result.get('acrophase_g1', 0)
         y_g1 = mesor_g1 + amp_g1 * np.cos(2 * np.pi * t_fit / period - acr_g1)
-        
-        cond1 = result.get('condition1', 'Group 0')
-        cond2 = result.get('condition2', 'Group 1')
-        
-        ax.plot(t_fit, y_g0, '-', linewidth=2, label=cond1, color='steelblue')
-        ax.plot(t_fit, y_g1, '-', linewidth=2, label=cond2, color='coral')
-        
+
+        ax.plot(t_fit, y_g0, '-', linewidth=2, label=f'{cond1} fit', color='steelblue', zorder=2)
+        ax.plot(t_fit, y_g1, '-', linewidth=2, label=f'{cond2} fit', color='coral', zorder=2)
+
         ax.set_xlabel('Time (hours)')
         ax.set_ylabel('Expression')
         ax.set_title(title)
-        ax.legend()
-        ax.set_xlim(0, period)
-        
+        ax.legend(loc='upper right', fontsize=8)
+        ax.set_xlim(t_min, t_max)
+
         self.fig.tight_layout()
         self.draw()
     
@@ -1617,7 +1650,7 @@ class ResultsPanel(QWidget):
         self._fit_canvas.draw()
 
     def _plot_comparison_fit(self, result: Dict):
-        """Plot cosinor fits for both conditions in a comparison."""
+        """Plot cosinor fits for both conditions in a comparison with raw data."""
         variable = result.get('variable', '')
         condition1 = result.get('condition1', '')
         condition2 = result.get('condition2', '')
@@ -1631,6 +1664,12 @@ class ResultsPanel(QWidget):
         mesor_g1 = result.get('mesor_g1')
         amplitude_g1 = result.get('amplitude_g1')
         acrophase_g1 = result.get('acrophase_g1')
+
+        # Get raw data for plotting (if available)
+        times_g0 = result.get('times_g0')
+        values_g0 = result.get('values_g0')
+        times_g1 = result.get('times_g1')
+        values_g1 = result.get('values_g1')
 
         # Handle nan/None values for all parameters
         def safe_value(val, default=0):
@@ -1663,28 +1702,53 @@ class ResultsPanel(QWidget):
         self._fit_canvas.clear()
         ax = self._fit_canvas.axes
 
-        # Generate time points for smooth curves
-        t_fit = np.linspace(0, period, 200)
+        # Convert raw data arrays and determine time range for fit curve
+        t_min, t_max = 0, period
+        if times_g0 is not None and values_g0 is not None:
+            times_g0 = np.array(times_g0) if not isinstance(times_g0, np.ndarray) else times_g0
+            values_g0 = np.array(values_g0) if not isinstance(values_g0, np.ndarray) else values_g0
+            t_min = min(t_min, np.min(times_g0))
+            t_max = max(t_max, np.max(times_g0))
+
+        if times_g1 is not None and values_g1 is not None:
+            times_g1 = np.array(times_g1) if not isinstance(times_g1, np.ndarray) else times_g1
+            values_g1 = np.array(values_g1) if not isinstance(values_g1, np.ndarray) else values_g1
+            t_min = min(t_min, np.min(times_g1))
+            t_max = max(t_max, np.max(times_g1))
+
+        # Plot raw data points for condition 1 (group 0) if available
+        if times_g0 is not None and values_g0 is not None:
+            ax.scatter(times_g0, values_g0, alpha=0.5, s=30, color='steelblue',
+                      label=f'{condition1} data', zorder=1)
+
+        # Plot raw data points for condition 2 (group 1) if available
+        if times_g1 is not None and values_g1 is not None:
+            ax.scatter(times_g1, values_g1, alpha=0.5, s=30, color='orangered',
+                      label=f'{condition2} data', zorder=1)
+
+        # Generate time points for smooth curves covering the full data range
+        n_points = max(200, int((t_max - t_min) / period * 200))
+        t_fit = np.linspace(t_min, t_max, n_points)
 
         # Plot fit curve for condition 1 (group 0)
         y_fit_g0 = mesor_g0 + amplitude_g0 * np.cos(2 * np.pi * t_fit / period - acrophase_g0)
-        ax.plot(t_fit, y_fit_g0, '-', linewidth=2.5, label=f'{condition1}', color='steelblue')
+        ax.plot(t_fit, y_fit_g0, '-', linewidth=2.5, label=f'{condition1} fit', color='steelblue', zorder=2)
 
         # Plot fit curve for condition 2 (group 1)
         y_fit_g1 = mesor_g1 + amplitude_g1 * np.cos(2 * np.pi * t_fit / period - acrophase_g1)
-        ax.plot(t_fit, y_fit_g1, '-', linewidth=2.5, label=f'{condition2}', color='orangered')
+        ax.plot(t_fit, y_fit_g1, '-', linewidth=2.5, label=f'{condition2} fit', color='orangered', zorder=2)
 
         # Add horizontal lines at MESORs if they are not zero
         if mesor_g0 != 0:
-            ax.axhline(y=mesor_g0, color='steelblue', linestyle='--', alpha=0.3)
+            ax.axhline(y=mesor_g0, color='steelblue', linestyle='--', alpha=0.3, zorder=0)
         if mesor_g1 != 0:
-            ax.axhline(y=mesor_g1, color='orangered', linestyle='--', alpha=0.3)
+            ax.axhline(y=mesor_g1, color='orangered', linestyle='--', alpha=0.3, zorder=0)
 
         # Labels and legend
         ax.set_xlabel('Time (hours)')
         ax.set_ylabel('Expression')
         ax.set_title(f'{variable} - Comparison: {condition1} vs {condition2}')
-        ax.legend(loc='upper right')
+        ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
 
         self._fit_canvas.fig.tight_layout()

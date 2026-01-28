@@ -256,6 +256,13 @@ class ComparisonResult:
 
     period: float = 24.0
     n_components: Optional[int] = None
+
+    # Raw data for plotting (optional)
+    times_g0: Optional[np.ndarray] = None
+    values_g0: Optional[np.ndarray] = None
+    times_g1: Optional[np.ndarray] = None
+    values_g1: Optional[np.ndarray] = None
+
     success: bool = True
     message: str = ""
 
@@ -997,6 +1004,14 @@ class AnalysisEngine:
         filtered = data[mask].copy()
         print(f"[DEBUG] Filtered data shape: {filtered.shape}")
 
+        # Extract raw data for each group (for plotting)
+        data_g0 = filtered[filtered[condition_col] == condition1]
+        data_g1 = filtered[filtered[condition_col] == condition2]
+        times_g0 = data_g0[time_col].values.astype(float) if len(data_g0) > 0 else None
+        values_g0 = data_g0[variable].values.astype(float) if len(data_g0) > 0 else None
+        times_g1 = data_g1[time_col].values.astype(float) if len(data_g1) > 0 else None
+        values_g1 = data_g1[variable].values.astype(float) if len(data_g1) > 0 else None
+
         # Load data into CosinorAnalyzer
         try:
             print(f"[DEBUG] Loading data into CosinorAnalyzer...")
@@ -1111,6 +1126,10 @@ class AnalysisEngine:
             acrophase_diff_ci=result.acrophase_diff_ci,
             mesor_diff_ci=result.mesor_diff_ci,
             period=period,
+            times_g0=times_g0,
+            values_g0=values_g0,
+            times_g1=times_g1,
+            values_g1=values_g1,
             success=True
         )
 
@@ -1149,6 +1168,14 @@ class AnalysisEngine:
         mask = data[condition_col].isin([condition1, condition2])
         filtered = data[mask].copy()
         print(f"[DEBUG] Filtered data shape: {filtered.shape}")
+
+        # Extract raw data for each group (for plotting)
+        data_g0 = filtered[filtered[condition_col] == condition1]
+        data_g1 = filtered[filtered[condition_col] == condition2]
+        times_g0 = data_g0[time_col].values.astype(float) if len(data_g0) > 0 else None
+        values_g0 = data_g0[variable].values.astype(float) if len(data_g0) > 0 else None
+        times_g1 = data_g1[time_col].values.astype(float) if len(data_g1) > 0 else None
+        values_g1 = data_g1[variable].values.astype(float) if len(data_g1) > 0 else None
 
         # Load data into CosinorAnalyzer
         try:
@@ -1239,6 +1266,10 @@ class AnalysisEngine:
             acrophase_diff_ci=result.acrophase_diff_ci,
             mesor_diff_ci=result.mesor_diff_ci,
             period=period,
+            times_g0=times_g0,
+            values_g0=values_g0,
+            times_g1=times_g1,
+            values_g1=values_g1,
             success=True
         )
 
@@ -1278,6 +1309,14 @@ class AnalysisEngine:
         mask = data[condition_col].isin([condition1, condition2])
         filtered = data[mask].copy()
         print(f"[DEBUG] Filtered data shape: {filtered.shape}")
+
+        # Extract raw data for each group (for plotting)
+        data_g0 = filtered[filtered[condition_col] == condition1]
+        data_g1 = filtered[filtered[condition_col] == condition2]
+        times_g0 = data_g0[time_col].values.astype(float) if len(data_g0) > 0 else None
+        values_g0 = data_g0[variable].values.astype(float) if len(data_g0) > 0 else None
+        times_g1 = data_g1[time_col].values.astype(float) if len(data_g1) > 0 else None
+        values_g1 = data_g1[variable].values.astype(float) if len(data_g1) > 0 else None
 
         # Load data into CosinorAnalyzer
         try:
@@ -1488,6 +1527,10 @@ class AnalysisEngine:
             p_lin_comp=result.lin_comp_p_value,
             q_lin_comp=q_lin_comp,
             period=period,
+            times_g0=times_g0,
+            values_g0=values_g0,
+            times_g1=times_g1,
+            values_g1=values_g1,
             success=True,
             message=message  # Include auto-selection info if applicable
         )
@@ -1913,6 +1956,14 @@ class AnalysisEngine:
         print(f"  Filtered data shape: {filtered.shape}")
         print(f"  Unique conditions in filtered: {filtered[condition_col].unique()}")
 
+        # Extract raw data for each group (for plotting)
+        data_g0 = filtered[filtered[condition_col] == condition1]
+        data_g1 = filtered[filtered[condition_col] == condition2]
+        times_g0 = data_g0[time_col].values.astype(float) if len(data_g0) > 0 else None
+        values_g0 = data_g0[variable].values.astype(float) if len(data_g0) > 0 else None
+        times_g1 = data_g1[time_col].values.astype(float) if len(data_g1) > 0 else None
+        values_g1 = data_g1[variable].values.astype(float) if len(data_g1) > 0 else None
+
         # Load data into CircaCompare analyzer
         self._circacompare.load_dataframe(filtered)
         self._circacompare.set_period(period)
@@ -1982,9 +2033,13 @@ class AnalysisEngine:
             amplitude_diff_ci=amplitude_diff_ci,
             acrophase_diff_ci=acrophase_diff_ci,
             period=period,
+            times_g0=times_g0,
+            values_g0=values_g0,
+            times_g1=times_g1,
+            values_g1=values_g1,
             success=True
         )
-    
+
     # =========================================================================
     # Rhythm Analysis Methods
     # =========================================================================
