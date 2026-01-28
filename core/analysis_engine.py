@@ -163,6 +163,13 @@ class AnalysisResult:
     threshold: Optional[float] = None  # Significance threshold
     significant_peaks: Optional[List[float]] = None  # List of significant periods
 
+    # Scalogram-specific (CWT)
+    scalogram_power: Optional[np.ndarray] = None  # 2D power matrix (periods x time)
+    scalogram_times: Optional[np.ndarray] = None  # Time array for scalogram
+    scalogram_periods: Optional[np.ndarray] = None  # Period array for scalogram
+    period_variation: Optional[float] = None  # CWT period variation
+    amplitude_modulations: Optional[int] = None  # CWT amplitude modulation count
+
     # Raw data for plotting
     times: Optional[np.ndarray] = None
     values: Optional[np.ndarray] = None
@@ -3187,6 +3194,14 @@ class AnalysisEngine:
             is_rhythmic = result.f24_score > 2.0
             msg = f"F24={result.f24_score:.2f} ({'rhythmic' if is_rhythmic else 'not rhythmic'}, threshold=2.0)"
 
+            # Convert frequencies to periods for plotting
+            frequencies = result.frequencies
+            periods = None
+            if frequencies is not None:
+                valid_freq = frequencies > 0
+                periods = np.zeros_like(frequencies)
+                periods[valid_freq] = 1.0 / frequencies[valid_freq]
+
             return AnalysisResult(
                 variable=variable,
                 condition=condition,
@@ -3196,6 +3211,8 @@ class AnalysisEngine:
                 power=result.f24_score,  # F24 score as effect size
                 times=times,
                 values=values,
+                periods=periods,  # Add periods for plotting
+                power_spectrum=result.power_spectrum,  # Add power spectrum for plotting
                 success=True,
                 message=msg
             )
@@ -3250,8 +3267,13 @@ class AnalysisEngine:
                 period=result.dominant_period,
                 dominant_period=result.dominant_period,
                 power=result.mean_power,
+                period_variation=result.period_variation,
+                amplitude_modulations=result.amplitude_modulations,
                 times=times,
                 values=values,
+                scalogram_power=result.power_matrix,
+                scalogram_times=result.times,
+                scalogram_periods=result.periods,
                 success=True,
                 message=f"Period variation: {result.period_variation:.2f}h, Amplitude modulations: {result.amplitude_modulations}"
             )
@@ -3277,10 +3299,14 @@ class AnalysisEngine:
         condition_col: str,
         parameters: Dict[str, Any]
     ) -> AnalysisResult:
-        """Run Linear Mixed Effects model analysis."""
+        """Run Cosinor Linear Mixed Effects model analysis for circadian rhythms."""
+        print("[DEBUG _run_lme] Starting LME analysis...")
         from .rhythm_analysis import _fit_lme_model
 
-        fixed_effects = parameters.get('fixed_effects', [time_col])
+        period = parameters.get('period', 24.0)
+        # Handle period being a list (use single value for LME cosinor)
+        if isinstance(period, (list, tuple)):
+            period = period[0] if len(period) == 1 else 24.0  # Use first or default to 24h
         random_effect = parameters.get('random_effect', 'replicate')
 
         try:
@@ -3292,18 +3318,55 @@ class AnalysisEngine:
 
             # Check if random effect column exists
             if random_effect not in df.columns:
+                # Try to find a suitable grouping column
+                potential_groups = ['replicate', 'subject', 'animal', 'id', 'sample', 'day']
+                found_group = None
+                for col in potential_groups:
+                    if col in df.columns:
+                        found_group = col
+                        break
+
+                if found_group is None:
+                    return AnalysisResult(
+                        variable=variable, condition=condition,
+                        method="lme",
+                        success=False,
+                        message=f"Random effect column '{random_effect}' not found. "
+                                f"Available columns: {list(df.columns)}. "
+                                f"Please specify a grouping variable (e.g., subject ID, replicate)."
+                    )
+                random_effect = found_group
+
+            # Get times, values, and groups
+            times = df[time_col].values.astype(float)
+            values = df[variable].values.astype(float)
+            groups = df[random_effect].values
+
+            # Check for sufficient data
+            if len(times) < 5:
                 return AnalysisResult(
                     variable=variable, condition=condition,
                     method="lme",
                     success=False,
-                    message=f"Random effect column '{random_effect}' not found. Available: {list(df.columns)}"
+                    message="Not enough data points for LME analysis (need at least 5)"
+                )
+
+            # Check for multiple groups
+            unique_groups = np.unique(groups)
+            if len(unique_groups) < 2:
+                return AnalysisResult(
+                    variable=variable, condition=condition,
+                    method="lme",
+                    success=False,
+                    message=f"LME requires at least 2 groups for random effect. "
+                            f"Found only {len(unique_groups)} unique value(s) in '{random_effect}' column."
                 )
 
             result = _fit_lme_model(
-                df,
-                dependent=variable,
-                fixed_effects=fixed_effects,
-                random_effect=random_effect
+                times=times,
+                values=values,
+                random_groups=groups,
+                period=period
             )
 
             if result is None:
@@ -3313,24 +3376,28 @@ class AnalysisEngine:
                     success=False, message="Analysis failed"
                 )
 
-            # Get times and values for plotting
-            times = df[time_col].values
-            values = df[variable].values
-
-            # Get primary p-value (first fixed effect after intercept)
-            p_value = result.p_values[1] if len(result.p_values) > 1 else None
-
             return AnalysisResult(
                 variable=variable,
                 condition=condition,
                 method="lme",
-                p_value=p_value,
+                mesor=result.mesor,
+                amplitude=result.amplitude,
+                acrophase=result.acrophase_rad,
+                acrophase_hours=result.acrophase,
+                period=result.period,
+                p_value=result.p_value,
+                r_squared=result.r_squared,
+                aic=result.aic,
+                bic=result.bic,
                 times=times,
                 values=values,
                 success=True,
-                message=f"Terms: {', '.join(result.terms)}"
+                message=f"Random effect: {random_effect} ({len(unique_groups)} groups)"
             )
         except Exception as e:
+            import traceback
+            print(f"[DEBUG _run_lme] Exception caught: {e}")
+            print(traceback.format_exc())
             return AnalysisResult(
                 variable=variable, condition=condition,
                 method="lme",

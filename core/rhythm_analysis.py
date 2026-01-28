@@ -96,6 +96,105 @@ class DefaultPeriodRanges:
 
 
 # =============================================================================
+# HELPER FUNCTIONS FOR DATA PREPROCESSING
+# =============================================================================
+
+def _check_uniform_sampling(times: np.ndarray, tolerance: float = 0.01) -> Tuple[bool, float]:
+    """
+    Check if time series is uniformly sampled.
+
+    Args:
+        times: Array of time values
+        tolerance: Relative tolerance for considering intervals equal (default 1%)
+
+    Returns:
+        Tuple of (is_uniform, median_interval)
+    """
+    if len(times) < 2:
+        return True, 1.0
+
+    diffs = np.diff(np.sort(times))
+    median_interval = np.median(diffs)
+
+    if median_interval == 0:
+        return False, 0.0
+
+    # Check if all intervals are within tolerance of median
+    relative_deviation = np.abs(diffs - median_interval) / median_interval
+    is_uniform = np.all(relative_deviation < tolerance)
+
+    return is_uniform, float(median_interval)
+
+
+def _resample_to_uniform(
+    times: np.ndarray,
+    values: np.ndarray,
+    target_interval: float = None,
+    method: str = 'linear'
+) -> Tuple[np.ndarray, np.ndarray, str]:
+    """
+    Resample irregularly-sampled data to a uniform time grid.
+
+    This is necessary for FFT and CWT which assume uniform sampling.
+
+    Args:
+        times: Original time values
+        values: Original measurement values
+        target_interval: Desired sampling interval. If None, uses median of original intervals.
+        method: Interpolation method ('linear', 'cubic', 'pchip')
+
+    Returns:
+        Tuple of (uniform_times, interpolated_values, warning_message)
+    """
+    from scipy import interpolate
+
+    # Sort by time
+    sort_idx = np.argsort(times)
+    times_sorted = times[sort_idx]
+    values_sorted = values[sort_idx]
+
+    # Handle duplicate times by averaging
+    unique_times, inverse_idx = np.unique(times_sorted, return_inverse=True)
+    if len(unique_times) < len(times_sorted):
+        values_unique = np.array([values_sorted[inverse_idx == i].mean()
+                                  for i in range(len(unique_times))])
+        times_sorted = unique_times
+        values_sorted = values_unique
+
+    # Determine target interval
+    if target_interval is None:
+        diffs = np.diff(times_sorted)
+        target_interval = np.median(diffs[diffs > 0])
+
+    # Create uniform time grid
+    t_start = times_sorted[0]
+    t_end = times_sorted[-1]
+    n_points = int(np.ceil((t_end - t_start) / target_interval)) + 1
+    uniform_times = np.linspace(t_start, t_end, n_points)
+
+    # Interpolate
+    if method == 'cubic' and len(times_sorted) >= 4:
+        interp_func = interpolate.interp1d(times_sorted, values_sorted, kind='cubic',
+                                           fill_value='extrapolate')
+    elif method == 'pchip' and len(times_sorted) >= 2:
+        interp_func = interpolate.PchipInterpolator(times_sorted, values_sorted,
+                                                     extrapolate=True)
+    else:
+        interp_func = interpolate.interp1d(times_sorted, values_sorted, kind='linear',
+                                           fill_value='extrapolate')
+
+    interpolated_values = interp_func(uniform_times)
+
+    # Generate warning message
+    n_original = len(times)
+    n_interpolated = len(uniform_times)
+    warning_msg = (f"Data resampled from {n_original} to {n_interpolated} points "
+                   f"(interval: {target_interval:.2f}h) using {method} interpolation.")
+
+    return uniform_times, interpolated_values, warning_msg
+
+
+# =============================================================================
 # RESULT DATACLASSES
 # =============================================================================
 
@@ -103,43 +202,77 @@ class DefaultPeriodRanges:
 class JTKResult:
     """
     Data class containing JTK Cycle analysis results.
-    
+
     Attributes:
-        p_value: Raw p-value from Kendall tau test
-        adj_p_value: Bonferroni-adjusted p-value
+        p_value: Raw p-value from Kendall tau test (minimum across all period/lag combinations)
+        bonf_p_value: Bonferroni-adjusted p-value (conservative, controls FWER)
+        bh_p_value: Benjamini-Hochberg adjusted p-value (less conservative, controls FDR)
         period: Best-fit period (hours)
         amplitude: Estimated amplitude (90th - 10th percentile / 2)
         acrophase: Peak time in hours
         asymmetry: Waveform asymmetry parameter
         tau: Kendall tau correlation coefficient
         lag: Phase lag parameter
+        n_tests: Number of period/lag/asymmetry combinations tested
         method: Analysis method identifier
+
+    Note:
+        - bonf_p_value is very conservative (may miss true rhythms)
+        - bh_p_value is less conservative (better power, standard in genomics)
+        - For single-variable analysis, use bh_p_value
+        - For genome-wide studies, apply BH correction ACROSS genes using raw p_values
     """
     p_value: float
-    adj_p_value: float
+    bonf_p_value: float
+    bh_p_value: float
     period: float
     amplitude: float
     acrophase: float
     asymmetry: float
     tau: float
     lag: float
+    n_tests: int
     method: str
-    
-    def is_significant(self, alpha: float = 0.05) -> bool:
-        """Check if the rhythm is statistically significant."""
-        return self.adj_p_value < alpha
+    # Keep adj_p_value as alias for backward compatibility (points to bh_p_value)
+    adj_p_value: float = None
+
+    def __post_init__(self):
+        # For backward compatibility, adj_p_value defaults to bh_p_value
+        if self.adj_p_value is None:
+            self.adj_p_value = self.bh_p_value
+
+    def is_significant(self, alpha: float = 0.05, method: str = 'bh') -> bool:
+        """
+        Check if the rhythm is statistically significant.
+
+        Args:
+            alpha: Significance threshold (default 0.05)
+            method: Correction method to use ('bh', 'bonferroni', or 'raw')
+
+        Returns:
+            True if significant at the given alpha level
+        """
+        if method == 'bonferroni':
+            return self.bonf_p_value < alpha
+        elif method == 'raw':
+            return self.p_value < alpha
+        else:  # 'bh' or default
+            return self.bh_p_value < alpha
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert results to dictionary."""
         return {
             'p_value': self.p_value,
-            'adj_p_value': self.adj_p_value,
+            'bonf_p_value': self.bonf_p_value,
+            'bh_p_value': self.bh_p_value,
+            'adj_p_value': self.adj_p_value,  # backward compatibility
             'period': self.period,
             'amplitude': self.amplitude,
             'acrophase': self.acrophase,
             'asymmetry': self.asymmetry,
             'tau': self.tau,
             'lag': self.lag,
+            'n_tests': self.n_tests,
             'method': self.method
         }
 
@@ -204,9 +337,9 @@ class CosinorResult:
 class HarmonicCosinorResult:
     """
     Data class containing Harmonic Cosinor analysis results.
-    
+
     Supports detection of multi-modal rhythms (e.g., bimodal with 2 peaks per cycle).
-    
+
     Attributes:
         adj_p_value: Bonferroni-adjusted p-value
         period: Best-fit period
@@ -215,6 +348,7 @@ class HarmonicCosinorResult:
         n_harmonics: Number of harmonics used
         method: Analysis method identifier
         fit_model: Dictionary with fitted model parameters for plotting
+        warning: Optional warning message (e.g., if extra harmonics don't improve fit)
     """
     adj_p_value: float
     period: float
@@ -223,11 +357,12 @@ class HarmonicCosinorResult:
     n_harmonics: int
     method: str = "Harmonic-Cosinor"
     fit_model: Optional[Dict[str, Any]] = None
-    
+    warning: Optional[str] = None
+
     def is_significant(self, alpha: float = 0.05) -> bool:
         """Check if the rhythm is statistically significant."""
         return self.adj_p_value < alpha
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert results to dictionary."""
         result = {
@@ -239,6 +374,8 @@ class HarmonicCosinorResult:
         for i, (amp, acro) in enumerate(zip(self.amplitudes, self.acrophases), 1):
             result[f'amplitude_{i}'] = amp
             result[f'acrophase_{i}'] = acro
+        if self.warning:
+            result['warning'] = self.warning
         return result
 
 
@@ -333,20 +470,26 @@ class LombScargleResult:
 class CWTResult:
     """
     Data class containing Continuous Wavelet Transform analysis results.
-    
+
     Attributes:
         dominant_period: Period with highest average power
         mean_power: Mean power across the dominant period
         period_variation: Standard deviation of dominant period over time
         amplitude_modulations: Number of amplitude peaks detected
         method: Analysis method identifier
+        power_matrix: 2D array of power values (periods x time) for scalogram
+        times: Time array corresponding to power_matrix columns
+        periods: Period array corresponding to power_matrix rows
     """
     dominant_period: float
     mean_power: float
     period_variation: float
     amplitude_modulations: int
     method: str = "CWT"
-    
+    power_matrix: Optional[np.ndarray] = None
+    times: Optional[np.ndarray] = None
+    periods: Optional[np.ndarray] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert results to dictionary."""
         return {
@@ -361,31 +504,68 @@ class CWTResult:
 @dataclass
 class LMEResult:
     """
-    Data class containing Linear Mixed Effects model results.
-    
+    Data class containing Cosinor Linear Mixed Effects model results.
+
+    Uses cosinor transformation (cos/sin of time) as fixed effects to detect
+    rhythmicity while accounting for repeated measures via random effects.
+
     Attributes:
-        terms: List of model terms
-        estimates: Parameter estimates
-        std_errors: Standard errors
-        z_values: Z-statistics
-        p_values: P-values for each term
+        mesor: Rhythm-adjusted mean (intercept)
+        amplitude: Rhythm amplitude (derived from cos/sin coefficients)
+        acrophase: Peak time in hours
+        acrophase_rad: Peak time in radians
+        period: Period used for analysis
+        p_value: P-value for rhythm significance (likelihood ratio test)
+        p_cos: P-value for cosine term
+        p_sin: P-value for sine term
+        beta_cos: Coefficient for cosine term
+        beta_sin: Coefficient for sine term
+        r_squared: Marginal R² (fixed effects only)
+        aic: Akaike Information Criterion
+        bic: Bayesian Information Criterion
+        random_effect_var: Variance of random effect
+        residual_var: Residual variance
         method: Analysis method identifier
     """
-    terms: List[str]
-    estimates: List[float]
-    std_errors: List[float]
-    z_values: List[float]
-    p_values: List[float]
-    method: str = "LME"
-    
+    mesor: float
+    amplitude: float
+    acrophase: float  # in hours
+    acrophase_rad: float  # in radians
+    period: float
+    p_value: float  # Overall rhythm p-value
+    p_cos: float
+    p_sin: float
+    beta_cos: float
+    beta_sin: float
+    r_squared: Optional[float] = None
+    aic: Optional[float] = None
+    bic: Optional[float] = None
+    random_effect_var: Optional[float] = None
+    residual_var: Optional[float] = None
+    method: str = "LME-Cosinor"
+
+    def is_significant(self, alpha: float = 0.05) -> bool:
+        """Check if rhythm is statistically significant."""
+        return self.p_value < alpha
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert results to dictionary."""
         return {
-            'terms': self.terms,
-            'estimates': self.estimates,
-            'std_errors': self.std_errors,
-            'z_values': self.z_values,
-            'p_values': self.p_values,
+            'mesor': self.mesor,
+            'amplitude': self.amplitude,
+            'acrophase': self.acrophase,
+            'acrophase_rad': self.acrophase_rad,
+            'period': self.period,
+            'p_value': self.p_value,
+            'p_cos': self.p_cos,
+            'p_sin': self.p_sin,
+            'beta_cos': self.beta_cos,
+            'beta_sin': self.beta_sin,
+            'r_squared': self.r_squared,
+            'aic': self.aic,
+            'bic': self.bic,
+            'random_effect_var': self.random_effect_var,
+            'residual_var': self.residual_var,
             'method': self.method
         }
     
@@ -495,21 +675,22 @@ def _run_discrete_jtk(
 ) -> JTKResult:
     """
     Run JTK using triangle templates aligned to actual timepoints.
-    
+
     Args:
         series: pandas Series with time as index and values as data
         period_range: List of periods to test
         lag_range: Array of lag values to test (default: 0 to period)
         asymmetries: List of asymmetry values to test
-    
+
     Returns:
-        JTKResult object with best-fit parameters
+        JTKResult object with best-fit parameters including both Bonferroni
+        and Benjamini-Hochberg adjusted p-values
     """
     if period_range is None:
         period_range = DefaultPeriodRanges.CIRCADIAN_INT
     if asymmetries is None:
         asymmetries = [0.5]
-    
+
     times = series.index.to_numpy()
     y = series.rank().values
     n = len(y)
@@ -519,6 +700,7 @@ def _run_discrete_jtk(
     best_per = None
     best_lag = None
     best_asym = None
+    best_idx = 0
 
     test_results = []
 
@@ -535,8 +717,25 @@ def _run_discrete_jtk(
                     best_per = period
                     best_lag = lag
                     best_asym = asym
+                    best_idx = len(test_results) - 1
 
-    bonf_p = min(1.0, best_p * len(test_results))
+    n_tests = len(test_results)
+
+    # Bonferroni correction (conservative, controls FWER)
+    bonf_p = min(1.0, best_p * n_tests)
+
+    # Benjamini-Hochberg correction (less conservative, controls FDR)
+    # Sort all p-values, find rank of best p-value, apply BH formula
+    all_pvals = np.array([r[0] for r in test_results])
+    sorted_indices = np.argsort(all_pvals)
+    ranks = np.empty_like(sorted_indices)
+    ranks[sorted_indices] = np.arange(1, n_tests + 1)
+
+    # BH adjusted p-value for the best result
+    # p_adj = p_raw * n_tests / rank
+    best_rank = ranks[best_idx]
+    bh_p = min(1.0, best_p * n_tests / best_rank)
+
     amp = (np.percentile(series.values, 90) - np.percentile(series.values, 10)) / 2
 
     # Correct acrophase based on tau sign
@@ -547,13 +746,15 @@ def _run_discrete_jtk(
 
     return JTKResult(
         p_value=round(best_p, 6),
-        adj_p_value=round(bonf_p, 6),
+        bonf_p_value=round(bonf_p, 6),
+        bh_p_value=round(bh_p, 6),
         period=round(best_per, 2),
         amplitude=round(amp, 4),
         acrophase=round(acrophase, 2),
         asymmetry=round(best_asym, 2),
         tau=round(best_tau, 2),
         lag=round(best_lag, 2),
+        n_tests=n_tests,
         method='Python-JTK'
     )
 
@@ -674,19 +875,21 @@ def _run_ar_jtk(
     # JTK on reconstructed prewhitened series
     jtk_res = _run_discrete_jtk(r_pw, period_range=period_range,
                                  lag_range=lag_range, asymmetries=asymmetries)
-    
+
     # Update method and recalculate amplitude from original data
     amp = (np.percentile(series.values, 90) - np.percentile(series.values, 10)) / 2
-    
+
     return JTKResult(
         p_value=jtk_res.p_value,
-        adj_p_value=jtk_res.adj_p_value,
+        bonf_p_value=jtk_res.bonf_p_value,
+        bh_p_value=jtk_res.bh_p_value,
         period=jtk_res.period,
         amplitude=round(amp, 4),
         acrophase=jtk_res.acrophase,
         asymmetry=jtk_res.asymmetry,
         tau=jtk_res.tau,
         lag=jtk_res.lag,
+        n_tests=jtk_res.n_tests,
         method='AR-JTK'
     ), True
 
@@ -702,33 +905,34 @@ def _run_cosine_kendall(
 ) -> JTKResult:
     """
     Run Cosine-Kendall nonparametric rhythm detection.
-    
+
     Uses cosine templates instead of triangle templates.
-    
+
     Args:
         series: pandas Series with time as index
         period_range: List of periods to test
         interval: Time interval between samples (used if times are indices)
-    
+
     Returns:
-        JTKResult object
+        JTKResult object with both Bonferroni and BH corrections
     """
     if period_range is None:
         period_range = DefaultPeriodRanges.CIRCADIAN
-    
+
     y = series.rank().values
     n = len(y)
-    
+
     # Use actual time values from index if available
     t = series.index.to_numpy().astype(float)
-    
+
     best_p = 1.0
     best_tau = 0.0
     best_per = period_range[0] if period_range else 24.0  # Default value
     best_lag = 0.0
+    best_idx = 0
 
     test_results = []
-    
+
     for period in period_range:
         for lag in np.arange(0, period, 0.5):
             radians = 2 * np.pi * (t - lag) / period
@@ -741,22 +945,40 @@ def _run_cosine_kendall(
                 best_tau = tau
                 best_per = period
                 best_lag = lag
+                best_idx = len(test_results) - 1
 
-    bonf_p = min(1.0, best_p * len(test_results)) if test_results else 1.0
+    n_tests = len(test_results) if test_results else 1
+
+    # Bonferroni correction (conservative)
+    bonf_p = min(1.0, best_p * n_tests)
+
+    # Benjamini-Hochberg correction
+    if n_tests > 1:
+        all_pvals = np.array([r[0] for r in test_results])
+        sorted_indices = np.argsort(all_pvals)
+        ranks = np.empty_like(sorted_indices)
+        ranks[sorted_indices] = np.arange(1, n_tests + 1)
+        best_rank = ranks[best_idx]
+        bh_p = min(1.0, best_p * n_tests / best_rank)
+    else:
+        bh_p = best_p
+
     amp = (np.percentile(series.values, 90) - np.percentile(series.values, 10)) / 2
-    
+
     # Correct lag when tau < 0 (cosine has opposite correlation)
     corrected_lag = (best_lag + best_per / 2) % best_per if best_tau < 0 else best_lag
 
     return JTKResult(
         p_value=round(best_p, 6),
-        adj_p_value=round(bonf_p, 6),
+        bonf_p_value=round(bonf_p, 6),
+        bh_p_value=round(bh_p, 6),
         period=round(best_per, 2),
         amplitude=round(amp, 4),
         acrophase=round(corrected_lag, 2),
         asymmetry=0.5,  # Cosine is symmetric
         tau=round(best_tau, 2),
         lag=round(best_lag, 2),
+        n_tests=n_tests,
         method='Cosine-Kendall'
     )
 
@@ -889,131 +1111,190 @@ def _fit_harmonic_cosinor(
     n_harmonics: int = 2
 ) -> HarmonicCosinorResult:
     """
-    Fit harmonic cosinor model for multi-modal rhythm detection.
-    
-    Uses Kendall's tau test with multi-harmonic templates.
-    
+    Fit harmonic cosinor model for multi-modal rhythm detection using OLS regression.
+
+    Model: y = M + Σ[Aₖ * cos(k * ωt - φₖ)]  for k = 1, ..., n_harmonics
+
+    Linearized form for OLS:
+    y = M + Σ[βₖ_cos * cos(k*ωt) + βₖ_sin * sin(k*ωt)]
+
+    Where for each harmonic k:
+    - Aₖ = √(βₖ_cos² + βₖ_sin²)  (amplitude)
+    - φₖ = atan2(βₖ_sin, βₖ_cos)  (phase in radians)
+
     Args:
-        times: Time values
+        times: Time values in hours
         values: Measurement values
-        period_range: List of periods to test
+        period_range: List of periods to test (searches for best fit)
         n_harmonics: Number of harmonics (1 = unimodal, 2 = bimodal, etc.)
-    
+
     Returns:
-        HarmonicCosinorResult object with peaks and fit model
+        HarmonicCosinorResult object with amplitudes, phases, and fit model
     """
+    from scipy import stats
+
     if period_range is None:
         period_range = DefaultPeriodRanges.CIRCADIAN
-    
-    x = times
-    y = values
-    y_ranked = pd.Series(y).rank().values
-    
-    best_p = 1.0
-    best_tau = 0.0
-    best_per = None
-    best_lag = None
 
-    test_results = []
+    x = np.asarray(times)
+    y = np.asarray(values)
+    n = len(y)
+
+    # Search for best period by maximizing R²
+    best_r2 = -np.inf
+    best_period = period_range[0] if len(period_range) > 0 else 24.0
+    best_result = None
 
     for period in period_range:
-        for lag in np.arange(0, period, 0.5):
-            ref = np.zeros(len(x))
-            for h in range(1, n_harmonics + 1):
-                ref += np.cos(2 * np.pi * h * (x - lag) / period)
-            ref_ranked = pd.Series(ref).rank().values
+        omega = 2 * np.pi / period
 
-            if len(y_ranked) != len(ref_ranked):
-                continue
+        # Build design matrix with intercept + cos/sin terms for each harmonic
+        # Columns: [1, cos(ωt), sin(ωt), cos(2ωt), sin(2ωt), ...]
+        X = np.ones((n, 1 + 2 * n_harmonics))
+        for k in range(1, n_harmonics + 1):
+            X[:, 2*k - 1] = np.cos(k * omega * x)  # cos(k*ωt)
+            X[:, 2*k] = np.sin(k * omega * x)      # sin(k*ωt)
 
-            tau, pval = kendalltau(y_ranked, ref_ranked)
-            test_results.append((pval, tau, period, lag))
+        # OLS fit: β = (X'X)^(-1) X'y
+        try:
+            XtX_inv = np.linalg.inv(X.T @ X)
+            beta = XtX_inv @ X.T @ y
+        except np.linalg.LinAlgError:
+            continue
 
-            if pval < best_p:
-                best_p = pval
-                best_tau = tau
-                best_per = period
-                best_lag = lag
+        # Predictions and residuals
+        y_pred = X @ beta
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
+        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
 
-    bonf_p = min(1.0, best_p * len(test_results))
-    amp_est = (np.percentile(y, 90) - np.percentile(y, 10)) / 2
-    
-    # Generate model for parameter estimation (1 cycle)
-    t_grid = np.linspace(0, best_per, 1000)
-    model_wave = np.zeros_like(t_grid)
-    for h in range(1, n_harmonics + 1):
-        model_wave += np.cos(2 * np.pi * h * (t_grid - best_lag) / best_per)
-    
-    # For plotting (full time)
-    t_grid_full = np.linspace(x.min(), x.max(), 1000)
-    model_wave_full = np.zeros_like(t_grid_full)
-    for h in range(1, n_harmonics + 1):
-        model_wave_full += np.cos(2 * np.pi * h * (t_grid_full - best_lag) / best_per)
-    
-    # Find peaks (local maxima)
-    peaks, _ = find_peaks(model_wave, distance=200)
-    
-    # Fallback if not enough peaks detected
-    n_peaks_expected = n_harmonics
-    if len(peaks) < n_peaks_expected:
-        peak_indices = np.argsort(model_wave)[-n_peaks_expected:]
+        if r2 > best_r2:
+            best_r2 = r2
+            best_period = period
+            best_result = {
+                'beta': beta,
+                'X': X,
+                'y_pred': y_pred,
+                'ss_res': ss_res,
+                'ss_tot': ss_tot,
+                'XtX_inv': XtX_inv
+            }
+
+    if best_result is None:
+        raise ValueError("Could not fit harmonic cosinor model to data")
+
+    # Extract results for best period
+    beta = best_result['beta']
+    X = best_result['X']
+    y_pred = best_result['y_pred']
+    ss_res = best_result['ss_res']
+    XtX_inv = best_result['XtX_inv']
+
+    # MESOR is the intercept
+    mesor = float(beta[0])
+
+    # Extract amplitude and phase for each harmonic
+    amplitudes = []
+    acrophases_rad = []
+    for k in range(1, n_harmonics + 1):
+        beta_cos = beta[2*k - 1]
+        beta_sin = beta[2*k]
+        amp = np.sqrt(beta_cos**2 + beta_sin**2)
+        phase = np.arctan2(beta_sin, beta_cos)  # radians
+        if phase < 0:
+            phase += 2 * np.pi
+        amplitudes.append(float(amp))
+        acrophases_rad.append(float(phase))
+
+    # Convert acrophases to hours
+    acrophases_hours = [(phi / (2 * np.pi)) * best_period for phi in acrophases_rad]
+
+    # F-test for overall model significance
+    # H0: all β (except intercept) = 0
+    df_model = 2 * n_harmonics  # number of parameters (excluding intercept)
+    df_resid = n - df_model - 1
+    if df_resid > 0 and ss_res > 0:
+        ms_model = (best_result['ss_tot'] - ss_res) / df_model
+        ms_resid = ss_res / df_resid
+        f_stat = ms_model / ms_resid
+        p_value = 1 - stats.f.cdf(f_stat, df_model, df_resid)
     else:
-        peak_indices = peaks[np.argsort(model_wave[peaks])[-n_peaks_expected:]]
+        p_value = 1.0
 
-    peak_indices = sorted(peak_indices)
-    
-    # Calculate acrophase per peak
-    acrophases = [acrophase_to_hours(t_grid[i] / best_per * 2 * np.pi, best_per) 
-                  for i in peak_indices]
-    if best_tau < 0:
-        acrophases = [(a + best_per / 2) % best_per for a in acrophases]
+    # Compare with single harmonic model if n_harmonics > 1
+    warning_msg = None
+    if n_harmonics > 1:
+        # Fit single harmonic model
+        omega = 2 * np.pi / best_period
+        X_1h = np.column_stack([np.ones(n), np.cos(omega * x), np.sin(omega * x)])
+        try:
+            beta_1h = np.linalg.inv(X_1h.T @ X_1h) @ X_1h.T @ y
+            y_pred_1h = X_1h @ beta_1h
+            ss_res_1h = np.sum((y - y_pred_1h) ** 2)
+            r2_1h = 1 - ss_res_1h / best_result['ss_tot'] if best_result['ss_tot'] > 0 else 0
 
-    # Normalize the model wave to [0, 1]
-    norm_model_wave = (model_wave - np.min(model_wave)) / (np.ptp(model_wave) + 1e-10)
+            # F-test for extra harmonics
+            df_extra = 2 * (n_harmonics - 1)  # degrees of freedom for extra terms
+            if df_resid > 0 and ss_res > 0:
+                f_extra = ((ss_res_1h - ss_res) / df_extra) / (ss_res / df_resid)
+                p_extra = 1 - stats.f.cdf(f_extra, df_extra, df_resid)
+                if p_extra > 0.05:
+                    warning_msg = (
+                        f"Warning: Extra harmonics (2-{n_harmonics}) do not significantly improve fit "
+                        f"(F-test p={p_extra:.3f}). Data may be unimodal (R² improvement: {best_r2 - r2_1h:.3f})."
+                    )
+        except np.linalg.LinAlgError:
+            pass
 
-    # Get amplitude estimates based on normalized peak height
-    peak_amps = [round(norm_model_wave[i] * amp_est * 2, 4) for i in peak_indices]
+    # Sort harmonics by amplitude (descending) for reporting
+    amp_phase_pairs = list(zip(amplitudes, acrophases_hours))
+    amp_phase_pairs_sorted = sorted(amp_phase_pairs, key=lambda x: x[0], reverse=True)
+    amplitudes_sorted = [round(a, 4) for a, _ in amp_phase_pairs_sorted]
+    acrophases_sorted = [round(p, 2) for _, p in amp_phase_pairs_sorted]
 
-    # Pair acrophases with amps, sort by acrophase time
-    acrophase_amp_pairs = sorted(zip(acrophases, peak_amps), key=lambda x: x[0])
-    acrophases = [round(a, 2) for a, _ in acrophase_amp_pairs]
-    peak_amps = [round(a, 4) for _, a in acrophase_amp_pairs]
+    # Generate fit curve for plotting (one cycle)
+    t_grid = np.linspace(0, best_period, 1000)
+    y_grid = mesor * np.ones_like(t_grid)
+    omega = 2 * np.pi / best_period
+    for k in range(1, n_harmonics + 1):
+        beta_cos = beta[2*k - 1]
+        beta_sin = beta[2*k]
+        y_grid += beta_cos * np.cos(k * omega * t_grid) + beta_sin * np.sin(k * omega * t_grid)
 
-    # Calculate data mean (MESOR) for proper vertical centering of the fit
-    data_mean = float(np.mean(y))
+    # Generate fit curve for full time range
+    t_grid_full = np.linspace(x.min(), x.max(), 1000)
+    y_grid_full = mesor * np.ones_like(t_grid_full)
+    for k in range(1, n_harmonics + 1):
+        beta_cos = beta[2*k - 1]
+        beta_sin = beta[2*k]
+        y_grid_full += beta_cos * np.cos(k * omega * t_grid_full) + beta_sin * np.sin(k * omega * t_grid_full)
 
-    # Normalize model waves and center at data mean
-    # The normalized wave goes from 0 to 1, we want it centered at data_mean
-    # So we shift it: data_mean - amp_est/2 + amp_est * norm_model_wave
-    # This gives a wave that oscillates around data_mean with amplitude amp_est/2
-    model_wave_centered = data_mean - amp_est / 2 + amp_est * norm_model_wave
-    model_wave_full_norm = (model_wave_full - np.min(model_wave)) / (np.ptp(model_wave) + 1e-10)
-    model_wave_full_centered = data_mean - amp_est / 2 + amp_est * model_wave_full_norm
-
-    # Return model wave parameters for plotting
+    # Prepare fit model for plotting
     fit_model = {
         't_grid': t_grid,
-        'model_wave': model_wave_centered,
+        'model_wave': y_grid,
         't_grid_full': t_grid_full,
-        'model_wave_full': model_wave_full_centered,
-        'mesor': data_mean,  # Store the data mean for reference
+        'model_wave_full': y_grid_full,
+        'mesor': mesor,
+        'r_squared': best_r2,
         'params': {
-            'period': best_per,
-            'lag': best_lag,
-            'acrophases': acrophases,
-            'amplitudes': peak_amps,
-            'bonferroni_p': bonf_p
+            'period': best_period,
+            'beta': beta.tolist(),
+            'acrophases': acrophases_sorted,
+            'amplitudes': amplitudes_sorted,
+            'p_value': p_value
         }
     }
 
     return HarmonicCosinorResult(
-        adj_p_value=round(bonf_p, 6),
-        period=round(best_per, 2),
-        amplitudes=peak_amps,
-        acrophases=acrophases,
+        adj_p_value=round(float(p_value), 6),
+        period=round(float(best_period), 2),
+        amplitudes=amplitudes_sorted,
+        acrophases=acrophases_sorted,
         n_harmonics=n_harmonics,
         method='Harmonic-Cosinor',
-        fit_model=fit_model
+        fit_model=fit_model,
+        warning=warning_msg
     )
 
 
@@ -1029,29 +1310,47 @@ def _compute_fourier_f24(
 ) -> FourierF24Result:
     """
     Compute F24 score using Fourier analysis (Wijnen et al., 2006 method).
-    
+
     F24 = power at target frequency / mean power from random permutations
-    
+
     This is an effect size measure, not a significance test.
-    
+
+    NOTE: FFT requires uniformly sampled data. If data is irregularly sampled,
+    it will be automatically resampled using linear interpolation.
+
     Args:
         times: Time values (evenly or unevenly spaced)
         values: Measurement values
         target_period: Target period to evaluate (default: 24h)
         n_permutations: Number of random permutations for baseline
-    
+
     Returns:
         FourierF24Result object
     """
-    n = len(values)
-    
+    # Sort by time and handle duplicates
+    sort_idx = np.argsort(times)
+    x = times[sort_idx]
+    y = values[sort_idx]
+
+    # Check for uniform sampling - FFT requires uniformly spaced data
+    is_uniform, detected_interval = _check_uniform_sampling(x)
+
+    if not is_uniform:
+        # Resample to uniform grid using linear interpolation
+        x, y, resampling_warning = _resample_to_uniform(x, y, method='linear')
+        print(f"[Fourier F24] {resampling_warning}")
+        dt = np.median(np.diff(x))  # Recalculate after resampling
+    else:
+        dt = detected_interval  # Use the already-calculated interval
+
+    n = len(y)
+
     # Compute FFT
-    y_centered = values - np.mean(values)
+    y_centered = y - np.mean(y)
     fft_result = np.fft.fft(y_centered)
     power_spectrum = np.abs(fft_result[:n//2])**2 / n
-    
-    # Compute frequencies (assuming evenly spaced data)
-    dt = np.median(np.diff(times))  # Sample interval
+
+    # Compute frequencies
     frequencies = np.fft.fftfreq(n, dt)[:n//2]
     periods = np.where(frequencies > 0, 1 / frequencies, np.inf)
     
@@ -1273,52 +1572,82 @@ def _compute_cwt(
 ) -> CWTResult:
     """
     Compute Continuous Wavelet Transform analysis.
-    
+
     Args:
         times: Time values
         values: Measurement values
         sampling_interval: Sampling interval in hours
         wavelet: Wavelet type (default: complex Morlet)
         period_range: (min_period, max_period) tuple
-    
+
     Returns:
         CWTResult object
-    
+
     Raises:
         ImportError: If PyWavelets is not available
     """
     if not PYWT_AVAILABLE:
         raise ImportError("PyWavelets (pywt) is required for CWT analysis. "
                          "Install with: pip install PyWavelets")
-    
+
     # Sort by time
     sort_idx = np.argsort(times)
     x = times[sort_idx]
     y = values[sort_idx]
-    
+
+    # Handle replicates at same timepoints by averaging
+    unique_times = np.unique(x)
+    if len(unique_times) < len(x):
+        # There are replicates - average values at each timepoint
+        y_averaged = np.array([np.mean(y[x == t]) for t in unique_times])
+        x = unique_times
+        y = y_averaged
+
+    # Check for uniform sampling - CWT requires uniformly spaced data
+    is_uniform, detected_interval = _check_uniform_sampling(x)
+    resampling_warning = None
+
+    if not is_uniform:
+        # Resample to uniform grid using linear interpolation
+        x, y, resampling_warning = _resample_to_uniform(x, y, method='linear')
+        print(f"[CWT] {resampling_warning}")
+        detected_interval = np.median(np.diff(x))
+
+    n_samples = len(y)
+
+    # Use detected interval as sampling interval
+    if detected_interval > 0:
+        sampling_interval = detected_interval
+
     # Detrend the signal
     y_detrended = y - np.mean(y)
-    
-    # Create period array with coarser resolution
-    period_array = np.arange(period_range[0], period_range[1] + 0.5, 0.5)
-    
+
     # For complex Morlet wavelet (cmor), the central frequency is approximately 1.0
     # The scale relates to period as: scale ≈ (period / dt) / central_freq
     # For cmor1.5-1.0: fb=1.5 (bandwidth), fc=1.0 (center frequency)
     central_freq = 1.0
-    scales = period_array / (central_freq * sampling_interval)
-    
-    # CWT works best when scale * wavelet_length fits within data length
-    # A safe maximum scale is approximately n_samples / 2
-    n_samples = len(y)
-    max_safe_scale = n_samples / 4  # More conservative limit
-    
-    valid_mask = scales <= max_safe_scale
-    if not valid_mask.any():
-        # If no scales are valid, warn the user
-        min_samples = int(min(period_array) / sampling_interval * 4)
-        warnings.warn(f"Time series too short for CWT in period range. "
-                     f"Need at least {min_samples} samples for minimum period {min(period_array)}h.")
+
+    # Calculate maximum analyzable period based on data length
+    # CWT requires at least ~3 complete cycles of the target period for reliable results
+    # This accounts for edge effects (cone of influence) on both sides
+    total_duration = x.max() - x.min() if len(x) > 1 else 0
+    max_analyzable_period = total_duration / 3.0  # Need at least 3 cycles
+
+    # Auto-adjust period range based on data length
+    min_period_limit = 2 * sampling_interval  # At least 2 samples per period
+    max_period = min(period_range[1], max_analyzable_period)
+
+    # Respect the user's minimum period, only limiting by physical constraint
+    min_period = max(period_range[0], min_period_limit)
+
+    if max_period < min_period:
+        # Data is too short for any period in range
+        warnings.warn(
+            f"Time series too short for CWT in period range [{period_range[0]:.1f}, {period_range[1]:.1f}]h. "
+            f"Data spans {total_duration:.1f}h with {n_samples} samples. "
+            f"Maximum analyzable period is {max_analyzable_period:.1f}h. "
+            f"Need longer time series or smaller period range."
+        )
         return CWTResult(
             dominant_period=np.nan,
             mean_power=np.nan,
@@ -1326,9 +1655,18 @@ def _compute_cwt(
             amplitude_modulations=0,
             method='CWT'
         )
-    
-    scales = scales[valid_mask]
-    period_array = period_array[valid_mask]
+
+    # Create period array with adjusted range (finer resolution for better scalogram)
+    step = 0.25  # 15-minute resolution
+    period_array = np.arange(min_period, max_period + step, step)
+    if len(period_array) < 5:
+        # If still too few periods, use even finer resolution
+        step = 0.1
+        period_array = np.arange(min_period, max_period + step, step)
+    if len(period_array) == 0:
+        period_array = np.array([min_period])
+
+    scales = period_array / (central_freq * sampling_interval)
     
     # Perform CWT
     try:
@@ -1364,7 +1702,10 @@ def _compute_cwt(
         mean_power=round(float(np.mean(global_power)), 4),
         period_variation=round(float(period_variation), 3),
         amplitude_modulations=amp_fluctuations,
-        method='CWT'
+        method='CWT',
+        power_matrix=power,
+        times=x,
+        periods=period_array
     )
 
 
@@ -1373,41 +1714,132 @@ def _compute_cwt(
 # =============================================================================
 
 def _fit_lme_model(
-    df: pd.DataFrame,
-    dependent: str,
-    fixed_effects: List[str],
-    random_effect: str
+    times: np.ndarray,
+    values: np.ndarray,
+    random_groups: np.ndarray,
+    period: float = 24.0
 ) -> LMEResult:
     """
-    Fit Linear Mixed Effects model.
-    
-    Useful for analyzing data with hierarchical structure (e.g., multiple
-    measurements per subject).
-    
+    Fit Cosinor Linear Mixed Effects model for circadian rhythm detection.
+
+    Uses cosinor transformation (cos/sin of time) as fixed effects to detect
+    rhythmicity while accounting for repeated measures via random effects.
+
+    Model: y ~ cos(2πt/T) + sin(2πt/T) + (1|group)
+
     Args:
-        df: DataFrame with the data
-        dependent: Name of dependent variable column
-        fixed_effects: List of fixed effect column names
-        random_effect: Name of random effect grouping column
-    
+        times: Time values in hours
+        values: Measurement values
+        random_groups: Grouping variable for random effects (e.g., subject ID)
+        period: Target period in hours (default 24.0)
+
     Returns:
-        LMEResult object
+        LMEResult object with cosinor parameters
     """
-    # Construct formula
-    fixed_str = " + ".join(fixed_effects)
-    formula = f"{dependent} ~ {fixed_str}"
-    
-    # Fit model
-    model = smf.mixedlm(formula, df, groups=df[random_effect])
-    result = model.fit()
-    
+    # Create DataFrame with cosinor components
+    omega = 2 * np.pi / period
+    df = pd.DataFrame({
+        'y': values,
+        't': times,
+        'cos_t': np.cos(omega * times),
+        'sin_t': np.sin(omega * times),
+        'group': random_groups
+    })
+
+    # Remove any rows with NaN
+    df = df.dropna()
+
+    if len(df) < 5:
+        raise ValueError("Not enough data points for LME analysis (need at least 5)")
+
+    # Calculate data mean for fallback
+    data_mean = float(df['y'].mean())
+
+    # Fit full model with cosinor terms
+    formula = "y ~ cos_t + sin_t"
+    model = smf.mixedlm(formula, df, groups=df['group'])
+
+    # Fit with suppressed warnings
+    import warnings as _warnings
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        result = model.fit(method='lbfgs', maxiter=1000)
+
+    # Fit null model (no rhythm) for likelihood ratio test
+    null_formula = "y ~ 1"
+    null_model = smf.mixedlm(null_formula, df, groups=df['group'])
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        null_result = null_model.fit(method='lbfgs', maxiter=1000)
+
+    # Likelihood ratio test for rhythm significance
+    # LR = -2 * (log_lik_null - log_lik_full)
+    lr_stat = -2 * (null_result.llf - result.llf)
+    # Chi-squared test with 2 degrees of freedom (cos and sin terms)
+    from scipy.stats import chi2
+    p_value = chi2.sf(lr_stat, df=2)
+
+    # Extract coefficients
+    intercept = result.params['Intercept']
+    beta_cos = result.params['cos_t']
+    beta_sin = result.params['sin_t']
+
+    # Check for convergence issues - if intercept is 0 but data mean is not, use data mean
+    # This happens when random effects covariance is singular
+    if abs(intercept) < 1e-6 and abs(data_mean) > 1e-6:
+        print(f"[WARNING LME] Convergence issue detected. Using data mean as MESOR.")
+        print(f"[WARNING LME] Original intercept: {intercept}, Data mean: {data_mean}")
+        intercept = data_mean
+
+    # Calculate amplitude and acrophase from cosinor coefficients
+    # Model: y = M + A*cos(ωt - φ) = M + β_cos*cos(ωt) + β_sin*sin(ωt)
+    # Expanding cos(ωt - φ) = cos(ωt)*cos(φ) + sin(ωt)*sin(φ)
+    # So: β_cos = A*cos(φ), β_sin = A*sin(φ)
+    # Therefore: A = sqrt(β_cos² + β_sin²), φ = atan2(β_sin, β_cos)
+    amplitude = np.sqrt(beta_cos**2 + beta_sin**2)
+
+    # Acrophase in radians (convert to [0, 2π] range)
+    acrophase_rad = np.arctan2(beta_sin, beta_cos)
+    if acrophase_rad < 0:
+        acrophase_rad += 2 * np.pi
+    # Convert to hours: peak time = (φ / 2π) * period
+    acrophase_hours = (acrophase_rad / (2 * np.pi)) * period
+
+    # Get p-values for individual terms
+    p_cos = result.pvalues.get('cos_t', np.nan)
+    p_sin = result.pvalues.get('sin_t', np.nan)
+
+    # Extract variance components
+    random_effect_var = float(result.cov_re.iloc[0, 0]) if hasattr(result, 'cov_re') else None
+    residual_var = float(result.scale) if hasattr(result, 'scale') else None
+
+    # Calculate marginal R² (proportion of variance explained by fixed effects)
+    # R²_marginal = var(fixed) / (var(fixed) + var(random) + var(residual))
+    try:
+        y_pred_fixed = result.fittedvalues
+        var_fixed = np.var(y_pred_fixed)
+        var_total = np.var(df['y'])
+        r_squared = var_fixed / var_total if var_total > 0 else None
+    except Exception:
+        r_squared = None
+
     return LMEResult(
-        terms=result.params.index.tolist(),
-        estimates=result.params.values.tolist(),
-        std_errors=result.bse.values.tolist(),
-        z_values=result.tvalues.values.tolist(),
-        p_values=result.pvalues.values.tolist(),
-        method='LME'
+        mesor=round(float(intercept), 4),
+        amplitude=round(float(amplitude), 4),
+        acrophase=round(float(acrophase_hours), 2),
+        acrophase_rad=round(float(acrophase_rad), 4),
+        period=period,
+        p_value=round(float(p_value), 6),
+        p_cos=round(float(p_cos), 6) if not np.isnan(p_cos) else None,
+        p_sin=round(float(p_sin), 6) if not np.isnan(p_sin) else None,
+        beta_cos=round(float(beta_cos), 4),
+        beta_sin=round(float(beta_sin), 4),
+        r_squared=round(float(r_squared), 4) if r_squared is not None else None,
+        aic=round(float(result.aic), 2) if hasattr(result, 'aic') else None,
+        bic=round(float(result.bic), 2) if hasattr(result, 'bic') else None,
+        random_effect_var=round(float(random_effect_var), 4) if random_effect_var is not None else None,
+        residual_var=round(float(residual_var), 4) if residual_var is not None else None,
+        method='LME-Cosinor'
     )
 
 
@@ -1962,34 +2394,55 @@ class RhythmAnalyzer:
     
     def run_lme(
         self,
-        dependent: str,
-        fixed_effects: List[str],
-        random_effect: str,
-        condition: Optional[str] = None
+        variable: str,
+        condition: Optional[str] = None,
+        random_effect: str = 'replicate',
+        period: float = 24.0
     ) -> LMEResult:
         """
-        Run Linear Mixed Effects model analysis.
-        
-        Useful for analyzing hierarchical data with repeated measurements.
-        
+        Run Cosinor Linear Mixed Effects model analysis.
+
+        Uses cosinor transformation to detect rhythmicity while accounting
+        for repeated measures via random effects.
+
+        Model: y ~ cos(2πt/period) + sin(2πt/period) + (1|random_effect)
+
         Args:
-            dependent: Name of dependent variable column
-            fixed_effects: List of fixed effect column names
-            random_effect: Name of random effect grouping column
+            variable: Name of the variable column to analyze
             condition: Optional condition filter. If None, uses all data.
-        
+            random_effect: Name of random effect grouping column (e.g., 'replicate', 'subject')
+            period: Target period in hours (default 24.0)
+
         Returns:
-            LMEResult object
+            LMEResult object with cosinor parameters (mesor, amplitude, acrophase, p-value, etc.)
+
+        Example:
+            >>> analyzer = RhythmAnalyzer()
+            >>> analyzer.load_csv("data.csv")
+            >>> result = analyzer.run_lme("gene_expression", condition="control",
+            ...                           random_effect="subject_id", period=24.0)
+            >>> print(f"Amplitude: {result.amplitude}, P-value: {result.p_value}")
         """
         if self._raw_data is None:
             raise ValueError("No data loaded. Call load_csv() or load_dataframe() first.")
-        
+
         if condition is not None:
             df = self._raw_data[self._raw_data[self._condition_col] == condition].copy()
         else:
             df = self._raw_data.copy()
-        
-        return _fit_lme_model(df, dependent, fixed_effects, random_effect)
+
+        # Check if random effect column exists
+        if random_effect not in df.columns:
+            available_cols = list(df.columns)
+            raise ValueError(f"Random effect column '{random_effect}' not found. "
+                           f"Available columns: {available_cols}")
+
+        # Extract arrays
+        times = df[self._time_col].values.astype(float)
+        values = df[variable].values.astype(float)
+        groups = df[random_effect].values
+
+        return _fit_lme_model(times, values, groups, period)
 
     def run_spectral_analysis(
         self,

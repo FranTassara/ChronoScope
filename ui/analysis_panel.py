@@ -1625,7 +1625,10 @@ class AnalysisPanel(QWidget):
         # Random Effect (for LME)
         self._random_effect_combo = QComboBox()
         self._random_effect_combo.setToolTip(
-            "Random effect grouping variable (e.g., Subject ID, Day)"
+            "Grouping variable for random effects in LME model.\n"
+            "Use this to account for repeated measures (e.g., subject ID,\n"
+            "animal ID, replicate, day). The model will estimate random\n"
+            "intercepts for each group."
         )
         self._params_layout.addRow("Random Effect:", self._random_effect_combo)
 
@@ -2202,11 +2205,10 @@ class AnalysisPanel(QWidget):
                 self._show_param("Max Period:")
                 self._show_checkbox(self._detrending_check)
 
-            # 10. Linear Mixed Effects
+            # 10. Linear Mixed Effects (Cosinor-based)
             elif method_text == "Linear Mixed Effects":
-                self._show_param("Dependent Variable:")
-                self._show_param("Fixed Effects:")
-                self._show_param("Random Effect:")
+                self._show_param("Period:")  # Target period for cosinor transformation
+                self._show_param("Random Effect:")  # Grouping variable (subject ID, replicate, etc.)
 
         # =====================================================================
         # VISUALIZATION (DAM data)
@@ -2387,21 +2389,52 @@ class AnalysisPanel(QWidget):
 
         elif index == 1:  # CircaCompare
             methods = [
-                ("Single Fit", "Robust cosinor fitting"),
-                ("Compare Groups", "Compare parameters between groups")
+                ("Single Fit", "Robust cosinor fitting - Parsons, Rex, et al. \"CircaCompare: a method to estimate and statistically support differences in mesor, amplitude and phase, between circadian rhythms.\" Bioinformatics 36.4 (2020): 1208-1212."),
+                ("Compare Groups", "Compare parameters between groups - Parsons, Rex, et al. \"CircaCompare: a method to estimate and statistically support differences in mesor, amplitude and phase, between circadian rhythms.\" Bioinformatics 36.4 (2020): 1208-1212.")
             ]
         elif index == 2:  # Rhythm Analysis
             methods = [
-                ("JTK Cycle", "Nonparametric rhythm detection"),
-                ("AR-JTK", "JTK with autoregressive correction"),
-                ("Cosine-Kendall", "Nonparametric cosine template correlation"),
-                ("Cosinor (OLS)", "Parametric cosinor with period search"),
-                ("Harmonic Cosinor", "Multi-modal rhythm detection"),
-                ("Fourier F24", "Effect size measure (requires 2 replicates)"),
-                ("Lomb-Scargle", "For unevenly sampled data"),
-                ("Spectral Analysis (Periodogram)", "Advanced spectral analysis with interactive visualization"),
-                ("Wavelet (CWT)", "Time-frequency analysis"),
-                ("Linear Mixed Effects", "Hierarchical modeling")
+                ("JTK Cycle",
+                 "Nonparametric rhythm detection using Kendall's tau correlation with triangle waveforms. "
+                 "Robust to outliers and non-normal distributions. Uses Benjamini-Hochberg correction for multiple testing. "
+                 "Suitable for: Independent data (cross-sectional designs)."),
+                ("AR-JTK",
+                 "JTK Cycle with autoregressive noise correction. Detects and corrects for autocorrelation in residuals "
+                 "using Ljung-Box test and AR prewhitening. Better statistical power for time series with temporal dependencies. "
+                 "Suitable for: Dependent data (longitudinal/repeated measures)."),
+                ("Cosine-Kendall",
+                 "Nonparametric rhythm detection using Kendall's tau with cosine templates. Similar to JTK but assumes "
+                 "symmetric waveforms. Robust to outliers. "
+                 "Suitable for: Independent data (cross-sectional designs)."),
+                ("Cosinor (OLS)",
+                 "Parametric cosinor analysis using ordinary least squares regression. Fits y = M + A*cos(wt - phi). "
+                 "Provides MESOR, amplitude, acrophase with confidence intervals and F-test significance. Can search for optimal period. "
+                 "Assumes independence between observations. "
+                 "Suitable for: Independent data (cross-sectional), or pre-averaged time series."),
+                ("Harmonic Cosinor",
+                 "Extended cosinor with multiple harmonics (up to 4) for complex or asymmetric waveforms. Uses OLS regression "
+                 "with F-tests for overall significance and incremental harmonic contribution. Assumes independence between observations. "
+                 "Suitable for: Independent data (cross-sectional), or pre-averaged time series."),
+                ("Fourier F24",
+                 "Effect size measure (F24 score) comparing circadian signal power to noise. Based on Wijnen et al. (2006). "
+                 "Requires at least 2 biological replicates per time point to estimate noise variance. "
+                 "Suitable for: Independent data with replicates at each timepoint."),
+                ("Lomb-Scargle",
+                 "Periodogram method designed for unevenly sampled or missing data. Detects dominant period without "
+                 "requiring interpolation. Reports False Alarm Probability (FAP) for significance. "
+                 "Suitable for: Independent data with irregular sampling, or single time series (exploratory)."),
+                ("Spectral Analysis (Periodogram)",
+                 "FFT-based power spectral density analysis with interactive visualization. Identifies dominant frequencies "
+                 "and harmonics. Automatically interpolates non-uniform data. "
+                 "Suitable for: Dependent data (longitudinal time series)."),
+                ("Wavelet (CWT)",
+                 "Continuous Wavelet Transform for time-frequency analysis. Shows how rhythm period and amplitude change "
+                 "over time. Detects non-stationary rhythms. Generates scalogram visualization. "
+                 "Suitable for: Dependent data (longitudinal time series)."),
+                ("Linear Mixed Effects",
+                 "Cosinor-based mixed effects model: y ~ cos(wt) + sin(wt) + (1|random_effect). Accounts for individual "
+                 "variability and hierarchical data structure. Uses likelihood ratio test for rhythm significance. "
+                 "Suitable for: Dependent data with repeated measures and grouping factors (e.g., individual subjects).")
             ]
         elif index == 3:  # Visualization (available for DAM data)
             methods = [

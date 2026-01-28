@@ -60,10 +60,8 @@ SCALOGRAM_METHODS = {
     'cwt',
 }
 
-# Methods that show only text summary (LME results)
-TEXT_ONLY_METHODS = {
-    'lme',
-}
+# Methods that show only text summary (currently none - LME now uses cosinor plot)
+TEXT_ONLY_METHODS = set()  # Empty - all methods now have visual output
 
 # CosinorPy periodogram - saves plots to directory, no visualization in tabs
 COSINORPY_PERIODOGRAM_METHOD = 'cosinorpy_periodogram'
@@ -904,6 +902,9 @@ class ResultsPanel(QWidget):
         # Check if we have CosinorPy periodogram (just shows message)
         has_cosinorpy_periodogram = any(r.get('method') == 'cosinorpy_periodogram' for r in self._results)
 
+        # Check if we have CWT (Wavelet) results
+        has_cwt = any(r.get('method') == 'cwt' for r in self._results)
+
         # Determine columns based on result type
         if is_comparison:
             columns = ['variable', 'condition1', 'condition2', 'method', 'n_components', 'period',
@@ -939,6 +940,10 @@ class ResultsPanel(QWidget):
             elif has_periodogram:
                 columns = ['variable', 'condition', 'method', 'dominant_period', 'p_value', 'message']
                 headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'P-value', 'Notes']
+            # For CWT (Wavelet) results
+            elif has_cwt:
+                columns = ['variable', 'condition', 'method', 'period', 'power', 'period_variation', 'amplitude_modulations']
+                headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'Mean Power', 'Period Variation (h)', 'Amp. Modulations']
             else:
                 # Basic identification
                 columns = ['variable', 'condition', 'method', 'n_components']
@@ -1345,19 +1350,10 @@ class ResultsPanel(QWidget):
 
     def _plot_cosinor_result(self, result: Dict):
         """Plot cosinor fit for rhythm methods."""
-        mesor = result.get('mesor')
-        amplitude = result.get('amplitude')
+        method = result.get('method', '')
         period = result.get('period', 24.0)
-
-        # Get acrophase - prefer radians, convert from hours if needed
-        acrophase_rad = result.get('acrophase', result.get('acrophase_rad'))
-        if acrophase_rad is None:
-            acrophase_hours = result.get('acrophase_hours')
-            if acrophase_hours is not None:
-                # Convert hours to radians
-                acrophase_rad = 2 * np.pi * acrophase_hours / period
-            else:
-                acrophase_rad = 0
+        variable = result.get('variable', '')
+        condition = result.get('condition', '')
 
         # Get times and values from result
         times_data = result.get('times')
@@ -1369,6 +1365,27 @@ class ResultsPanel(QWidget):
         else:
             times = None
             values = None
+
+        # Check if this is Harmonic Cosinor with a pre-computed fit model
+        fit_model = result.get('fit_model')
+        if fit_model is not None and 't_grid_full' in fit_model and 'model_wave_full' in fit_model:
+            # Use the pre-computed harmonic cosinor fit
+            self._plot_harmonic_cosinor_result(result, times, values)
+            return
+
+        # Standard cosinor plotting for other methods
+        mesor = result.get('mesor')
+        amplitude = result.get('amplitude')
+
+        # Get acrophase - prefer radians, convert from hours if needed
+        acrophase_rad = result.get('acrophase', result.get('acrophase_rad'))
+        if acrophase_rad is None:
+            acrophase_hours = result.get('acrophase_hours')
+            if acrophase_hours is not None:
+                # Convert hours to radians
+                acrophase_rad = 2 * np.pi * acrophase_hours / period
+            else:
+                acrophase_rad = 0
 
         # Calculate MESOR from data if not provided (for JTK, AR-JTK, Cosine-Kendall, etc.)
         if mesor is None:
@@ -1390,13 +1407,53 @@ class ResultsPanel(QWidget):
             values = mesor + amplitude * np.cos(
                 2 * np.pi * times / period - acrophase_rad) + np.random.normal(0, amplitude * 0.1, len(times))
 
-        variable = result.get('variable', '')
-        condition = result.get('condition', '')
-
         self._fit_canvas.plot_cosinor_fit(
             times, values, mesor, amplitude, acrophase_rad,
             period, title=variable, condition=condition
         )
+
+    def _plot_harmonic_cosinor_result(self, result: Dict, times: np.ndarray, values: np.ndarray):
+        """Plot harmonic cosinor fit using pre-computed model wave."""
+        self._fit_canvas.clear()
+        ax = self._fit_canvas.axes
+
+        fit_model = result.get('fit_model', {})
+        period = result.get('period', 24.0)
+        variable = result.get('variable', '')
+        condition = result.get('condition', '')
+
+        # Get the pre-computed fit curve
+        t_fit = fit_model.get('t_grid_full')
+        y_fit = fit_model.get('model_wave_full')
+        mesor = fit_model.get('mesor', 0)
+
+        # Plot raw data if available
+        if times is not None and values is not None:
+            ax.scatter(times, values, alpha=0.6, label='Data', color='steelblue')
+
+        # Plot the harmonic cosinor fit
+        if t_fit is not None and y_fit is not None:
+            ax.plot(t_fit, y_fit, 'r-', linewidth=2, label='Harmonic Cosinor Fit')
+
+        # Add horizontal line at MESOR
+        if mesor != 0:
+            ax.axhline(y=mesor, color='gray', linestyle='--', alpha=0.5, label=f'MESOR={mesor:.2f}')
+
+        # Labels
+        ax.set_xlabel('Time (hours)')
+        ax.set_ylabel('Expression')
+        title_str = f'{variable} - {condition}' if condition else variable
+        ax.set_title(f'Harmonic Cosinor: {title_str}')
+        ax.legend(loc='upper right')
+
+        # Set x-axis limits based on data range
+        if times is not None and len(times) > 0:
+            ax.set_xlim(times.min(), times.max())
+        elif t_fit is not None and len(t_fit) > 0:
+            ax.set_xlim(t_fit.min(), t_fit.max())
+
+        self._fit_canvas.fig.tight_layout()
+        self._fit_canvas.draw()
 
     def _plot_periodogram_result(self, result: Dict):
         """Plot periodogram for Lomb-Scargle, Spectral Analysis, or Fourier F24."""
@@ -1410,6 +1467,22 @@ class ResultsPanel(QWidget):
         # Get periodogram data
         periods = result.get('periods')
         power_spectrum = result.get('power_spectrum')
+
+        # For Fourier F24, convert frequencies to periods if periods not available
+        if periods is None and power_spectrum is not None:
+            frequencies = result.get('frequencies')
+            if frequencies is not None:
+                # Convert frequencies to periods, handling zero frequency
+                frequencies = np.array(frequencies)
+                valid_mask = frequencies > 0
+                if valid_mask.any():
+                    periods = np.zeros_like(frequencies)
+                    periods[valid_mask] = 1.0 / frequencies[valid_mask]
+                    # Filter to reasonable period range (exclude very long periods)
+                    reasonable_mask = (periods > 0) & (periods < 100)
+                    if reasonable_mask.any():
+                        periods = periods[reasonable_mask]
+                        power_spectrum = np.array(power_spectrum)[reasonable_mask]
 
         if periods is not None and power_spectrum is not None:
             # Plot power spectrum
@@ -1460,27 +1533,63 @@ class ResultsPanel(QWidget):
         variable = result.get('variable', '')
         condition = result.get('condition', '')
         dominant_period = result.get('dominant_period', result.get('period'))
-
-        # For now, show a message indicating CWT results
-        # Full scalogram plotting would require storing the full CWT coefficients
-        message = f"Wavelet (CWT) Analysis\n\n"
-        message += f"Variable: {variable}\n"
-        message += f"Condition: {condition}\n\n"
-        if dominant_period is not None:
-            message += f"Dominant Period: {dominant_period:.2f} h\n"
-
         mean_power = result.get('power')
-        if mean_power is not None:
-            message += f"Mean Power: {mean_power:.4f}\n"
 
-        ax.text(0.5, 0.5, message,
-               ha='center', va='center', transform=ax.transAxes,
-               fontsize=11, family='monospace',
-               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis('off')
+        # Get scalogram data
+        power_matrix = result.get('scalogram_power')
+        times = result.get('scalogram_times')
+        periods = result.get('scalogram_periods')
 
+        if power_matrix is not None and times is not None and periods is not None:
+            # Convert to numpy arrays if needed
+            power_matrix = np.array(power_matrix) if not isinstance(power_matrix, np.ndarray) else power_matrix
+            times = np.array(times) if not isinstance(times, np.ndarray) else times
+            periods = np.array(periods) if not isinstance(periods, np.ndarray) else periods
+
+            # Normalize power for better visualization (log scale often works better)
+            power_normalized = np.log10(power_matrix + 1e-10)
+
+            # Plot the scalogram as a 2D heatmap
+            # Use pcolormesh for better performance with large arrays
+            im = ax.pcolormesh(times, periods, power_normalized, shading='auto', cmap='viridis')
+
+            # Add colorbar
+            cbar = self._fit_canvas.fig.colorbar(im, ax=ax, label='Log₁₀(Power)')
+
+            # Mark the dominant period with a horizontal line
+            if dominant_period is not None and not np.isnan(dominant_period):
+                ax.axhline(y=dominant_period, color='red', linestyle='--', linewidth=1.5,
+                          label=f'Dominant: {dominant_period:.1f}h')
+                ax.legend(loc='upper right', fontsize=8)
+
+            # Labels
+            ax.set_xlabel('Time (hours)', fontsize=10)
+            ax.set_ylabel('Period (hours)', fontsize=10)
+            title = f'Scalogram: {variable}'
+            if condition:
+                title += f' - {condition}'
+            ax.set_title(title, fontsize=11, fontweight='bold')
+
+        else:
+            # Fallback: show text summary if no scalogram data
+            message = f"Wavelet (CWT) Analysis\n\n"
+            message += f"Variable: {variable}\n"
+            message += f"Condition: {condition}\n\n"
+            if dominant_period is not None:
+                message += f"Dominant Period: {dominant_period:.2f} h\n"
+            if mean_power is not None:
+                message += f"Mean Power: {mean_power:.4f}\n"
+            message += "\n(Scalogram data not available)"
+
+            ax.text(0.5, 0.5, message,
+                   ha='center', va='center', transform=ax.transAxes,
+                   fontsize=11, family='monospace',
+                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.axis('off')
+
+        self._fit_canvas.fig.tight_layout()
         self._fit_canvas.draw()
 
     def _plot_lme_result(self, result: Dict):
