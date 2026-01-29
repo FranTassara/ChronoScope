@@ -182,6 +182,52 @@ class AnalysisWorker(QThread):
 
                         current += 1
 
+            # Special handling for CircaCompare Compare Groups (all pairs)
+            elif analysis_type == AnalysisType.CIRCACOMPARE_COMPARE and not self.config.compare_conditions:
+                from itertools import combinations
+                all_conditions = self.config.conditions
+                condition_pairs = list(combinations(all_conditions, 2))
+
+                if self.source_type == 'rosbash' and self.config.clusters:
+                    total = len(self.config.variables) * len(self.config.clusters) * len(condition_pairs)
+                else:
+                    total = len(self.config.variables) * len(condition_pairs)
+                current = 0
+
+                for var in self.config.variables:
+                    clusters_to_analyze = self.config.clusters if (self.source_type == 'rosbash' and self.config.clusters) else [None]
+
+                    for cluster in clusters_to_analyze:
+                        for cond1, cond2 in condition_pairs:
+                            if cluster:
+                                progress_msg = f"Comparing {var} (cluster: {cluster}): {cond1} vs {cond2}..."
+                            else:
+                                progress_msg = f"Comparing {var}: {cond1} vs {cond2}..."
+
+                            self.progress.emit(
+                                int(current / total * 100),
+                                progress_msg
+                            )
+
+                            if self.source_type == 'csv' or self.source_type == 'dam':
+                                csv_path = getattr(self.loader, '_filepath', None)
+                                result = engine.run_comparison(
+                                    data, var, cond1, cond2, analysis_type,
+                                    time_col=time_col,
+                                    condition_col=condition_col,
+                                    parameters=self.config.parameters,
+                                    data_file_path=csv_path
+                                )
+                            else:  # rosbash
+                                result = self._run_rosbash_comparison(var, cond1, cond2, cluster, analysis_type)
+
+                            if result:
+                                self.results.append(result.to_dict())
+
+                            current += 1
+
+                self.progress.emit(100, "Complete")
+
             # Special handling for Compare Conditions (all pairs) - Independent and Dependent
             elif analysis_type in (AnalysisType.COSINORPY_COMPARE_INDEPENDENT,
                                   AnalysisType.COSINORPY_COMPARE_DEPENDENT,
@@ -2266,8 +2312,9 @@ class AnalysisPanel(QWidget):
         # Show comparison frame ONLY for pairwise comparison methods (user selects 2 specific conditions)
         # NOT for "Compare All", "Compare Conditions", or "Nonlinear Compare" (which use all conditions automatically)
         is_nonlinear_compare = "Nonlinear Compare" in method_text
-        is_pairwise_comparison = "Compare" in method_text and "Compare All" not in method_text and "Compare Conditions" not in method_text and not is_nonlinear_compare
-        is_compare_all_or_conditions = "Compare All" in method_text or "Compare Conditions" in method_text or is_nonlinear_compare
+        is_circacompare_compare = "Compare Groups" in method_text
+        is_pairwise_comparison = "Compare" in method_text and "Compare All" not in method_text and "Compare Conditions" not in method_text and not is_nonlinear_compare and not is_circacompare_compare
+        is_compare_all_or_conditions = "Compare All" in method_text or "Compare Conditions" in method_text or is_nonlinear_compare or is_circacompare_compare
 
         self._compare_frame.setVisible(is_pairwise_comparison)
 
@@ -2551,10 +2598,11 @@ class AnalysisPanel(QWidget):
         is_compare_all = "Compare All" in method_text
         is_compare_conditions = "Compare Conditions" in method_text
         is_nonlinear_compare = "Nonlinear Compare" in method_text
-        # Pairwise uses 2 specific condition dropdowns; Compare All/Conditions/Nonlinear Compare use ALL conditions
-        is_pairwise_comparison = "Compare" in method_text and not is_compare_all and not is_compare_conditions and not is_nonlinear_compare
+        is_circacompare_compare = "Compare Groups" in method_text
+        # Pairwise uses 2 specific condition dropdowns; Compare All/Conditions/Nonlinear Compare/CircaCompare Compare Groups use ALL conditions
+        is_pairwise_comparison = "Compare" in method_text and not is_compare_all and not is_compare_conditions and not is_nonlinear_compare and not is_circacompare_compare
 
-        if is_compare_all or is_compare_conditions or is_nonlinear_compare:
+        if is_compare_all or is_compare_conditions or is_nonlinear_compare or is_circacompare_compare:
             # For "Compare All" and "Compare Conditions", automatically use ALL available conditions
             selected_conds = [
                 self._cond_list.item(i).text()

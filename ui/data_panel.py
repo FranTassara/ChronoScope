@@ -282,12 +282,13 @@ class DataPanel(QWidget):
 
         # Binning
         bin_layout = QVBoxLayout()
-        bin_layout.addWidget(QLabel("Binning:"))
-        self._dam_bin_combo = QComboBox()
-        self._dam_bin_combo.addItems(["1 min", "5 min", "15 min", "30 min", "60 min"])
-        self._dam_bin_combo.setCurrentIndex(3)  # Default: 30 min
-        self._dam_bin_combo.currentIndexChanged.connect(self._update_dam_preview)
-        bin_layout.addWidget(self._dam_bin_combo)
+        bin_layout.addWidget(QLabel("Binning (min):"))
+        self._dam_bin_spin = QSpinBox()
+        self._dam_bin_spin.setRange(1, 1440)
+        self._dam_bin_spin.setValue(30)
+        self._dam_bin_spin.setSuffix(" min")
+        self._dam_bin_spin.valueChanged.connect(self._update_dam_preview)
+        bin_layout.addWidget(self._dam_bin_spin)
         time_layout.addLayout(bin_layout)
 
         # Lights ON time (ZT0)
@@ -531,8 +532,7 @@ class DataPanel(QWidget):
     def _build_dam_config(self) -> DAMConfig:
         """Build DAMConfig from UI settings (shared config for all monitors)."""
         # Parse binning
-        bin_text = self._dam_bin_combo.currentText()
-        bin_minutes = int(bin_text.split()[0])
+        bin_minutes = self._dam_bin_spin.value()
 
         # Parse lights on time
         lights_on_time = self._dam_lights_on.time()
