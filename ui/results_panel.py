@@ -117,26 +117,31 @@ class PlotCanvas(FigureCanvas):
         """Plot raw data with cosinor fit overlay."""
         self.clear()
         ax = self.axes
-        
+
+        # Determine time range from raw data
+        t_min = np.min(times) if len(times) > 0 else 0
+        t_max = np.max(times) if len(times) > 0 else period
+
         # Plot raw data
         ax.scatter(times, values, alpha=0.6, label='Data', color='steelblue')
-        
-        # Plot fit curve
+
+        # Plot fit curve covering the full data range
         # Formula: y = mesor + amplitude * cos(2π * t / period - acrophase)
-        t_fit = np.linspace(0, period, 200)
+        n_points = max(200, int((t_max - t_min) / period * 200))
+        t_fit = np.linspace(t_min, t_max, n_points)
         y_fit = mesor + amplitude * np.cos(2 * np.pi * t_fit / period - acrophase_rad)
         ax.plot(t_fit, y_fit, 'r-', linewidth=2, label='Cosinor Fit')
-        
+
         # Add horizontal line at MESOR
         ax.axhline(y=mesor, color='gray', linestyle='--', alpha=0.5, label=f'MESOR={mesor:.2f}')
-        
+
         # Labels
         ax.set_xlabel('Time (hours)')
         ax.set_ylabel('Expression')
         ax.set_title(f'{title} - {condition}' if condition else title)
         ax.legend(loc='upper right')
-        ax.set_xlim(0, period)
-        
+        ax.set_xlim(t_min, t_max)
+
         self.fig.tight_layout()
         self.draw()
     

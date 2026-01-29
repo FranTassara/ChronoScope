@@ -1253,13 +1253,42 @@ class AnalysisPanel(QWidget):
         # Loss function (for CircaCompare)
         self._loss_combo = QComboBox()
         self._loss_combo.addItems(['linear', 'soft_l1', 'huber', 'cauchy', 'arctan'])
+        self._loss_combo.setToolTip(
+            "<b>Loss Function</b><br><br>"
+            "Determines how residuals (differences between observed and predicted values) "
+            "are penalized during optimization. Different loss functions provide varying "
+            "degrees of robustness to outliers:<br><br>"
+            "<b>• linear:</b> Standard least squares. No outlier protection. "
+            "Best when data has no outliers.<br><br>"
+            "<b>• soft_l1:</b> Smooth approximation to L1 (absolute value) loss. "
+            "Moderate robustness to outliers.<br><br>"
+            "<b>• huber:</b> (Recommended) Combines squared loss for small residuals "
+            "and linear loss for large residuals. Good balance between efficiency "
+            "and robustness.<br><br>"
+            "<b>• cauchy:</b> Heavy-tailed loss function. Strong outlier resistance "
+            "but may underweight valid extreme values.<br><br>"
+            "<b>• arctan:</b> Very strong outlier resistance. Bounded influence "
+            "for extreme values. Use when data contains severe outliers."
+        )
         self._params_layout.addRow("Loss Function:", self._loss_combo)
-        
+
         # F-scale
         self._fscale_spin = QDoubleSpinBox()
         self._fscale_spin.setRange(0.1, 10.0)
         self._fscale_spin.setValue(1.0)
         self._fscale_spin.setSingleStep(0.1)
+        self._fscale_spin.setToolTip(
+            "<b>F-Scale (Soft Margin)</b><br><br>"
+            "Controls the transition point between inlier and outlier treatment "
+            "for robust loss functions (soft_l1, huber, cauchy, arctan).<br><br>"
+            "• <b>Lower values (0.1-0.5):</b> More aggressive outlier rejection. "
+            "Residuals are treated as outliers at smaller magnitudes.<br><br>"
+            "• <b>Default value (1.0):</b> Standard threshold. Recommended for "
+            "most datasets.<br><br>"
+            "• <b>Higher values (2.0-10.0):</b> More tolerant of large residuals. "
+            "Useful when data has high natural variability.<br><br>"
+            "<i>Note: Has no effect when using 'linear' loss function.</i>"
+        )
         self._params_layout.addRow("F-Scale:", self._fscale_spin)
 
         # Max iterations (for CircaCompare)
@@ -1267,6 +1296,19 @@ class AnalysisPanel(QWidget):
         self._max_iterations_spin.setRange(100, 2000)
         self._max_iterations_spin.setValue(500)
         self._max_iterations_spin.setSingleStep(100)
+        self._max_iterations_spin.setToolTip(
+            "<b>Maximum Iterations</b><br><br>"
+            "Sets the maximum number of optimization iterations allowed for "
+            "the curve fitting algorithm to converge to a solution.<br><br>"
+            "• <b>Lower values (100-300):</b> Faster computation but may not "
+            "converge for complex or noisy data.<br><br>"
+            "• <b>Default value (500):</b> Sufficient for most datasets. "
+            "Good balance between speed and accuracy.<br><br>"
+            "• <b>Higher values (1000-2000):</b> Use when fitting fails to "
+            "converge or for very noisy data. Increases computation time.<br><br>"
+            "<i>If the fit doesn't converge, try increasing this value or "
+            "adjusting the loss function and f-scale parameters.</i>"
+        )
         self._params_layout.addRow("Max Iterations:", self._max_iterations_spin)
 
         # Harmonics
