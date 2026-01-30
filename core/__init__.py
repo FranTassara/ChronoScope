@@ -45,6 +45,9 @@ from .analysis_engine import (
     ComparisonResult
 )
 
+from .meta_classifier import ConsensusClassifier, SKLEARN_AVAILABLE
+from .feature_extraction import extract_features, FEATURE_NAMES
+
 __all__ = [
     # Analysis Engine (main interface)
     'AnalysisEngine',
@@ -72,5 +75,10 @@ __all__ = [
     'LombScargleResult',
     'CWTResult',
     'LMEResult',
-    'DefaultPeriodRanges'
+    'DefaultPeriodRanges',
+    # AI Meta-Classifier
+    'ConsensusClassifier',
+    'SKLEARN_AVAILABLE',
+    'extract_features',
+    'FEATURE_NAMES',
 ]

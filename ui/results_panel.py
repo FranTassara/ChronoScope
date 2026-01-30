@@ -60,6 +60,11 @@ SCALOGRAM_METHODS = {
     'cwt',
 }
 
+# AI Meta-Classifier methods
+META_CLASSIFIER_METHODS = {
+    'consensus_ai',
+}
+
 # Methods that show only text summary (currently none - LME now uses cosinor plot)
 TEXT_ONLY_METHODS = set()  # Empty - all methods now have visual output
 
@@ -1189,6 +1194,18 @@ class ResultsPanel(QWidget):
             self._viz_tabs.setTabText(0, "Scalogram")
             return
 
+        # AI Meta-Classifier methods
+        if method in META_CLASSIFIER_METHODS:
+            self._viz_tabs.setTabVisible(0, True)
+            self._viz_tabs.setTabVisible(1, True)
+            self._viz_tabs.setTabVisible(2, True)
+            self._viz_tabs.setTabVisible(3, True)
+            self._viz_tabs.setTabText(0, "Data Overview")
+            self._viz_tabs.setTabText(1, "Probability Score")
+            self._viz_tabs.setTabText(2, "Method Radar")
+            self._viz_tabs.setTabText(3, "Feature Importance")
+            return
+
         # LME and other text-only methods
         if method in TEXT_ONLY_METHODS:
             # Show: Summary only
@@ -1312,6 +1329,13 @@ class ResultsPanel(QWidget):
             return
 
         # =====================================================================
+        # AI META-CLASSIFIER METHODS
+        # =====================================================================
+        if method in META_CLASSIFIER_METHODS:
+            self._update_meta_classifier_plots(self._results[0])
+            return
+
+        # =====================================================================
         # CWT/SCALOGRAM METHODS
         # =====================================================================
         if method in SCALOGRAM_METHODS:
@@ -1376,6 +1400,11 @@ class ResultsPanel(QWidget):
         # Scalogram/CWT methods
         if method in SCALOGRAM_METHODS:
             self._plot_scalogram_result(result)
+            return
+
+        # AI Meta-Classifier methods
+        if method in META_CLASSIFIER_METHODS:
+            self._update_meta_classifier_plots(result)
             return
 
         # Text-only methods (LME)
@@ -1653,6 +1682,235 @@ class ResultsPanel(QWidget):
         ax.axis('off')
 
         self._fit_canvas.draw()
+
+    # =========================================================================
+    # AI META-CLASSIFIER VISUALIZATIONS
+    # =========================================================================
+
+    def _update_meta_classifier_plots(self, result: Dict):
+        """Update all four meta-classifier visualization tabs."""
+        import json as _json
+
+        # Parse the JSON message containing detailed results
+        try:
+            details = _json.loads(result.get('message', '{}'))
+        except (ValueError, TypeError):
+            details = {}
+
+        probability = details.get('probability', result.get('r_squared', 0))
+        classification = details.get('classification', 'Unknown')
+        method_results = details.get('method_results', {})
+        feature_importances = details.get('feature_importances', {})
+
+        # Tab 0: Data Overview (Mean ± SEM)
+        self._plot_data_overview(result, details)
+
+        # Tab 1: Probability Gauge
+        self._plot_probability_gauge(probability, classification, result)
+
+        # Tab 2: Radar Chart
+        self._plot_method_radar(method_results)
+
+        # Tab 3: Feature Importance
+        self._plot_feature_importance(feature_importances)
+
+    def _plot_data_overview(self, result: Dict, details: Dict):
+        """Plot Mean +/- SEM of the time series data connected with lines."""
+        self._fit_canvas.clear()
+        fig = self._fit_canvas.fig
+        fig.clear()
+        ax = fig.add_subplot(111)
+
+        variable = result.get('variable', '')
+        condition = result.get('condition', '')
+
+        # Get mean values (already averaged per timepoint in analysis engine)
+        times_data = result.get('times')
+        values_data = result.get('values')
+
+        if times_data is None or values_data is None:
+            ax.text(0.5, 0.5, 'No data available',
+                    ha='center', va='center', transform=ax.transAxes, fontsize=11)
+            ax.axis('off')
+            self._fit_canvas.draw()
+            return
+
+        times = np.array(times_data) if not isinstance(times_data, np.ndarray) else times_data
+        mean_values = np.array(values_data) if not isinstance(values_data, np.ndarray) else values_data
+
+        # Get SEM from details JSON
+        sem_values = details.get('sem_values')
+        has_sem = sem_values is not None and any(s > 0 for s in sem_values)
+        if sem_values is not None:
+            sem_values = np.array(sem_values)
+
+        # Sort by time
+        sort_idx = np.argsort(times)
+        times = times[sort_idx]
+        mean_values = mean_values[sort_idx]
+        if sem_values is not None:
+            sem_values = sem_values[sort_idx]
+
+        # Plot mean line with markers
+        ax.plot(times, mean_values, 'o-', color='steelblue', linewidth=2,
+                markersize=5, label='Mean', zorder=3)
+
+        # Plot SEM shading if available
+        if has_sem:
+            ax.fill_between(times, mean_values - sem_values, mean_values + sem_values,
+                            color='steelblue', alpha=0.2, label='SEM', zorder=2)
+
+        # Labels
+        ax.set_xlabel('Time (hours)', fontsize=10)
+        ax.set_ylabel(variable, fontsize=10)
+        ax.set_title(f'{variable} - {condition}', fontsize=12, fontweight='bold')
+
+        if has_sem:
+            ax.legend(fontsize=8, loc='best')
+
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        self._fit_canvas.draw()
+
+    def _plot_probability_gauge(self, probability: float, classification: str, result: Dict):
+        """Plot a semicircular gauge showing rhythmicity probability."""
+        self._polar_canvas.clear()
+        fig = self._polar_canvas.fig
+        fig.clear()
+        ax = fig.add_subplot(111)
+
+        if probability is None:
+            probability = 0.0
+
+        # Draw semicircular gauge background arcs
+        theta_arrhythmic = np.linspace(np.pi, np.pi * 0.7, 50)
+        theta_borderline = np.linspace(np.pi * 0.7, np.pi * 0.3, 50)
+        theta_rhythmic = np.linspace(np.pi * 0.3, 0, 50)
+
+        for theta_range, color, label in [
+            (theta_arrhythmic, '#ff4444', 'Arrhythmic'),
+            (theta_borderline, '#ffaa00', 'Borderline'),
+            (theta_rhythmic, '#44bb44', 'Rhythmic'),
+        ]:
+            x_outer = 1.0 * np.cos(theta_range)
+            y_outer = 1.0 * np.sin(theta_range)
+            x_inner = 0.6 * np.cos(theta_range)
+            y_inner = 0.6 * np.sin(theta_range)
+            ax.fill(
+                np.concatenate([x_outer, x_inner[::-1]]),
+                np.concatenate([y_outer, y_inner[::-1]]),
+                color=color, alpha=0.3
+            )
+
+        # Needle
+        needle_angle = np.pi * (1 - probability)
+        ax.plot([0, 0.85 * np.cos(needle_angle)],
+                [0, 0.85 * np.sin(needle_angle)],
+                'k-', linewidth=3, solid_capstyle='round')
+        ax.plot(0, 0, 'ko', markersize=8, zorder=5)
+
+        # Score text
+        color_map = {'Rhythmic': '#2d8a2d', 'Borderline': '#cc8800', 'Arrhythmic': '#cc2222'}
+        ax.text(0, -0.1, f'{probability:.1%}',
+                ha='center', va='top', fontsize=28, fontweight='bold')
+        ax.text(0, -0.25, classification,
+                ha='center', va='top', fontsize=16,
+                color=color_map.get(classification, 'black'))
+
+        # Variable info
+        variable = result.get('variable', '')
+        condition = result.get('condition', '')
+        ax.text(0, 1.15, f'{variable} - {condition}',
+                ha='center', va='bottom', fontsize=11, fontstyle='italic')
+
+        # Zone labels
+        ax.text(-0.95, 0.05, 'Arrhythmic', ha='center', fontsize=7, color='#cc2222')
+        ax.text(0, 1.05, 'Borderline', ha='center', fontsize=7, color='#cc8800')
+        ax.text(0.95, 0.05, 'Rhythmic', ha='center', fontsize=7, color='#2d8a2d')
+
+        ax.set_xlim(-1.3, 1.3)
+        ax.set_ylim(-0.4, 1.3)
+        ax.set_aspect('equal')
+        ax.axis('off')
+        ax.set_title('Consensus Rhythmicity Score', fontsize=13, fontweight='bold', pad=5)
+
+        fig.tight_layout()
+        self._polar_canvas.draw()
+
+    def _plot_method_radar(self, method_results: Dict[str, float]):
+        """Plot radar/spider chart of method contributions."""
+        self._bar_canvas.clear()
+        fig = self._bar_canvas.fig
+        fig.clear()
+
+        if not method_results:
+            ax = fig.add_subplot(111)
+            ax.text(0.5, 0.5, 'No method results available',
+                    ha='center', va='center', transform=ax.transAxes, fontsize=11)
+            ax.axis('off')
+            self._bar_canvas.draw()
+            return
+
+        labels = list(method_results.keys())
+        values = [max(0.0, min(1.0, method_results[l])) for l in labels]
+        N = len(labels)
+
+        # Compute angles
+        angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+        values_closed = values + [values[0]]
+        angles_closed = angles + [angles[0]]
+
+        ax = fig.add_subplot(111, polar=True)
+        ax.plot(angles_closed, values_closed, 'o-', linewidth=2, color='steelblue', markersize=5)
+        ax.fill(angles_closed, values_closed, alpha=0.2, color='steelblue')
+
+        # Configure grid
+        ax.set_thetagrids(np.degrees(angles), labels, fontsize=8)
+        ax.set_ylim(0, 1)
+        ax.set_yticks([0.25, 0.5, 0.75, 1.0])
+        ax.set_yticklabels(['0.25', '0.5', '0.75', '1.0'], fontsize=7)
+        ax.set_title('Method Contribution Scores', fontsize=12, fontweight='bold', pad=20)
+
+        fig.tight_layout()
+        self._bar_canvas.draw()
+
+    def _plot_feature_importance(self, feature_importances: Dict[str, float]):
+        """Plot horizontal bar chart of feature importances from the Random Forest."""
+        self._period_canvas.clear()
+        fig = self._period_canvas.fig
+        fig.clear()
+        ax = fig.add_subplot(111)
+
+        if not feature_importances:
+            ax.text(0.5, 0.5, 'No feature importance data available',
+                    ha='center', va='center', transform=ax.transAxes, fontsize=11)
+            ax.axis('off')
+            self._period_canvas.draw()
+            return
+
+        # Sort by importance, show top 15
+        sorted_items = sorted(feature_importances.items(), key=lambda x: x[1], reverse=True)
+        sorted_items = sorted_items[:15]
+
+        names = [item[0].replace('_', ' ').title() for item in sorted_items]
+        values = [item[1] for item in sorted_items]
+
+        y_pos = range(len(names))
+        bars = ax.barh(y_pos, values, color='steelblue', alpha=0.85, edgecolor='white')
+
+        # Add value labels
+        for bar, val in zip(bars, values):
+            ax.text(bar.get_width() + 0.002, bar.get_y() + bar.get_height() / 2,
+                    f'{val:.3f}', va='center', fontsize=7)
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(names, fontsize=8)
+        ax.invert_yaxis()
+        ax.set_xlabel('Importance', fontsize=10)
+        ax.set_title('Random Forest Feature Importances', fontsize=12, fontweight='bold')
+
+        fig.tight_layout()
+        self._period_canvas.draw()
 
     def _plot_comparison_fit(self, result: Dict):
         """Plot cosinor fits for both conditions in a comparison with raw data."""

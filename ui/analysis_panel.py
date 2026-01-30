@@ -59,6 +59,9 @@ class AnalysisMethod(Enum):
     RHYTHM_CWT = "Wavelet (CWT)"
     RHYTHM_LME = "Linear Mixed Effects"
 
+    # AI Meta-Classifier
+    CONSENSUS_AI = "Consensus Rhythmicity Score (AI)"
+
     # Visualization methods (primarily for DAM data)
     VISUALIZATION_ACTIVITY_PROFILE = "Visualization: Activity Profile"
 
@@ -414,6 +417,8 @@ class AnalysisWorker(QThread):
             AnalysisMethod.RHYTHM_SPECTRAL: AnalysisType.SPECTRAL_ANALYSIS,
             AnalysisMethod.RHYTHM_CWT: AnalysisType.CWT,
             AnalysisMethod.RHYTHM_LME: AnalysisType.LME,
+            # AI Consensus
+            AnalysisMethod.CONSENSUS_AI: AnalysisType.CONSENSUS_AI,
         }
         return mapping.get(method, AnalysisType.COSINORPY_PERIODOGRAM)
 
@@ -905,7 +910,8 @@ class AnalysisPanel(QWidget):
         self._module_combo.addItems([
             "CosinorPy",
             "CircaCompare",
-            "Rhythm Analysis"
+            "Rhythm Analysis",
+            "AI Consensus"
         ])
         self._module_combo.currentIndexChanged.connect(self._on_module_changed)
         module_layout.addWidget(self._module_combo)
@@ -2299,6 +2305,13 @@ class AnalysisPanel(QWidget):
                 self._show_param("Random Effect:")  # Grouping variable (subject ID, replicate, etc.)
 
         # =====================================================================
+        # AI CONSENSUS
+        # =====================================================================
+        elif module_text == "AI Consensus":
+            # No parameters needed - the meta-classifier uses defaults for all sub-methods
+            pass
+
+        # =====================================================================
         # VISUALIZATION (DAM data)
         # =====================================================================
         elif module_text == "Visualization":
@@ -2525,7 +2538,15 @@ class AnalysisPanel(QWidget):
                  "variability and hierarchical data structure. Uses likelihood ratio test for rhythm significance. "
                  "Suitable for: Dependent data with repeated measures and grouping factors (e.g., individual subjects).")
             ]
-        elif index == 3:  # Visualization (available for DAM data)
+        elif index == 3:  # AI Consensus
+            methods = [
+                ("Consensus Rhythmicity Score",
+                 "AI-powered meta-classifier that combines evidence from JTK, Cosinor, "
+                 "Lomb-Scargle, F24, Harmonic Cosinor, and CWT into a single rhythmicity "
+                 "probability score (0-1). Uses a pre-trained Random Forest model trained "
+                 "on synthetic data with known ground truth.")
+            ]
+        elif index == 4:  # Visualization (available for DAM data)
             methods = [
                 ("Activity Profile", "Daily activity profile with mean ± SEM by condition")
             ]
@@ -2776,8 +2797,10 @@ class AnalysisPanel(QWidget):
             (2, "Spectral Analysis (Periodogram)"): AnalysisMethod.RHYTHM_SPECTRAL,
             (2, "Wavelet (CWT)"): AnalysisMethod.RHYTHM_CWT,
             (2, "Linear Mixed Effects"): AnalysisMethod.RHYTHM_LME,
+            # AI Consensus
+            (3, "Consensus Rhythmicity Score"): AnalysisMethod.CONSENSUS_AI,
             # Visualization
-            (3, "Activity Profile"): AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE,
+            (4, "Activity Profile"): AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE,
         }
 
         return mapping.get((module, method), AnalysisMethod.COSINORPY_PERIODOGRAM)

@@ -1,0 +1,22 @@
+[
+  "jtk_p_value",
+  "jtk_tau",
+  "jtk_period",
+  "cosinor_p_value",
+  "cosinor_r_squared",
+  "cosinor_amplitude",
+  "cosinor_period",
+  "ls_p_value",
+  "ls_power",
+  "ls_dominant_period",
+  "f24_score",
+  "harmonic_p_value",
+  "harmonic_n_components",
+  "harmonic_r_squared",
+  "cwt_period_variation",
+  "cwt_amplitude_mods",
+  "method_agreement",
+  "period_concordance",
+  "amplitude_relative",
+  "n_timepoints"
+]

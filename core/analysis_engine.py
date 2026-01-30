@@ -27,6 +27,7 @@ from .circacompare_analysis import (
 from .rhythm_analysis import (
     RhythmAnalyzer, AnalysisMethod as RhythmMethod
 )
+from .meta_classifier import ConsensusClassifier, SKLEARN_AVAILABLE
 
 
 def get_cosinorpy_plot_folder(data_file_path: Optional[str]) -> Optional[str]:
@@ -97,6 +98,9 @@ class AnalysisType(Enum):
     SPECTRAL_ANALYSIS = "spectral_analysis"
     CWT = "cwt"
     LME = "lme"
+
+    # AI Meta-Classifier
+    CONSENSUS_AI = "consensus_ai"
 
 
 @dataclass
@@ -284,6 +288,7 @@ class AnalysisEngine:
         self._cosinor = CosinorAnalyzer() if COSINORPY_AVAILABLE else None
         self._circacompare = CircaCompareAnalyzer()
         self._rhythm = RhythmAnalyzer()
+        self._consensus = ConsensusClassifier() if SKLEARN_AVAILABLE else None
     
     def check_method_available(self, analysis_type: AnalysisType) -> Tuple[bool, str]:
         """
@@ -301,7 +306,15 @@ class AnalysisEngine:
                 import pywt
             except ImportError:
                 return False, "PyWavelets not installed. Install with: pip install PyWavelets"
-        
+
+        if analysis_type == AnalysisType.CONSENSUS_AI:
+            if not SKLEARN_AVAILABLE:
+                return False, "scikit-learn not installed. Install with: pip install scikit-learn"
+            if self._consensus and not self._consensus.is_loaded:
+                success = self._consensus.load_model()
+                if not success:
+                    return False, "AI model file not found. Run train_consensus_model.py first."
+
         return True, "Available"
     
     def run_analysis(
@@ -380,6 +393,12 @@ class AnalysisEngine:
         elif analysis_type == AnalysisType.COSINORPY_NONLINEAR_COMPARE_DEPENDENT:
             return self._run_cosinorpy_nonlinear_compare_dependent_new(
                 data, variable, condition, time_col, condition_col, parameters, data_file_path
+            )
+
+        # AI Meta-Classifier (handles data filtering internally via feature extraction)
+        elif analysis_type == AnalysisType.CONSENSUS_AI:
+            return self._run_consensus_ai(
+                data, variable, condition, time_col, condition_col, parameters
             )
 
         # For other methods, filter data by variable and condition
@@ -3344,6 +3363,120 @@ class AnalysisEngine:
                 method="cwt",
                 success=False, message=f"Error: {str(e)}"
             )
+
+    def _run_consensus_ai(
+        self,
+        data: pd.DataFrame,
+        variable: str,
+        condition: str,
+        time_col: str,
+        condition_col: str,
+        parameters: Dict[str, Any]
+    ) -> AnalysisResult:
+        """Run Consensus Rhythmicity Score (AI) meta-classifier."""
+        import json as _json
+
+        if self._consensus is None:
+            return AnalysisResult(
+                variable=variable, condition=condition,
+                method="consensus_ai",
+                success=False,
+                message="scikit-learn not available. Install with: pip install scikit-learn"
+            )
+
+        # Filter data for this condition
+        mask = data[condition_col] == condition
+        filtered = data[mask].copy()
+
+        if len(filtered) == 0:
+            return AnalysisResult(
+                variable=variable, condition=condition,
+                method="consensus_ai",
+                success=False,
+                message=f"No data for condition: {condition}"
+            )
+
+        times = filtered[time_col].values.astype(float)
+        values = filtered[variable].values.astype(float)
+
+        # Remove NaN
+        valid_mask = ~(np.isnan(times) | np.isnan(values))
+        times = times[valid_mask]
+        values = values[valid_mask]
+
+        if len(times) < 4:
+            return AnalysisResult(
+                variable=variable, condition=condition,
+                method="consensus_ai",
+                success=False,
+                message="Insufficient data points (minimum 4 required)"
+            )
+
+        # Average replicates at each timepoint and compute SEM
+        unique_times = np.unique(times)
+        avg_values = np.array([values[times == t].mean() for t in unique_times])
+        sem_values = np.array([
+            values[times == t].std(ddof=1) / np.sqrt(np.sum(times == t))
+            if np.sum(times == t) > 1 else 0.0
+            for t in unique_times
+        ])
+
+        try:
+            result = self._consensus.predict(
+                unique_times, avg_values, data, variable, condition,
+                time_col, condition_col, parameters
+            )
+        except Exception as e:
+            return AnalysisResult(
+                variable=variable, condition=condition,
+                method="consensus_ai",
+                success=False,
+                message=f"Consensus AI error: {str(e)}"
+            )
+
+        if result.get('error'):
+            return AnalysisResult(
+                variable=variable, condition=condition,
+                method="consensus_ai",
+                success=False,
+                message=result['error']
+            )
+
+        probability = result['probability']
+        classification = result['classification']
+        features = result['features']
+
+        # Build JSON message with full details for the results panel
+        details_json = _json.dumps({
+            'classification': classification,
+            'probability': probability,
+            'method_results': result['method_results'],
+            'feature_importances': result['feature_importances'],
+            'sub_method_details': result['sub_method_details'],
+            'sem_values': sem_values.tolist(),
+        })
+
+        return AnalysisResult(
+            variable=variable,
+            condition=condition,
+            method="consensus_ai",
+            # p_value = 1 - probability so lower = more significant (standard sorting)
+            p_value=1.0 - probability,
+            # r_squared stores the raw probability score (0-1)
+            r_squared=probability,
+            # Cosinor parameters from sub-methods
+            amplitude=features.get('cosinor_amplitude'),
+            period=features.get('cosinor_period', 24.0),
+            # Method agreement as tau field
+            tau=features.get('method_agreement'),
+            # Period concordance
+            period_variation=features.get('period_concordance'),
+            # Raw data for plotting
+            times=unique_times,
+            values=avg_values,
+            success=True,
+            message=details_json,
+        )
 
     def _run_lme(
         self,

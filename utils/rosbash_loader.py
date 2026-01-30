@@ -285,16 +285,16 @@ class RosbashDataLoader:
         gene: str,
         condition: str = 'LD',
         cluster: Optional[str] = None,
-        use_log1p: bool = True
+        use_log1p: bool = False
     ) -> GeneExpressionData:
         """
         Extract expression data for a specific gene.
-        
+
         Args:
             gene: Gene name
             condition: 'LD' or 'DD'
             cluster: Cluster identifier (e.g., '1:LNd') or None for all clusters
-            use_log1p: If True, use log1p normalized data; if False, use TP10K
+            use_log1p: If True, use log1p normalized data; if False, use TP10K (default)
         
         Returns:
             GeneExpressionData object with expression values
@@ -347,16 +347,16 @@ class RosbashDataLoader:
         gene: str,
         condition: str = 'LD',
         cluster: Optional[str] = None,
-        use_log1p: bool = True
+        use_log1p: bool = False
     ) -> pd.DataFrame:
         """
         Get gene expression as a DataFrame suitable for analysis modules.
-        
+
         Args:
             gene: Gene name
             condition: 'LD' or 'DD'
             cluster: Cluster identifier or None for all
-            use_log1p: Use log1p normalized data
+            use_log1p: If True, use log1p; if False, use TP10K (default)
         
         Returns:
             DataFrame with columns: time, condition, [gene_name]
@@ -495,8 +495,8 @@ class RosbashDataLoader:
         Returns DataFrame with columns: time, condition, [gene]
         where each row is a single cell (replicate).
         """
-        return self.get_gene_expression_df(gene, condition, cluster, use_log1p=True)
-    
+        return self.get_gene_expression_df(gene, condition, cluster, use_log1p=False)
+
     def prepare_for_circacompare(
         self,
         gene: str,
