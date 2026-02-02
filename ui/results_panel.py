@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QScrollArea, QSizePolicy, QMenu, QToolButton
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QColor
 
 import pandas as pd
 import numpy as np
@@ -895,11 +895,8 @@ class ResultsPanel(QWidget):
         self._results = results
         self._update_table()
         self._update_plots()
-        
-        n_sig = sum(1 for r in results if r.get('p_value') is not None and r.get('p_value') < 0.05)
-        self._results_label.setText(
-            f"{len(results)} results ({n_sig} significant)"
-        )
+
+        self._results_label.setText(self._build_results_summary(results))
     
     def add_results(self, results: List[Dict[str, Any]]):
         """Add new results to existing."""
@@ -907,11 +904,19 @@ class ResultsPanel(QWidget):
         self._update_table()
         self._update_plots()
 
-        n_sig = sum(1 for r in self._results if r.get('p_value') is not None and r.get('p_value') < 0.05)
-        self._results_label.setText(
-            f"{len(self._results)} results ({n_sig} significant)"
-        )
+        self._results_label.setText(self._build_results_summary(self._results))
     
+    def _build_results_summary(self, results: List[Dict[str, Any]]) -> str:
+        """Build summary text for results label."""
+        if not results:
+            return "No results"
+        is_consensus = any(r.get('method') == 'consensus_ai' for r in results)
+        if is_consensus:
+            n_rhythmic = sum(1 for r in results if r.get('r_squared') is not None and r.get('r_squared') >= 0.7)
+            return f"{len(results)} results ({n_rhythmic} rhythmic)"
+        n_sig = sum(1 for r in results if r.get('p_value') is not None and r.get('p_value') < 0.05)
+        return f"{len(results)} results ({n_sig} significant)"
+
     def clear_results(self):
         """Clear all results."""
         self._results = []
@@ -947,6 +952,9 @@ class ResultsPanel(QWidget):
 
         # Check if we have CWT (Wavelet) results
         has_cwt = any(r.get('method') == 'cwt' for r in self._results)
+
+        # Check if we have Consensus AI results
+        has_consensus_ai = any(r.get('method') == 'consensus_ai' for r in self._results)
 
         # Determine columns based on result type
         if is_comparison:
@@ -987,6 +995,10 @@ class ResultsPanel(QWidget):
             elif has_cwt:
                 columns = ['variable', 'condition', 'method', 'period', 'power', 'period_variation', 'amplitude_modulations']
                 headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'Mean Power', 'Period Variation (h)', 'Amp. Modulations']
+            # For Consensus AI results
+            elif has_consensus_ai:
+                columns = ['variable', 'condition', 'method', 'ai_probability', 'ai_classification']
+                headers = ['Variable', 'Condition', 'Method', 'Probability', 'Classification']
             else:
                 # Basic identification
                 columns = ['variable', 'condition', 'method', 'n_components']
@@ -1042,7 +1054,25 @@ class ResultsPanel(QWidget):
 
         for i, result in enumerate(filtered):
             for j, col in enumerate(columns):
-                if col == 'significant':
+                if col == 'ai_probability':
+                    # Consensus AI: probability is stored in r_squared
+                    prob = result.get('r_squared')
+                    if prob is not None and not (isinstance(prob, float) and math.isnan(prob)):
+                        value = f'{prob:.3f}'
+                    else:
+                        value = 'N/A'
+                elif col == 'ai_classification':
+                    # Consensus AI: extract classification from message JSON
+                    msg = result.get('message', '')
+                    value = 'N/A'
+                    if msg:
+                        try:
+                            import json as _json_mod
+                            details = _json_mod.loads(msg)
+                            value = details.get('classification', 'N/A')
+                        except (ValueError, TypeError):
+                            pass
+                elif col == 'significant':
                     p_val = result.get('p_value')
                     value = 'Yes' if (p_val is not None and p_val < 0.05) else ('No' if p_val is not None else 'N/A')
                 elif col == 'best_model':
@@ -1099,6 +1129,19 @@ class ResultsPanel(QWidget):
                         item.setBackground(Qt.yellow)
                         item.setForeground(Qt.black)
 
+                # Color code AI classification
+                elif col == 'ai_classification' or col == 'ai_probability':
+                    text = str(value)
+                    prob = result.get('r_squared')
+                    if prob is not None and not (isinstance(prob, float) and math.isnan(prob)):
+                        if prob >= 0.7:
+                            item.setBackground(QColor(144, 238, 144))  # light green
+                        elif prob >= 0.3:
+                            item.setBackground(QColor(255, 255, 150))  # light yellow
+                            item.setForeground(Qt.black)
+                        else:
+                            item.setBackground(QColor(255, 180, 180))  # light red
+
                 self._results_table.setItem(i, j, item)
 
         # Hide columns that only contain N/A values
@@ -1122,10 +1165,19 @@ class ResultsPanel(QWidget):
 
         if filter_idx == 0:  # All
             return self._results
-        elif filter_idx == 1:  # Significant
-            return [r for r in self._results if r.get('p_value') is not None and r.get('p_value') < 0.05]
-        else:  # Non-significant
-            return [r for r in self._results if r.get('p_value') is not None and r.get('p_value') >= 0.05]
+
+        is_consensus = any(r.get('method') == 'consensus_ai' for r in self._results)
+        if is_consensus:
+            # For consensus AI, filter by probability >= 0.7 (Rhythmic)
+            if filter_idx == 1:  # Significant / Rhythmic
+                return [r for r in self._results if r.get('r_squared') is not None and r.get('r_squared') >= 0.7]
+            else:  # Non-significant / Not Rhythmic
+                return [r for r in self._results if r.get('r_squared') is not None and r.get('r_squared') < 0.7]
+        else:
+            if filter_idx == 1:  # Significant
+                return [r for r in self._results if r.get('p_value') is not None and r.get('p_value') < 0.05]
+            else:  # Non-significant
+                return [r for r in self._results if r.get('p_value') is not None and r.get('p_value') >= 0.05]
     
     def _apply_filter(self):
         """Apply significance filter."""

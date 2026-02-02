@@ -160,8 +160,12 @@ def main():
     print(f"  Test set:  {len(X_test)} samples")
 
     # Build pipeline
+    # Note: constant fill_value=-999 (sentinel) instead of median imputation.
+    # This prevents bias when structurally-missing features (e.g. CWT on short
+    # series) get filled with training-set medians that may indicate rhythmicity.
+    # The RF learns clean splits: "if feature <= -500 -> feature was unavailable".
     pipeline = Pipeline([
-        ('imputer', SimpleImputer(strategy='median')),
+        ('imputer', SimpleImputer(strategy='constant', fill_value=-999)),
         ('scaler', StandardScaler()),
         ('classifier', RandomForestClassifier(
             n_estimators=200,
