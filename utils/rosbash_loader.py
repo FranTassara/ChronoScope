@@ -509,8 +509,8 @@ class RosbashDataLoader:
         
         Returns DataFrame with both conditions combined.
         """
-        df1 = self.get_gene_expression_df(gene, condition1, cluster, use_log1p=True)
-        df2 = self.get_gene_expression_df(gene, condition2, cluster, use_log1p=True)
+        df1 = self.get_gene_expression_df(gene, condition1, cluster, use_log1p=False)
+        df2 = self.get_gene_expression_df(gene, condition2, cluster, use_log1p=False)
         
         return pd.concat([df1, df2], ignore_index=True)
 

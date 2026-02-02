@@ -443,7 +443,7 @@ class AnalysisWorker(QThread):
                     gene=gene,
                     condition=condition,
                     cluster=cluster,  # Use specified cluster
-                    use_log1p=True  # Use log1p normalized data
+                    use_log1p=False  # Use TP10K normalized data (as in Ma et al. 2021)
                 )
             except Exception as e:
                 return AnalysisResult(
@@ -582,7 +582,7 @@ class AnalysisWorker(QThread):
                         gene=gene,
                         condition=cond,
                         cluster=cluster,  # Use specified cluster
-                        use_log1p=True
+                        use_log1p=False  # Use TP10K normalized data (as in Ma et al. 2021)
                     )
                     dfs.append(df_cond)
 
