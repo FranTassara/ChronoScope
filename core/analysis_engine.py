@@ -4354,13 +4354,26 @@ class AnalysisEngine:
 
         # Iterate over each row in the results DataFrame
         for idx, row in df_results.iterrows():
-            # Extract pair names from 'test' column (format: "cond1 vs. cond2")
+            # Extract pair names from 'test' column
+            # cosinor (multi-component) uses "cond1 vs. cond2" (with dot)
+            # cosinor1 (single-component) uses "cond1 vs cond2" (without dot)
             test_str = row.get('test', '')
             if ' vs. ' in test_str:
-                cond1, cond2 = test_str.split(' vs. ')
+                cond1, cond2 = test_str.split(' vs. ', 1)
+            elif ' vs ' in test_str:
+                cond1, cond2 = test_str.split(' vs ', 1)
             else:
-                # Fallback if format is different
                 cond1, cond2 = 'condition1', 'condition2'
+
+            # Strip variable prefix from condition names if present
+            # Data conversion creates test names as "{variable}-{condition}_rep{i}",
+            # so after CosinorPy splits on '_rep', the condition names may have
+            # the format "{variable}-{condition}" (e.g., "circadian_noisy-control")
+            var_prefix = f"{variable}-"
+            if cond1.strip().startswith(var_prefix):
+                cond1 = cond1.strip()[len(var_prefix):]
+            if cond2.strip().startswith(var_prefix):
+                cond2 = cond2.strip()[len(var_prefix):]
 
             # Extract period (handle both single-component and multi-component)
             period = row.get('period', 24.0)
@@ -4622,6 +4635,12 @@ class AnalysisEngine:
                 result, variable, comparison_type, comparison_method
             )
 
+            # Enrich results with raw data and individual fit parameters (including mesor)
+            self._enrich_independent_comparison_results(
+                comparison_results, data, df_cosinorpy,
+                variable, time_col, condition_col, period
+            )
+
             return comparison_results
 
         except Exception as e:
@@ -4720,6 +4739,13 @@ class AnalysisEngine:
                 result, variable, 'dependent', analysis_method
             )
 
+            # Enrich results with raw data and individual population fit parameters
+            # (CosinorPy single-component results only contain differences, not per-group values)
+            self._enrich_dependent_comparison_results(
+                comparison_results, data, df_cosinorpy,
+                variable, time_col, condition_col, period
+            )
+
             return comparison_results
 
         except Exception as e:
@@ -4727,6 +4753,137 @@ class AnalysisEngine:
             import traceback
             traceback.print_exc()
             return []
+
+    def _enrich_dependent_comparison_results(
+        self,
+        comparison_results: List[ComparisonResult],
+        data: pd.DataFrame,
+        df_cosinorpy: pd.DataFrame,
+        variable: str,
+        time_col: str,
+        condition_col: str,
+        period: float
+    ) -> None:
+        """Enrich dependent comparison results with raw data and individual fit parameters.
+
+        CosinorPy single-component population comparison only returns differences
+        (d_amplitude, d_acrophase) but not individual group parameters. The visualization
+        needs raw data and per-group amplitude/acrophase/mesor to render fit curves.
+        """
+        try:
+            from CosinorPy import cosinor1 as cosinor1_mod
+        except ImportError:
+            print("[DEBUG] CosinorPy not available for enrichment")
+            return
+
+        for comp_result in comparison_results:
+            cond1_name = comp_result.condition1
+            cond2_name = comp_result.condition2
+
+            # Extract raw data from original DataFrame
+            data_g0 = data[data[condition_col] == cond1_name]
+            data_g1 = data[data[condition_col] == cond2_name]
+            comp_result.times_g0 = data_g0[time_col].values.astype(float) if len(data_g0) > 0 else None
+            comp_result.values_g0 = data_g0[variable].values.astype(float) if len(data_g0) > 0 else None
+            comp_result.times_g1 = data_g1[time_col].values.astype(float) if len(data_g1) > 0 else None
+            comp_result.values_g1 = data_g1[variable].values.astype(float) if len(data_g1) > 0 else None
+
+            # Run individual population fits to get per-condition parameters
+            period_val = comp_result.period
+            cond1_prefix = f"{variable}-{cond1_name}"
+            cond2_prefix = f"{variable}-{cond2_name}"
+
+            df_pop1 = df_cosinorpy[df_cosinorpy.test.str.startswith(f'{cond1_prefix}_rep')]
+            df_pop2 = df_cosinorpy[df_cosinorpy.test.str.startswith(f'{cond2_prefix}_rep')]
+
+            # Fit condition 1
+            try:
+                res1 = cosinor1_mod.population_fit_cosinor(df_pop1, period=period_val, plot_on=False)
+                comp_result.mesor_g0 = float(res1['means'][0])
+                comp_result.amplitude_g0 = float(res1['means'][3])
+                comp_result.acrophase_g0 = float(res1['means'][4])
+            except Exception as e:
+                print(f"[DEBUG] Could not fit population for {cond1_name}: {e}")
+
+            # Fit condition 2
+            try:
+                res2 = cosinor1_mod.population_fit_cosinor(df_pop2, period=period_val, plot_on=False)
+                comp_result.mesor_g1 = float(res2['means'][0])
+                comp_result.amplitude_g1 = float(res2['means'][3])
+                comp_result.acrophase_g1 = float(res2['means'][4])
+            except Exception as e:
+                print(f"[DEBUG] Could not fit population for {cond2_name}: {e}")
+
+    def _enrich_independent_comparison_results(
+        self,
+        comparison_results: List[ComparisonResult],
+        data: pd.DataFrame,
+        df_cosinorpy: pd.DataFrame,
+        variable: str,
+        time_col: str,
+        condition_col: str,
+        period: float
+    ) -> None:
+        """Enrich independent comparison results with raw data and individual fit parameters.
+
+        CosinorPy independent comparisons may not return individual group parameters
+        (mesor, amplitude, acrophase per condition). The visualization needs these
+        to render fit curves and scatter plots.
+        """
+        try:
+            from CosinorPy import cosinor1 as cosinor1_mod
+        except ImportError:
+            print("[DEBUG] CosinorPy not available for enrichment")
+            return
+
+        for comp_result in comparison_results:
+            cond1_name = comp_result.condition1
+            cond2_name = comp_result.condition2
+
+            # Extract raw data from original DataFrame
+            data_g0 = data[data[condition_col] == cond1_name]
+            data_g1 = data[data[condition_col] == cond2_name]
+            comp_result.times_g0 = data_g0[time_col].values.astype(float) if len(data_g0) > 0 else None
+            comp_result.values_g0 = data_g0[variable].values.astype(float) if len(data_g0) > 0 else None
+            comp_result.times_g1 = data_g1[time_col].values.astype(float) if len(data_g1) > 0 else None
+            comp_result.values_g1 = data_g1[variable].values.astype(float) if len(data_g1) > 0 else None
+
+            # Run individual fits to get per-condition parameters if missing
+            period_val = comp_result.period
+            test_name_g0 = f"{variable}-{cond1_name}"
+            test_name_g1 = f"{variable}-{cond2_name}"
+
+            # Fit condition 1 (if mesor is missing)
+            if comp_result.mesor_g0 is None:
+                df_g0 = df_cosinorpy[df_cosinorpy.test == test_name_g0]
+                if len(df_g0) > 0:
+                    try:
+                        fit_res, amp, acr, _ = cosinor1_mod.fit_cosinor(
+                            df_g0.x.values, df_g0.y.values, period=period_val, plot_on=False
+                        )
+                        comp_result.mesor_g0 = float(fit_res.params[0])
+                        if comp_result.amplitude_g0 is None:
+                            comp_result.amplitude_g0 = float(amp)
+                        if comp_result.acrophase_g0 is None:
+                            comp_result.acrophase_g0 = float(acr)
+                    except Exception as e:
+                        print(f"[DEBUG] Could not fit cosinor for {cond1_name}: {e}")
+
+            # Fit condition 2 (if mesor is missing)
+            if comp_result.mesor_g1 is None:
+                df_g1 = df_cosinorpy[df_cosinorpy.test == test_name_g1]
+                if len(df_g1) > 0:
+                    try:
+                        fit_res, amp, acr, _ = cosinor1_mod.fit_cosinor(
+                            df_g1.x.values, df_g1.y.values, period=period_val, plot_on=False
+                        )
+                        comp_result.mesor_g1 = float(fit_res.params[0])
+                        if comp_result.amplitude_g1 is None:
+                            comp_result.amplitude_g1 = float(amp)
+                        if comp_result.acrophase_g1 is None:
+                            comp_result.acrophase_g1 = float(acr)
+                    except Exception as e:
+                        print(f"[DEBUG] Could not fit cosinor for {cond2_name}: {e}")
 
     def _run_cosinorpy_nonlinear_independent_new(
         self,
@@ -5177,6 +5334,12 @@ class AnalysisEngine:
                     success=True
                 ))
 
+            # Enrich results with raw data and individual fit parameters
+            self._enrich_independent_comparison_results(
+                comparison_results, data, df_cosinorpy,
+                variable, time_col, condition_col, period
+            )
+
             return comparison_results
 
         except Exception as e:
@@ -5281,6 +5444,12 @@ class AnalysisEngine:
                     n_components=res_dict.get('n_components1', 1),
                     success=True
                 ))
+
+            # Enrich results with raw data and individual population fit parameters
+            self._enrich_dependent_comparison_results(
+                comparison_results, data, df_cosinorpy,
+                variable, time_col, condition_col, period
+            )
 
             return comparison_results
 

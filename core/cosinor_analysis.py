@@ -1924,10 +1924,12 @@ class CosinorAnalyzer:
         print(f"[DEBUG compare_dependent] variable={variable}, conditions={conditions}")
         print(f"[DEBUG] analysis_method={analysis_method}, lin_comp={lin_comp}")
 
-        # Generate pairs - for DEPENDENT data, use condition names only (no variable prefix)
+        # Generate pairs from condition names
         condition_pairs = self._generate_all_pairs(conditions)
-        # For dependent: pairs should be [('control', 'treatment'), ...] NOT [('gene1_control', 'gene1_treatment'), ...]
-        test_pairs = condition_pairs  # Don't format with variable name!
+        # Pairs must include the variable prefix to match test names in the DataFrame
+        # Test names are formatted as "{variable}-{condition}_rep{i}" (e.g., "circadian_noisy-control_rep1")
+        # CosinorPy filters with df.test.str.startswith(f'{pair[0]}_rep'), so pair[0] must be "{variable}-{condition}"
+        test_pairs = [(f"{variable}-{c1}", f"{variable}-{c2}") for c1, c2 in condition_pairs]
 
         print(f"[DEBUG compare_dependent] Generated {len(test_pairs)} pairs: {test_pairs}")
 
@@ -2939,31 +2941,26 @@ class CosinorAnalyzer:
         """
         Non-linear comparison for independent data.
 
-        Workflow based on n_components:
-
-        Case A: n_components=[1] (single component)
-            → fit_generalized_cosinor_compare_pairs_independent(period1, period2)
-            → Stats from model fitting, no bootstrap needed
-
-        Case B: n_components=[N] (N>1, fixed)
-            → compare_pairs_n_comp_bootstrap_group(n_components=N)
-            → Requires bootstrap for stats
-
-        Case C: n_components=[1,2,...] (auto-select)
-            → First run nonlinear_independent to get best models
-            → Then compare_pairs_n_comp_bootstrap_group(df_best_models=...)
+        Iterates over each value in n_components and accumulates results.
+        For each n_comp value:
+            - n_comp == 1:
+                → fit_generalized_cosinor_compare_pairs_independent(period1, period2)
+                → Stats from model fitting, no bootstrap needed
+            - n_comp > 1:
+                → compare_pairs_n_comp_bootstrap_group(n_components=n_comp)
+                → Requires bootstrap for stats
 
         Args:
             variable: Variable name
             conditions: List of conditions to compare
             period: Single period or [period1, period2] for different periods
-            n_components: [1], [N], or [1,2,3] for auto-selection
+            n_components: List of component counts to compare (e.g. [1], [2], [2,3])
             bootstrap_size: Bootstrap samples (for multi-component)
             save_folder: Folder for saving plots
             save_cosinorpy_plots: If True, generate and save CosinorPy plots
 
         Returns:
-            List of comparison result Dicts (one per pair)
+            List of comparison result Dicts (one per pair per n_components value)
         """
         if self._data is None:
             raise ValueError("No data loaded")
@@ -2983,23 +2980,20 @@ class CosinorAnalyzer:
         plot_folder = save_folder if should_plot else None
 
         try:
-            # Case A: Single component comparison
-            if len(n_components) == 1 and n_components[0] == 1:
-                return self._nonlinear_compare_independent_single_comp(
-                    test_pairs, variable, period, plot_folder
-                )
+            all_results = []
+            for n_comp in n_components:
+                print(f"[DEBUG nonlinear_compare_independent] Processing n_components={n_comp}")
+                if n_comp == 1:
+                    results = self._nonlinear_compare_independent_single_comp(
+                        test_pairs, variable, period, plot_folder
+                    )
+                else:
+                    results = self._nonlinear_compare_independent_fixed_ncomp(
+                        test_pairs, variable, period, n_comp, bootstrap_size, plot_folder
+                    )
+                all_results.extend(results)
 
-            # Case B: Multi-component with fixed N
-            elif len(n_components) == 1 and n_components[0] > 1:
-                return self._nonlinear_compare_independent_fixed_ncomp(
-                    test_pairs, variable, period, n_components[0], bootstrap_size, plot_folder
-                )
-
-            # Case C: Auto-select best models first, then compare
-            else:
-                return self._nonlinear_compare_independent_auto_select(
-                    test_pairs, variable, conditions, period, n_components, bootstrap_size, plot_folder
-                )
+            return all_results
 
         except Exception as e:
             print(f"[DEBUG nonlinear_compare_independent] ERROR: {e}")
@@ -3236,32 +3230,29 @@ class CosinorAnalyzer:
         """
         Non-linear comparison for dependent/population data.
 
-        Workflow based on n_components:
+        If df_best_models is provided externally, uses it directly via
+        population_compare_pairs_n_comp_group(df_best_models=...).
 
-        Case A: n_components=[1] (single component)
-            → population_fit_generalized_cosinor_compare_pairs(period1, period2)
-            → Allows different periods per condition
-
-        Case B: n_components=[N] (N>1, fixed) or df_best_models provided
-            → population_compare_pairs_n_comp_group()
-            → If df_best_models: uses n_components/period from there
-            → If not: uses fixed n_components and period for all
-
-        Case C: n_components=[1,2,...] (auto-select)
-            → First run nonlinear_dependent to get best models
-            → Then population_compare_pairs_n_comp_group(df_best_models=...)
+        Otherwise, iterates over each value in n_components and accumulates results.
+        For each n_comp value:
+            - n_comp == 1:
+                → population_fit_generalized_cosinor_compare_pairs(period1, period2)
+                → Allows different periods per condition
+            - n_comp > 1:
+                → population_compare_pairs_n_comp_group(n_components=n_comp, period=period)
+                → Uses fixed n_components and period
 
         Args:
             variable: Variable name
             conditions: List of conditions to compare
             period: Single period or [period1, period2] for different periods
-            n_components: [1], [N], or [1,2,3] for auto-selection
+            n_components: List of component counts to compare (e.g. [1], [2], [2,3])
             save_folder: Folder for saving plots
             save_cosinorpy_plots: If True, generate and save CosinorPy plots
             df_best_models: Optional pre-computed best models DataFrame
 
         Returns:
-            List of comparison result Dicts (one per pair)
+            List of comparison result Dicts (one per pair per n_components value)
         """
         if self._data is None:
             raise ValueError("No data loaded")
@@ -3281,23 +3272,27 @@ class CosinorAnalyzer:
         plot_folder = save_folder if should_plot else None
 
         try:
-            # Case A: Single component comparison
-            if len(n_components) == 1 and n_components[0] == 1:
-                return self._nonlinear_compare_dependent_single_comp(
-                    test_pairs, variable, period, plot_folder
-                )
-
-            # Case B: Multi-component with df_best_models or fixed N
-            elif df_best_models is not None or (len(n_components) == 1 and n_components[0] > 1):
+            # If df_best_models provided externally, use it directly
+            if df_best_models is not None:
                 return self._nonlinear_compare_dependent_multi_comp(
                     test_pairs, variable, period, n_components, plot_folder, df_best_models
                 )
 
-            # Case C: Auto-select best models first, then compare
-            else:
-                return self._nonlinear_compare_dependent_auto_select(
-                    test_pairs, variable, conditions, period, n_components, plot_folder
-                )
+            # Iterate over each n_components value
+            all_results = []
+            for n_comp in n_components:
+                print(f"[DEBUG nonlinear_compare_dependent] Processing n_components={n_comp}")
+                if n_comp == 1:
+                    results = self._nonlinear_compare_dependent_single_comp(
+                        test_pairs, variable, period, plot_folder
+                    )
+                else:
+                    results = self._nonlinear_compare_dependent_multi_comp(
+                        test_pairs, variable, period, [n_comp], plot_folder, None
+                    )
+                all_results.extend(results)
+
+            return all_results
 
         except Exception as e:
             print(f"[DEBUG nonlinear_compare_dependent] ERROR: {e}")
@@ -3350,8 +3345,8 @@ class CosinorAnalyzer:
             test_str = row.get('test', '')
             parts = test_str.split(' vs. ')
             if len(parts) == 2:
-                cond1 = parts[0].replace(f"{variable}_", "")
-                cond2 = parts[1].replace(f"{variable}_", "")
+                cond1 = parts[0].replace(f"{variable}-", "")
+                cond2 = parts[1].replace(f"{variable}-", "")
             else:
                 cond1, cond2 = "unknown", "unknown"
 
@@ -3428,8 +3423,8 @@ class CosinorAnalyzer:
             test_str = row.get('test', '')
             parts = test_str.split(' vs. ')
             if len(parts) == 2:
-                cond1 = parts[0].replace(f"{variable}_", "")
-                cond2 = parts[1].replace(f"{variable}_", "")
+                cond1 = parts[0].replace(f"{variable}-", "")
+                cond2 = parts[1].replace(f"{variable}-", "")
             else:
                 cond1, cond2 = "unknown", "unknown"
 
@@ -3467,28 +3462,53 @@ class CosinorAnalyzer:
     ) -> List[Dict[str, Any]]:
         """
         Auto-select best n_components for each condition, then compare.
-        First runs population_fit_generalized_cosinor_n_comp_group_best() for each condition,
-        then uses those results for comparison.
+
+        NOTE: We cannot use population_fit_generalized_cosinor_n_comp_group_best()
+        directly because it groups tests using t.split("_")[0], which fails when
+        the variable name contains underscores (e.g., "circadian_noisy").
+        Instead, we group conditions manually using str.startswith() and call
+        get_best_model_population() for each condition separately.
         """
         print(f"[DEBUG] Auto-selecting best models before comparison")
 
-        # First, get best models for all conditions
         period_val = period if isinstance(period, (int, float)) else period[0]
 
-        params = {
-            'period': period_val,
-            'n_components': n_components,
-            'plot': False  # Don't plot individual fits
-        }
+        # Collect unique condition prefixes from all pairs
+        all_test_names = set()
+        for t1, t2 in test_pairs:
+            all_test_names.add(t1)
+            all_test_names.add(t2)
 
-        df_best_models = cosinor_nonlin.population_fit_generalized_cosinor_n_comp_group_best(
-            self._data,
-            **params
-        )
+        # Build df_best_models by fitting each condition separately
+        rows = []
+        for test_name in sorted(all_test_names):
+            df_pop = self._data[self._data.test.str.startswith(f'{test_name}_rep')]
 
-        print(f"[DEBUG] Got best models for {len(df_best_models)} tests")
+            if len(df_pop) == 0:
+                print(f"[DEBUG] No data found for {test_name}")
+                continue
 
-        # Now compare using the best models
+            try:
+                best_comps, stats, p_dict, rhythm_params = cosinor_nonlin.get_best_model_population(
+                    df_pop, period=period_val, n_components=n_components, plot=False
+                )
+                rows.append({
+                    'test': test_name,
+                    'period': period_val,
+                    'n_components': best_comps
+                })
+                print(f"[DEBUG] Best model for {test_name}: n_components={best_comps}")
+            except Exception as e:
+                print(f"[DEBUG] Could not find best model for {test_name}: {e}")
+
+        df_best_models = pd.DataFrame(rows) if rows else pd.DataFrame(columns=['test', 'period', 'n_components'])
+        print(f"[DEBUG] Built df_best_models with {len(df_best_models)} entries")
+
+        if len(df_best_models) == 0:
+            print(f"[DEBUG] No best models found, cannot compare")
+            return []
+
+        # Now compare using the correctly built best models
         return self._nonlinear_compare_dependent_multi_comp(
             test_pairs, variable, period, n_components, plot_folder, df_best_models
         )

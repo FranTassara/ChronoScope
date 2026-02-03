@@ -413,22 +413,14 @@ Flujo de funciones según parámetros
 		         └─ Solo 1 componente
 		         └─ Retorna: diferencias con CIs calculados independientemente
 		Uso: Cuando cada condición puede tener su propio periodo
-	Opción C: Multi-componente con Bootstrap
+	Opción C: Multi-componente con Bootstrap. Itera sobre cada componente
 		Función: cosinor_nonlin.compare_pairs_n_comp_bootstrap_group(
-		             df, pairs, 
-		             df_best_models=df_best_models,      # Opción 1: usar modelos previamente calculados
-		             df_bootstrap_single=df_bootstrap,    # Opción 1: reusar bootstrap previo
-		             plot=True
-		         )
-		         O alternativamente:
-		         cosinor_nonlin.compare_pairs_n_comp_bootstrap_group(
 		             df, pairs,
-		             n_components=3,                      # Opción 2: fijar n_components
+		             n_components=3,                      # fijar n_components
 		             period=24,
 		             bootstrap_size=100,
 		             plot=True
  		        )
-		Uso: Para comparar con múltiples componentes, necesita bootstrap para CIs
 
 ### 9. Non-Linear Compare Conditions (Dependent/Population Data)
 - **Functions**:
@@ -445,20 +437,10 @@ Flujo de funciones según parámetros
 		         ├─ Permite periodos diferentes por condición
 		         └─ Retorna: d_amplitude, d_acrophase, d_amplification, d_lin_comp + p-values + CIs
 		Uso: Comparación simple con 1 componente
-	Opción B: Multi-component con df_best_models
-		Función: cosinor_nonlin.population_compare_pairs_n_comp_group(
-		             df, pairs, 
-		             df_best_models=df_best_models,  # Usa n_components y period de aquí
-		             plot=True
-		         )
-		         ├─ Toma n_components y period de df_best_models para cada test
-		         ├─ Puede comparar tests con diferente número de componentes
-		         └─ Retorna: d_amplitude, d_acrophase, d_amplification, d_lin_comp
-		Uso: Cuando ya calculaste los mejores modelos previamente
-	Opción C: Multi-component con parámetros fijos
+	Opción B: Multi-component con parámetros fijos
 		Función: cosinor_nonlin.population_compare_pairs_n_comp_group(
 		             df, pairs,
-		             n_components=N,   # Mismo N para todos
+		             n_components=N,   # Mismo N para todos, y se itera sobre cada uno
 		             period=24,
 		             plot=True
 		         )
