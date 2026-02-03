@@ -2467,13 +2467,16 @@ class AnalysisPanel(QWidget):
         """Handle module selection change."""
         self._method_combo.clear()
 
+        # Use module name instead of index (indices shift when modules are removed)
+        module_name = self._module_combo.currentText()
+
         # Check if subject column exists (for dependent data methods)
         has_subject_col = False
         if hasattr(self, '_loader') and self._loader and self._source_type in ('csv', 'dam'):
             dataset_info = self._loader.get_dataset_info()
             has_subject_col = dataset_info.subject_column is not None
 
-        if index == 0:  # CosinorPy - NEW REFACTORED METHODS
+        if module_name == "CosinorPy":  # CosinorPy - NEW REFACTORED METHODS
             methods = [
                 ("Periodogram Analysis", "Spectral analysis to identify dominant periods"),
                 ("Cosinor (Independent Data)", "Fit cosinor model to independent data"),
@@ -2489,12 +2492,12 @@ class AnalysisPanel(QWidget):
                 methods.insert(6, ("Nonlinear (Dependent Data)", "Nonlinear cosinor with damping/forcing (dependent)"))
                 methods.append(("Nonlinear Compare (Dependent)", "Compare nonlinear parameters (dependent data)"))
 
-        elif index == 1:  # CircaCompare
+        elif module_name == "CircaCompare":  # CircaCompare
             methods = [
                 ("Single Fit", "Robust cosinor fitting - Parsons, Rex, et al. \"CircaCompare: a method to estimate and statistically support differences in mesor, amplitude and phase, between circadian rhythms.\" Bioinformatics 36.4 (2020): 1208-1212."),
                 ("Compare Groups", "Compare parameters between groups - Parsons, Rex, et al. \"CircaCompare: a method to estimate and statistically support differences in mesor, amplitude and phase, between circadian rhythms.\" Bioinformatics 36.4 (2020): 1208-1212.")
             ]
-        elif index == 2:  # Rhythm Analysis
+        elif module_name == "Rhythm Analysis":  # Rhythm Analysis
             methods = [
                 ("JTK Cycle",
                  "Nonparametric rhythm detection using Kendall's tau correlation with triangle waveforms. "
@@ -2538,7 +2541,7 @@ class AnalysisPanel(QWidget):
                  "variability and hierarchical data structure. Uses likelihood ratio test for rhythm significance. "
                  "Suitable for: Dependent data with repeated measures and grouping factors (e.g., individual subjects).")
             ]
-        elif index == 3:  # AI Consensus
+        elif module_name == "AI Consensus":  # AI Consensus
             methods = [
                 ("Consensus Rhythmicity Score",
                  "AI-powered meta-classifier that combines evidence from JTK, Cosinor, "
@@ -2546,7 +2549,7 @@ class AnalysisPanel(QWidget):
                  "probability score (0-1). Uses a pre-trained Random Forest model trained "
                  "on synthetic data with known ground truth.")
             ]
-        elif index == 4:  # Visualization (available for DAM data)
+        elif module_name == "Visualization":  # Visualization (available for DAM data)
             methods = [
                 ("Activity Profile", "Daily activity profile with mean ± SEM by condition")
             ]
@@ -2768,42 +2771,42 @@ class AnalysisPanel(QWidget):
     
     def _get_current_method_enum(self) -> AnalysisMethod:
         """Get the current method as enum."""
-        module = self._module_combo.currentIndex()
+        module_name = self._module_combo.currentText()
         method = self._method_combo.currentText()
 
-        # Map to enum
+        # Map (module_name, method_name) to enum
         mapping = {
             # CosinorPy - New Refactored Methods
-            (0, "Periodogram Analysis"): AnalysisMethod.COSINORPY_PERIODOGRAM,
-            (0, "Cosinor (Independent Data)"): AnalysisMethod.COSINORPY_INDEPENDENT,
-            (0, "Cosinor (Dependent Data)"): AnalysisMethod.COSINORPY_DEPENDENT,
-            (0, "Compare Conditions (Independent)"): AnalysisMethod.COSINORPY_COMPARE_INDEPENDENT,
-            (0, "Compare Conditions (Dependent)"): AnalysisMethod.COSINORPY_COMPARE_DEPENDENT,
-            (0, "Nonlinear (Independent Data)"): AnalysisMethod.COSINORPY_NONLINEAR_INDEPENDENT,
-            (0, "Nonlinear (Dependent Data)"): AnalysisMethod.COSINORPY_NONLINEAR_DEPENDENT,
-            (0, "Nonlinear Compare (Independent)"): AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT,
-            (0, "Nonlinear Compare (Dependent)"): AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_DEPENDENT,
+            ("CosinorPy", "Periodogram Analysis"): AnalysisMethod.COSINORPY_PERIODOGRAM,
+            ("CosinorPy", "Cosinor (Independent Data)"): AnalysisMethod.COSINORPY_INDEPENDENT,
+            ("CosinorPy", "Cosinor (Dependent Data)"): AnalysisMethod.COSINORPY_DEPENDENT,
+            ("CosinorPy", "Compare Conditions (Independent)"): AnalysisMethod.COSINORPY_COMPARE_INDEPENDENT,
+            ("CosinorPy", "Compare Conditions (Dependent)"): AnalysisMethod.COSINORPY_COMPARE_DEPENDENT,
+            ("CosinorPy", "Nonlinear (Independent Data)"): AnalysisMethod.COSINORPY_NONLINEAR_INDEPENDENT,
+            ("CosinorPy", "Nonlinear (Dependent Data)"): AnalysisMethod.COSINORPY_NONLINEAR_DEPENDENT,
+            ("CosinorPy", "Nonlinear Compare (Independent)"): AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT,
+            ("CosinorPy", "Nonlinear Compare (Dependent)"): AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_DEPENDENT,
             # CircaCompare
-            (1, "Single Fit"): AnalysisMethod.CIRCACOMPARE_SINGLE,
-            (1, "Compare Groups"): AnalysisMethod.CIRCACOMPARE_COMPARE,
+            ("CircaCompare", "Single Fit"): AnalysisMethod.CIRCACOMPARE_SINGLE,
+            ("CircaCompare", "Compare Groups"): AnalysisMethod.CIRCACOMPARE_COMPARE,
             # Rhythm Analysis
-            (2, "JTK Cycle"): AnalysisMethod.RHYTHM_JTK,
-            (2, "AR-JTK"): AnalysisMethod.RHYTHM_AR_JTK,
-            (2, "Cosine-Kendall"): AnalysisMethod.RHYTHM_COSINE_KENDALL,
-            (2, "Cosinor (OLS)"): AnalysisMethod.RHYTHM_COSINOR,
-            (2, "Harmonic Cosinor"): AnalysisMethod.RHYTHM_HARMONIC,
-            (2, "Fourier F24"): AnalysisMethod.RHYTHM_F24,
-            (2, "Lomb-Scargle"): AnalysisMethod.RHYTHM_LOMB,
-            (2, "Spectral Analysis (Periodogram)"): AnalysisMethod.RHYTHM_SPECTRAL,
-            (2, "Wavelet (CWT)"): AnalysisMethod.RHYTHM_CWT,
-            (2, "Linear Mixed Effects"): AnalysisMethod.RHYTHM_LME,
+            ("Rhythm Analysis", "JTK Cycle"): AnalysisMethod.RHYTHM_JTK,
+            ("Rhythm Analysis", "AR-JTK"): AnalysisMethod.RHYTHM_AR_JTK,
+            ("Rhythm Analysis", "Cosine-Kendall"): AnalysisMethod.RHYTHM_COSINE_KENDALL,
+            ("Rhythm Analysis", "Cosinor (OLS)"): AnalysisMethod.RHYTHM_COSINOR,
+            ("Rhythm Analysis", "Harmonic Cosinor"): AnalysisMethod.RHYTHM_HARMONIC,
+            ("Rhythm Analysis", "Fourier F24"): AnalysisMethod.RHYTHM_F24,
+            ("Rhythm Analysis", "Lomb-Scargle"): AnalysisMethod.RHYTHM_LOMB,
+            ("Rhythm Analysis", "Spectral Analysis (Periodogram)"): AnalysisMethod.RHYTHM_SPECTRAL,
+            ("Rhythm Analysis", "Wavelet (CWT)"): AnalysisMethod.RHYTHM_CWT,
+            ("Rhythm Analysis", "Linear Mixed Effects"): AnalysisMethod.RHYTHM_LME,
             # AI Consensus
-            (3, "Consensus Rhythmicity Score"): AnalysisMethod.CONSENSUS_AI,
+            ("AI Consensus", "Consensus Rhythmicity Score"): AnalysisMethod.CONSENSUS_AI,
             # Visualization
-            (4, "Activity Profile"): AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE,
+            ("Visualization", "Activity Profile"): AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE,
         }
 
-        return mapping.get((module, method), AnalysisMethod.COSINORPY_PERIODOGRAM)
+        return mapping.get((module_name, method), AnalysisMethod.COSINORPY_PERIODOGRAM)
     
     def _get_current_parameters(self) -> Dict[str, Any]:
         """Get current parameter values."""
@@ -3083,8 +3086,24 @@ class AnalysisPanel(QWidget):
             # self._data_info_frame.setVisible(False)
 
     def _update_module_combo_for_source(self, source_type: str):
-        """Add or remove Visualization module based on data source type."""
-        # Check if Visualization module exists
+        """Add or remove modules based on data source type."""
+        # --- AI Consensus: hide for DAM data (model trained on gene expression) ---
+        ai_consensus_idx = None
+        for i in range(self._module_combo.count()):
+            if self._module_combo.itemText(i) == "AI Consensus":
+                ai_consensus_idx = i
+                break
+
+        if source_type == 'dam':
+            if ai_consensus_idx is not None:
+                self._module_combo.removeItem(ai_consensus_idx)
+        else:
+            if ai_consensus_idx is None:
+                # Re-insert AI Consensus at index 3 (after Rhythm Analysis)
+                insert_pos = min(3, self._module_combo.count())
+                self._module_combo.insertItem(insert_pos, "AI Consensus")
+
+        # --- Visualization: show only for DAM data ---
         has_visualization = False
         for i in range(self._module_combo.count()):
             if self._module_combo.itemText(i) == "Visualization":
@@ -3092,11 +3111,9 @@ class AnalysisPanel(QWidget):
                 break
 
         if source_type == 'dam':
-            # Add Visualization module for DAM data
             if not has_visualization:
                 self._module_combo.addItem("Visualization")
         else:
-            # Remove Visualization module for non-DAM data
             if has_visualization:
                 for i in range(self._module_combo.count()):
                     if self._module_combo.itemText(i) == "Visualization":
