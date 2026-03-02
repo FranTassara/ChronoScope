@@ -1,4 +1,4 @@
-# CircaScope
+# ChronoScope
 
 <p align="center">
   <strong>A Comprehensive Desktop Application for Circadian Rhythm Analysis</strong>
@@ -16,7 +16,7 @@
 
 ## Overview
 
-CircaScope is a cross-platform desktop application designed for comprehensive circadian rhythm analysis in biological data. It provides an intuitive graphical interface for analyzing gene expression, protein levels, and locomotor activity data using state-of-the-art statistical methods.
+ChronoScope is a cross-platform desktop application designed for comprehensive circadian rhythm analysis in biological data. It provides an intuitive graphical interface for analyzing gene expression, protein levels, and locomotor activity data using state-of-the-art statistical methods.
 
 ### Key Advantages
 
@@ -77,8 +77,8 @@ CircaScope is a cross-platform desktop application designed for comprehensive ci
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/CircaScope.git
-cd CircaScope
+git clone https://github.com/yourusername/ChronoScope.git
+cd ChronoScope
 
 # Create virtual environment (recommended)
 python -m venv venv
@@ -96,8 +96,8 @@ python main.py
 ### Using pip (coming soon)
 
 ```bash
-pip install circascope
-circascope  # Run the application
+pip install chronoscope
+chronoscope  # Run the application
 ```
 
 ## Usage
@@ -201,14 +201,14 @@ Spectral analysis method ideal for:
 
 ## Citation
 
-If you use CircaScope in your research, please cite:
+If you use ChronoScope in your research, please cite:
 
 ```bibtex
-@software{circascope2024,
+@software{chronoscope2024,
   author = {Tassara, Francisco},
-  title = {CircaScope: A Desktop Application for Circadian Rhythm Analysis},
+  title = {ChronoScope: A Desktop Application for Circadian Rhythm Analysis},
   year = {2024},
-  url = {https://github.com/yourusername/CircaScope}
+  url = {https://github.com/yourusername/ChronoScope}
 }
 ```
 
@@ -244,8 +244,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/CircaScope/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/CircaScope/discussions)
+- **Issues**: [GitHub Issues](https://github.com/yourusername/ChronoScope/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/ChronoScope/discussions)
 
 ---
 
