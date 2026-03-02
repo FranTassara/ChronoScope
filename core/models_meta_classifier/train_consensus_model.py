@@ -19,7 +19,6 @@ Output:
 Author: Francisco Tassara
 """
 
-import os
 import sys
 import json
 import time
@@ -31,8 +30,14 @@ import numpy as np
 import pandas as pd
 
 # Ensure project root is in path
-project_root = Path(__file__).parent
+# __file__ is at core/models_meta_classifier/train_consensus_model.py
+# so .parent.parent.parent is the project root
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+
+# Training data scripts live in training_data_meta_classifer/
+training_data_dir = project_root / 'training_data_meta_classifer'
+sys.path.insert(0, str(training_data_dir))
 
 # Suppress warnings during training
 warnings.filterwarnings('ignore')
@@ -47,7 +52,7 @@ def main():
     # Step 1a: Generate synthetic training data
     # ------------------------------------------------------------------
     print("\n[1/6] Generating synthetic training data...")
-    from generate_training_data import generate_training_instances
+    from generate_synthetic_training_data import generate_training_instances
 
     metadata, dataframes = generate_training_instances(seed=42)
     n_synth = len(metadata)
@@ -62,7 +67,7 @@ def main():
     print("\n[1b/6] Loading real biological training data...")
     from generate_real_training_data import generate_from_geo
 
-    biocycle_xlsx = os.path.join(project_root, 'data', 'rhythmicdb_query_bioCycle.xlsx')
+    biocycle_xlsx = str(training_data_dir / 'rhythmicdb_query_bioCycle.xlsx')
     n_real = 0
 
     # Dataset 1: GSE11923 (Hughes 2009, mouse liver, hourly x 48h)
