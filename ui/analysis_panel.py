@@ -178,8 +178,9 @@ class AnalysisWorker(QThread):
                             # For Rosbash, compare conditions within specific cluster
                             result = self._run_rosbash_comparison(var, cond1, cond2, cluster, analysis_type)
 
-                        if result and result.success:
-                            self.results.append(result.to_dict())
+                        if isinstance(result, list):
+                            for r in result:
+                                self.results.append(r.to_dict())
                         elif result:
                             self.results.append(result.to_dict())
 
@@ -224,7 +225,10 @@ class AnalysisWorker(QThread):
                             else:  # rosbash
                                 result = self._run_rosbash_comparison(var, cond1, cond2, cluster, analysis_type)
 
-                            if result:
+                            if isinstance(result, list):
+                                for r in result:
+                                    self.results.append(r.to_dict())
+                            elif result:
                                 self.results.append(result.to_dict())
 
                             current += 1
@@ -374,9 +378,8 @@ class AnalysisWorker(QThread):
                                             self.detected_n_components = result.n_components
                                             self.components_detected.emit(result.n_components, result.p_value or 0.0)
                                             print(f"[DEBUG Worker] Auto-components detected: {result.n_components} components, p-value: {result.p_value}")
-                            elif result:
-                                # Include failed results with error message
-                                self.results.append(result.to_dict())
+                                    else:
+                                        print(f"[ERROR Worker] Analysis failed for {var}/{cond}: {getattr(result, 'message', 'unknown error')}")
 
                             current += 1
 
@@ -2146,6 +2149,11 @@ class AnalysisPanel(QWidget):
         self._hide_param("Fixed Effects:")
         self._hide_param("Random Effect:")
 
+        # Always restore the full period widget (min/to/max/Step/step) so that
+        # _update_cosinor_ols_period_visibility is the only thing that can hide
+        # sub-items, and only when Cosinor OLS is active.
+        self._restore_period_widget()
+
         # =====================================================================
         # COSINORPY - NEW REFACTORED METHODS
         # =====================================================================
@@ -2353,6 +2361,27 @@ class AnalysisPanel(QWidget):
 
         self._rosbash_compare_type_frame.setVisible(is_rosbash and is_comparison_method)
 
+    def _restore_period_widget(self):
+        """Restore all sub-items of the Period: widget to visible.
+
+        _update_cosinor_ols_period_visibility hides sub-items (to / max / Step / step)
+        when in Fixed Period mode.  Those items stay hidden when the user switches to
+        another method.  Call this at the start of _update_parameter_visibility so
+        every method that shows the Period: row gets the full range widget.
+        """
+        for i in range(self._params_layout.rowCount()):
+            label_item = self._params_layout.itemAt(i, QFormLayout.LabelRole)
+            if label_item and label_item.widget() and label_item.widget().text() == "Period:":
+                field_item = self._params_layout.itemAt(i, QFormLayout.FieldRole)
+                if field_item and field_item.widget():
+                    layout = field_item.widget().layout()
+                    if layout:
+                        for j in range(layout.count()):
+                            child = layout.itemAt(j)
+                            if child and child.widget():
+                                child.widget().setVisible(True)
+                break
+
     def _show_param(self, label: str):
         """Show a parameter row."""
         for i in range(self._params_layout.rowCount()):
@@ -2544,10 +2573,11 @@ class AnalysisPanel(QWidget):
         elif module_name == "AI Consensus":  # AI Consensus
             methods = [
                 ("Consensus Rhythmicity Score",
-                 "AI-powered meta-classifier that combines evidence from JTK, Cosinor, "
-                 "Lomb-Scargle, F24, Harmonic Cosinor, and CWT into a single rhythmicity "
+                 "AI-powered meta-classifier that combines evidence from JTK_CYCLE, Cosinor, "
+                 "Lomb-Scargle, Fourier F24, and Harmonic Cosinor into a single rhythmicity "
                  "probability score (0-1). Uses a pre-trained Random Forest model trained "
-                 "on synthetic data with known ground truth.")
+                 "on 3,299 instances (1,600 synthetic + 1,699 real biological) with "
+                 "known ground truth.")
             ]
         elif module_name == "Visualization":  # Visualization (available for DAM data)
             methods = [

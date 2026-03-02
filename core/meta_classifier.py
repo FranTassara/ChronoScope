@@ -55,8 +55,9 @@ class ConsensusClassifier:
     def get_model_dir() -> Path:
         """Get the model directory, handling PyInstaller bundled apps."""
         if getattr(sys, 'frozen', False):
-            # PyInstaller: sys._MEIPASS contains the temp extraction folder
-            base_dir = Path(sys._MEIPASS)
+            # PyInstaller: sys._MEIPASS is the root of the extracted bundle.
+            # Models are bundled under core/models/ matching the source layout.
+            base_dir = Path(sys._MEIPASS) / 'core'
         else:
             base_dir = Path(__file__).parent
         return base_dir / 'models'
@@ -227,12 +228,8 @@ class ConsensusClassifier:
         harm_p = _safe_get('harmonic_p_value', 1.0)
         scores['Harmonic'] = max(0.0, 1.0 - harm_p)
 
-        # CWT stability: lower period_variation = more stable = higher score
-        cwt_var = _safe_get('cwt_period_variation', 5.0)
-        scores['CWT Stability'] = max(0.0, 1.0 - cwt_var / 5.0)
-
         # Method agreement: already 0-1
-        scores['Agreement'] = max(0.0, min(1.0, _safe_get('method_agreement', 0.0)))
+        scores['4-Method Agreement'] = max(0.0, min(1.0, _safe_get('method_agreement', 0.0)))
 
         return scores
 

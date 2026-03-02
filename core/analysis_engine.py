@@ -503,6 +503,9 @@ class AnalysisEngine:
                 )
         
         except Exception as e:
+            import traceback
+            print(f"[ERROR] run_analysis exception ({analysis_type.value}, {variable}, {condition}): {e}")
+            traceback.print_exc()
             return AnalysisResult(
                 variable=variable,
                 condition=condition,
@@ -510,7 +513,7 @@ class AnalysisEngine:
                 success=False,
                 message=str(e)
             )
-    
+
     def run_comparison(
         self,
         data: pd.DataFrame,
@@ -522,7 +525,7 @@ class AnalysisEngine:
         condition_col: str = 'condition',
         parameters: Optional[Dict[str, Any]] = None,
         data_file_path: Optional[str] = None
-    ) -> ComparisonResult:
+    ) -> Union[ComparisonResult, List[ComparisonResult]]:
         """
         Run a comparison analysis between two conditions.
 
@@ -1894,58 +1897,75 @@ class AnalysisEngine:
         variable: str,
         condition: str,
         parameters: Dict[str, Any]
-    ) -> AnalysisResult:
-        """Run CircaCompare single fit."""
+    ) -> Union[AnalysisResult, List[AnalysisResult]]:
+        """Run CircaCompare single fit. Supports single period or a list of periods."""
         period = parameters.get('period', 24.0)
         loss = parameters.get('loss', 'huber')
         f_scale = parameters.get('f_scale', 1.0)
         max_iterations = parameters.get('max_iterations', 500)
 
-        # CircaCompare requires loading data first
-        # Create a simple dataframe for this analysis
+        # Normalise period to a list so single and range cases share the same loop
+        periods = list(period) if isinstance(period, (list, tuple, np.ndarray)) else [float(period)]
+        is_single = len(periods) == 1
+
+        # Build the DataFrame once (same data for every period)
         df = pd.DataFrame({
             'time': times,
             'condition': condition,
             variable: values
         })
-
         self._circacompare.load_dataframe(df)
-        self._circacompare.set_period(period)
         self._circacompare.set_loss(loss)
         self._circacompare.set_f_scale(f_scale)
         self._circacompare.set_max_iterations(max_iterations)
 
-        result = self._circacompare.fit_single(
-            variable=variable, condition=condition
-        )
-        
-        if result is None:
+        results = []
+        for p in periods:
+            p = float(p)
+            self._circacompare.set_period(p)
+
+            result = self._circacompare.fit_single(
+                variable=variable, condition=condition
+            )
+
+            if result is None:
+                if is_single:
+                    return AnalysisResult(
+                        variable=variable, condition=condition,
+                        method="circacompare_single",
+                        success=False, message="Fit failed"
+                    )
+                continue
+
+            acrophase_hours = (result.acrophase * p) / (2 * np.pi)
+            if acrophase_hours < 0:
+                acrophase_hours += p
+
+            results.append(AnalysisResult(
+                variable=variable,
+                condition=condition,
+                method="circacompare_single",
+                mesor=result.mesor,
+                amplitude=result.amplitude,
+                acrophase=result.acrophase,
+                acrophase_hours=acrophase_hours,
+                period=p,
+                mesor_ci=result.mesor_ci,
+                amplitude_ci=result.amplitude_ci,
+                acrophase_ci=result.acrophase_ci,
+                times=times,
+                values=values,
+                success=getattr(result, 'success', True)
+            ))
+
+        if not results:
             return AnalysisResult(
                 variable=variable, condition=condition,
                 method="circacompare_single",
-                success=False, message="Fit failed"
+                success=False, message="All period fits failed"
             )
-        
-        acrophase_hours = (result.acrophase * period) / (2 * np.pi)
-        if acrophase_hours < 0:
-            acrophase_hours += period
 
-        return AnalysisResult(
-            variable=variable,
-            condition=condition,
-            method="circacompare_single",
-            mesor=result.mesor,
-            amplitude=result.amplitude,
-            acrophase=result.acrophase,
-            acrophase_hours=acrophase_hours,
-            period=result.period,
-            mesor_ci=result.mesor_ci,
-            amplitude_ci=result.amplitude_ci,
-            acrophase_ci=result.acrophase_ci,
-            times=times,
-            values=values,
-            success=True
-        )
+        return results[0] if is_single else results
     
     def _run_circacompare_comparison(
         self,
@@ -1956,8 +1976,8 @@ class AnalysisEngine:
         time_col: str,
         condition_col: str,
         parameters: Dict[str, Any]
-    ) -> ComparisonResult:
-        """Run CircaCompare group comparison."""
+    ) -> Union['ComparisonResult', List['ComparisonResult']]:
+        """Run CircaCompare group comparison. Returns a list when a period range is given."""
         print(f"[DEBUG] CircaCompare comparison called:")
         print(f"  Variable: {variable}")
         print(f"  Condition1: {condition1}, Condition2: {condition2}")
@@ -1968,6 +1988,10 @@ class AnalysisEngine:
         f_scale = parameters.get('f_scale', 1.0)
         max_iterations = parameters.get('max_iterations', 500)
 
+        # Normalize period to a list so we can iterate
+        periods = list(period) if isinstance(period, (list, tuple, np.ndarray)) else [float(period)]
+        is_single = len(periods) == 1
+
         # Prepare data - only include the two conditions being compared
         mask = data[condition_col].isin([condition1, condition2])
         filtered = data[mask].copy()
@@ -1975,7 +1999,7 @@ class AnalysisEngine:
         print(f"  Filtered data shape: {filtered.shape}")
         print(f"  Unique conditions in filtered: {filtered[condition_col].unique()}")
 
-        # Extract raw data for each group (for plotting)
+        # Extract raw data for each group (for plotting) - same for all periods
         data_g0 = filtered[filtered[condition_col] == condition1]
         data_g1 = filtered[filtered[condition_col] == condition2]
         times_g0 = data_g0[time_col].values.astype(float) if len(data_g0) > 0 else None
@@ -1983,81 +2007,87 @@ class AnalysisEngine:
         times_g1 = data_g1[time_col].values.astype(float) if len(data_g1) > 0 else None
         values_g1 = data_g1[variable].values.astype(float) if len(data_g1) > 0 else None
 
-        # Load data into CircaCompare analyzer
+        # Load data and common settings once
         self._circacompare.load_dataframe(filtered)
-        self._circacompare.set_period(period)
         self._circacompare.set_loss(loss)
         self._circacompare.set_f_scale(f_scale)
         self._circacompare.set_max_iterations(max_iterations)
 
-        print(f"  Calling compare() method...")
-        result = self._circacompare.compare(
-            variable=variable,
-            condition1=condition1,
-            condition2=condition2
-        )
+        # Calculate p-values based on confidence intervals
+        def calc_p_value(diff, ci_key, confidence_intervals):
+            if ci_key in confidence_intervals:
+                ci_lower, ci_upper = confidence_intervals[ci_key]
+                return 0.01 if (ci_lower > 0 or ci_upper < 0) else 0.5
+            return None
 
-        print(f"  Result: {result}")
+        comparison_results = []
+        for p in periods:
+            p = float(p)
+            self._circacompare.set_period(p)
 
-        if result is None:
+            print(f"  Calling compare() for period={p}...")
+            result = self._circacompare.compare(
+                variable=variable,
+                condition1=condition1,
+                condition2=condition2
+            )
+
+            print(f"  Result: {result}")
+
+            if result is None:
+                if is_single:
+                    return ComparisonResult(
+                        variable=variable, condition1=condition1, condition2=condition2,
+                        method="circacompare_compare",
+                        success=False, message="Comparison failed"
+                    )
+                continue  # skip failed period in range
+
+            p_mesor = calc_p_value(result.d_mesor, 'd_mesor', result.confidence_intervals)
+            p_amplitude = calc_p_value(result.d_amplitude, 'd_amplitude', result.confidence_intervals)
+            p_acrophase = calc_p_value(result.d_acrophase, 'd_acrophase', result.confidence_intervals)
+
+            ci = result.confidence_intervals
+            mesor_diff_ci = ci.get('d_mesor') if ci else None
+            amplitude_diff_ci = ci.get('d_amplitude') if ci else None
+            acrophase_diff_ci = ci.get('d_acrophase') if ci else None
+
+            comparison_results.append(ComparisonResult(
+                variable=variable,
+                condition1=condition1,
+                condition2=condition2,
+                method="circacompare_compare",
+                mesor_g0=result.mesor_g0,
+                mesor_g1=result.mesor_g1,
+                amplitude_g0=result.amplitude_g0,
+                amplitude_g1=result.amplitude_g1,
+                acrophase_g0=result.acrophase_g0,
+                acrophase_g1=result.acrophase_g1,
+                p_mesor=p_mesor,
+                p_amplitude=p_amplitude,
+                p_acrophase=p_acrophase,
+                mesor_diff=result.d_mesor,
+                amplitude_diff=result.d_amplitude,
+                acrophase_diff=result.d_acrophase,
+                mesor_diff_ci=mesor_diff_ci,
+                amplitude_diff_ci=amplitude_diff_ci,
+                acrophase_diff_ci=acrophase_diff_ci,
+                period=p,
+                times_g0=times_g0,
+                values_g0=values_g0,
+                times_g1=times_g1,
+                values_g1=values_g1,
+                success=True
+            ))
+
+        if not comparison_results:
             return ComparisonResult(
                 variable=variable, condition1=condition1, condition2=condition2,
                 method="circacompare_compare",
-                success=False, message="Comparison failed"
+                success=False, message="All period fits failed"
             )
 
-        # Calculate p-values based on confidence intervals
-        # If CI for difference doesn't include 0, it's significant
-        # Using a simple approximation: if |diff / SE| > 1.96, p < 0.05
-        def calc_p_value(diff, ci_key, confidence_intervals):
-            """Calculate approximate p-value from CI."""
-            if ci_key in confidence_intervals:
-                ci_lower, ci_upper = confidence_intervals[ci_key]
-                # If CI doesn't include 0, it's significant
-                if ci_lower > 0 or ci_upper < 0:
-                    # Approximate p-value (this is rough, real p-value would need t-statistic)
-                    return 0.01  # Significant
-                else:
-                    return 0.5  # Not significant
-            return None
-
-        p_mesor = calc_p_value(result.d_mesor, 'd_mesor', result.confidence_intervals)
-        p_amplitude = calc_p_value(result.d_amplitude, 'd_amplitude', result.confidence_intervals)
-        p_acrophase = calc_p_value(result.d_acrophase, 'd_acrophase', result.confidence_intervals)
-
-        # Extract confidence intervals for differences
-        ci = result.confidence_intervals
-        mesor_diff_ci = ci.get('d_mesor') if ci else None
-        amplitude_diff_ci = ci.get('d_amplitude') if ci else None
-        acrophase_diff_ci = ci.get('d_acrophase') if ci else None
-
-        return ComparisonResult(
-            variable=variable,
-            condition1=condition1,
-            condition2=condition2,
-            method="circacompare_compare",
-            mesor_g0=result.mesor_g0,
-            mesor_g1=result.mesor_g1,
-            amplitude_g0=result.amplitude_g0,
-            amplitude_g1=result.amplitude_g1,
-            acrophase_g0=result.acrophase_g0,
-            acrophase_g1=result.acrophase_g1,
-            p_mesor=p_mesor,
-            p_amplitude=p_amplitude,
-            p_acrophase=p_acrophase,
-            mesor_diff=result.d_mesor,
-            amplitude_diff=result.d_amplitude,
-            acrophase_diff=result.d_acrophase,
-            mesor_diff_ci=mesor_diff_ci,
-            amplitude_diff_ci=amplitude_diff_ci,
-            acrophase_diff_ci=acrophase_diff_ci,
-            period=period,
-            times_g0=times_g0,
-            values_g0=values_g0,
-            times_g1=times_g1,
-            values_g1=values_g1,
-            success=True
-        )
+        return comparison_results[0] if is_single else comparison_results
 
     # =========================================================================
     # Rhythm Analysis Methods
@@ -4861,7 +4891,7 @@ class AnalysisEngine:
                         fit_res, amp, acr, _ = cosinor1_mod.fit_cosinor(
                             df_g0.x.values, df_g0.y.values, period=period_val, plot_on=False
                         )
-                        comp_result.mesor_g0 = float(fit_res.params[0])
+                        comp_result.mesor_g0 = float(fit_res.params.iloc[0])
                         if comp_result.amplitude_g0 is None:
                             comp_result.amplitude_g0 = float(amp)
                         if comp_result.acrophase_g0 is None:
@@ -4877,7 +4907,7 @@ class AnalysisEngine:
                         fit_res, amp, acr, _ = cosinor1_mod.fit_cosinor(
                             df_g1.x.values, df_g1.y.values, period=period_val, plot_on=False
                         )
-                        comp_result.mesor_g1 = float(fit_res.params[0])
+                        comp_result.mesor_g1 = float(fit_res.params.iloc[0])
                         if comp_result.amplitude_g1 is None:
                             comp_result.amplitude_g1 = float(amp)
                         if comp_result.acrophase_g1 is None:

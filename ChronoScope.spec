@@ -1,0 +1,187 @@
+# -*- mode: python ; coding: utf-8 -*-
+"""
+ChronoScope - PyInstaller Build Specification
+=============================================
+
+Genera la aplicación en modo --onedir (más estable con PySide6).
+
+Uso:
+    pyinstaller ChronoScope.spec
+
+Salida:
+    dist/ChronoScope/ChronoScope.exe  (+ archivos de soporte en la misma carpeta)
+
+Para distribuir: comprimir toda la carpeta dist/ChronoScope/ en un .zip.
+
+Ícono:
+    Agregar un archivo icon.ico en la raíz del proyecto y
+    descomentar la línea icon= en EXE() más abajo.
+"""
+
+# ---------------------------------------------------------------------------
+# Imports de utilidades de PyInstaller
+# ---------------------------------------------------------------------------
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+
+# ---------------------------------------------------------------------------
+# Hidden imports: módulos que PyInstaller no detecta por carga dinámica
+# ---------------------------------------------------------------------------
+hidden_imports = [
+    # scikit-learn (carga dinámica interna con joblib)
+    'sklearn.ensemble',
+    'sklearn.ensemble._forest',
+    'sklearn.impute',
+    'sklearn.impute._base',
+    'sklearn.preprocessing',
+    'sklearn.pipeline',
+    'sklearn.model_selection',
+    'sklearn.metrics',
+    'sklearn.utils._cython_blas',
+    'sklearn.neighbors._partition_nodes',
+    'sklearn.tree._utils',
+
+    # joblib (usado por sklearn para serializar el modelo .pkl)
+    'joblib',
+    'joblib.externals.loky',
+    'joblib.externals.cloudpickle',
+
+    # scipy (submódulos de uso indirecto)
+    'scipy.stats',
+    'scipy.signal',
+    'scipy.interpolate',
+    'scipy.optimize',
+    'scipy.linalg',
+    'scipy.special',
+
+    # statsmodels
+    'statsmodels.tsa',
+    'statsmodels.stats',
+    'statsmodels.formula',
+    'statsmodels.formula.api',
+
+    # matplotlib - backend Qt
+    'matplotlib.backends.backend_qtagg',
+    'matplotlib.backends.backend_pdf',
+
+    # PyWavelets
+    'pywt',
+    'pywt._extensions._cwt',
+
+    # h5py (dataset Rosbash scRNA-seq)
+    'h5py',
+    'h5py._hl',
+    'h5py.defs',
+    'h5py.utils',
+    'h5py.h5ac',
+    'h5py.h5z',
+
+    # Exportación
+    'openpyxl',
+    'xlsxwriter',
+
+    # CosinorPy — detectado automáticamente por PyInstaller vía análisis de imports
+
+    # Módulos del proyecto (por si el análisis dinámico los pierde)
+    'core',
+    'core.analysis_engine',
+    'core.circacompare_analysis',
+    'core.cosinor_analysis',
+    'core.feature_extraction',
+    'core.meta_classifier',
+    'core.rhythm_analysis',
+    'ui',
+    'ui.main_window',
+    'ui.data_panel',
+    'ui.analysis_panel',
+    'ui.results_panel',
+    'utils',
+    'utils.data_loader',
+    'utils.dam_loader',
+    'utils.export',
+    'utils.rosbash_loader',
+]
+
+# ---------------------------------------------------------------------------
+# Archivos de datos a incluir en el bundle
+# Formato: (origen, destino_dentro_del_exe)
+# ---------------------------------------------------------------------------
+datas = [
+    # Modelo Random Forest entrenado + metadatos de features
+    ('core/models', 'core/models'),
+
+    # Ejemplos de datos (cargados desde el GUI)
+    ('examples', 'examples'),
+
+    # Dataset scRNA-seq de Rosbash (archivo HDF5 ~pesado)
+    ('Rosbash_data/rosbash_processed.h5', 'Rosbash_data'),
+]
+
+# ---------------------------------------------------------------------------
+# Análisis de dependencias
+# ---------------------------------------------------------------------------
+a = Analysis(
+    ['main.py'],
+    pathex=['.'],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hidden_imports,
+    hookspath=[],
+    hooksconfig={
+        'matplotlib': {
+            'backends': 'qtagg',   # solo el backend Qt, reduce tamaño
+        },
+    },
+    runtime_hooks=[],
+    excludes=[
+        # Scripts de entrenamiento, no necesarios en runtime
+        'generate_training_data',
+        'generate_real_training_data',
+        'generate_synthetic_data',
+        'train_consensus_model',
+        # Herramientas de desarrollo innecesarias en el exe
+        'IPython',
+        'jupyter',
+        'notebook',
+        'pytest',
+        'tkinter',
+    ],
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure)
+
+# ---------------------------------------------------------------------------
+# Ejecutable principal
+# ---------------------------------------------------------------------------
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,      # onedir: los binarios van en COLLECT
+    name='ChronoScope',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,                  # UPX puede causar falsos positivos en antivirus
+    console=False,              # sin ventana de consola (app GUI)
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    # icon='icon.ico',          # descomentar cuando agregues un ícono
+)
+
+# ---------------------------------------------------------------------------
+# Colección final (modo onedir)
+# ---------------------------------------------------------------------------
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='ChronoScope',
+)

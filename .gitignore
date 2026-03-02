@@ -46,6 +46,12 @@ nul
 test_*.py
 results/
 output/
+Bibliografia/
+figures/
+CircaScope_Comparative_Table.docx
+manuscript_JBR.txt
+manuscrito - ChronoScope.docx
+
 
 # Keep examples
 !examples/*.csv

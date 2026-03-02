@@ -1496,15 +1496,15 @@ class ResultsPanel(QWidget):
         mesor = result.get('mesor')
         amplitude = result.get('amplitude')
 
-        # Get acrophase - prefer radians, convert from hours if needed
-        acrophase_rad = result.get('acrophase', result.get('acrophase_rad'))
-        if acrophase_rad is None:
-            acrophase_hours = result.get('acrophase_hours')
-            if acrophase_hours is not None:
-                # Convert hours to radians
-                acrophase_rad = 2 * np.pi * acrophase_hours / period
-            else:
-                acrophase_rad = 0
+        # Get acrophase for plotting - prefer hours-based conversion for consistent sign convention.
+        # CosinorPy stores acrophase as a negative phase angle (acr) in the model cos(2πt/T + acr),
+        # but our plot formula uses cos(2πt/T - acrophase_rad), which requires acrophase_rad > 0
+        # (i.e., 2π * peak_hours / T). Using acrophase_hours avoids the sign mismatch.
+        acrophase_hours = result.get('acrophase_hours')
+        if acrophase_hours is not None:
+            acrophase_rad = 2 * np.pi * acrophase_hours / period
+        else:
+            acrophase_rad = result.get('acrophase', result.get('acrophase_rad')) or 0
 
         # Calculate MESOR from data if not provided (for JTK, AR-JTK, Cosine-Kendall, etc.)
         if mesor is None:
@@ -1944,7 +1944,27 @@ class ResultsPanel(QWidget):
         sorted_items = sorted(feature_importances.items(), key=lambda x: x[1], reverse=True)
         sorted_items = sorted_items[:15]
 
-        names = [item[0].replace('_', ' ').title() for item in sorted_items]
+        _FEATURE_LABELS = {
+            'f24_score':           'Fourier F24 Score',
+            'cosinor_p_value':     'Cosinor p-value',
+            'cosinor_r_squared':   'Cosinor R²',
+            'jtk_p_value':         'JTK p-value',
+            'cosinor_amplitude':   'Cosinor Amplitude',
+            'ls_power':            'Lomb-Scargle Power',
+            'amplitude_relative':  'Relative Amplitude',
+            'period_dev_24h':      'Period Deviation from 24h',
+            'method_agreement':    'Method Agreement',
+            'harmonic_p_value':    'Harmonic p-value',
+            'ls_p_value':          'Lomb-Scargle FAP',
+            'ls_dominant_period':  'Lomb-Scargle Period',
+            'log_min_p_value':     'log\u2081\u2080(min p-value)',
+            'harmonic_r_squared':  'Harmonic R²',
+            'period_concordance':  'Period Concordance',
+            'cosinor_period':      'Cosinor Period',
+            'jtk_tau':             'JTK \u03c4',
+            'jtk_period':          'JTK Period',
+        }
+        names = [_FEATURE_LABELS.get(item[0], item[0].replace('_', ' ').title()) for item in sorted_items]
         values = [item[1] for item in sorted_items]
 
         y_pos = range(len(names))
@@ -2002,6 +2022,16 @@ class ResultsPanel(QWidget):
         mesor_g1 = safe_value(mesor_g1, 0)
         amplitude_g1 = safe_value(amplitude_g1, 0)
         acrophase_g1 = safe_value(acrophase_g1, 0)
+
+        # CosinorPy stores acrophase as a negative phase angle (acr) in the model
+        # cos(2πt/T + acr), but the plot formula uses cos(2πt/T - acrophase_rad),
+        # which requires the positive peak-time convention.
+        # Convert: acrophase_positive = (-acr * T / 2π) % T * (2π / T)
+        # CircaCompare already uses the positive convention — no conversion needed.
+        method = result.get('method', '')
+        if method.startswith('cosinorpy_'):
+            acrophase_g0 = (-acrophase_g0 * period / (2 * np.pi)) % period * (2 * np.pi / period)
+            acrophase_g1 = (-acrophase_g1 * period / (2 * np.pi)) % period * (2 * np.pi / period)
 
         # Check if we have valid data to plot
         if amplitude_g0 == 0 and amplitude_g1 == 0:

@@ -22,12 +22,6 @@ The module expects CSV files with the following structure:
     0,summer,1.5,3.2
     ...
 
-If replicates exist at the same timepoint:
-    time,condition,replicate,variable1,variable2,...
-    0,winter,1,1.2,3.4
-    0,winter,2,1.3,3.5
-    ...
-
 Dependencies:
 -------------
     pip install numpy scipy pandas
@@ -40,7 +34,8 @@ converts time values to radians based on the specified period:
 
 For a 24-hour period, time=12 hours would be converted to π radians.
 
-Author: Francisco Tassara Generated for GUI integration
+Author: Francisco Tassara
+Generated for GUI integration
 Version: 1.0.0
 """
 

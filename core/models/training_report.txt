@@ -1,612 +1,234 @@
 ================================================================================
-CONSENSUS RHYTHMICITY SCORE (AI) - MODEL TRAINING REPORT
+CIRCASCOPE - CONSENSUS RHYTHMICITY SCORE (CRS-AI)
+MODEL TRAINING REPORT
 ================================================================================
 
-Author: Francisco Tassara
-Date: February 2026
-Software: CircaScope
-Model version: 1.2
-
-================================================================================
-1. OVERVIEW
-================================================================================
-
-The Consensus Rhythmicity Score is a machine learning-based meta-classifier that
-combines evidence from six established circadian rhythm detection methods into a
-single unified probability score (0-1). A Random Forest classifier was trained
-on synthetic time series data with known ground truth labels to learn the optimal
-weighting of each method's output for detecting circadian rhythmicity.
-
-The classifier operates by:
-  1. Running six sub-methods on the input time series
-  2. Extracting 20 numerical features from their results
-  3. Feeding the feature vector to the pre-trained Random Forest
-  4. Outputting a probability of circadian rhythmicity (0 to 1)
-
-Classification thresholds:
-  - Rhythmic:    probability >= 0.70
-  - Borderline:  0.30 <= probability < 0.70
-  - Arrhythmic:  probability < 0.30
-
-================================================================================
-2. SUB-METHODS USED FOR FEATURE EXTRACTION
-================================================================================
-
-Six circadian analysis methods are run internally. Each method is wrapped in
-try/except error handling; if a method fails (e.g., due to insufficient data),
-its corresponding features are set to NaN and handled by the pipeline's imputer.
-
-2.1 JTK_CYCLE
-    - Non-parametric algorithm for detecting rhythmic components
-    - Period range tested: 20-28 hours (integer periods)
-    - Asymmetry parameter: 0.5 (symmetric waveform assumption)
-    - Output: adjusted p-value, Kendall's tau, best-fit period
-
-2.2 Cosinor OLS (Ordinary Least Squares)
-    - Single-component cosinor regression: y = M + A*cos(2*pi*t/T - phi)
-    - Period range: 18-32 hours (circadian default range)
-    - Grid search across candidate periods, OLS fit at each
-    - Output: adjusted p-value, amplitude, period, mesor, acrophase
-    - R-squared computed from fitted vs. observed values
-
-2.3 Lomb-Scargle Periodogram
-    - Spectral method suitable for unevenly-sampled data
-    - Period range: 18-32 hours
-    - Number of candidate periods: 1000
-    - Output: false alarm probability, peak power, dominant period
-
-2.4 Fourier F24 Score
-    - Ratio of spectral power at the 24-hour frequency to total spectral power
-    - Permutation test with n_permutations = 100
-    - Uses individual replicate data when available (not replicate-averaged)
-    - Target period: 24.0 hours
-    - Output: F24 score (higher = more circadian power concentration)
-
-2.5 Harmonic Cosinor
-    - Multi-harmonic extension of cosinor: fundamental + 2 harmonics
-    - Period range: 18-32 hours (circadian default)
-    - Number of harmonics: 2
-    - Output: adjusted p-value, number of harmonic components, R-squared
-
-2.6 Continuous Wavelet Transform (CWT)
-    - Wavelet: Complex Morlet (cmor1.5-1.0)
-    - Period range for analysis: 20-28 hours
-    - Sampling interval: estimated from median time-point differences
-    - Output: period variation (std of instantaneous period over time),
-              amplitude modulation index
-
-================================================================================
-3. FEATURE VECTOR (20 FEATURES)
-================================================================================
-
-The following 20 features are extracted from the sub-method results and form
-the input vector for the Random Forest classifier. The order is fixed and
-must match between training and inference.
-
- #  | Feature Name            | Source         | Description
-----|-------------------------|----------------|------------------------------------
-  1 | jtk_p_value             | JTK_CYCLE      | Adjusted p-value from JTK test
-  2 | jtk_tau                 | JTK_CYCLE      | Kendall's tau correlation
-  3 | jtk_period              | JTK_CYCLE      | Best-fit period (hours)
-  4 | cosinor_p_value         | Cosinor OLS    | Adjusted p-value from F-test
-  5 | cosinor_r_squared       | Cosinor OLS    | Goodness of fit (R^2)
-  6 | cosinor_amplitude       | Cosinor OLS    | Fitted amplitude
-  7 | cosinor_period          | Cosinor OLS    | Best-fit period (hours)
-  8 | ls_p_value              | Lomb-Scargle   | False alarm probability
-  9 | ls_power                | Lomb-Scargle   | Peak spectral power
- 10 | ls_dominant_period      | Lomb-Scargle   | Period of peak power (hours)
- 11 | f24_score               | Fourier F24    | Spectral power ratio at 24h
- 12 | harmonic_p_value        | Harmonic Cos.  | Adjusted p-value (F-test)
- 13 | harmonic_n_components   | Harmonic Cos.  | Number of harmonic components
- 14 | harmonic_r_squared      | Harmonic Cos.  | R-squared of multi-harmonic fit
- 15 | cwt_period_variation    | CWT            | Std of instantaneous period
- 16 | cwt_amplitude_mods      | CWT            | Amplitude modulation index
- 17 | method_agreement        | Derived        | Fraction of methods with p < 0.05
- 18 | period_concordance      | Derived        | Std of detected periods (hours)
- 19 | amplitude_relative      | Derived        | Cosinor amplitude / |mesor|
- 20 | n_timepoints            | Metadata       | Number of time points in series
-
-Derived features:
-  - method_agreement: Computed as (# methods with p < 0.05) / (# methods that
-    produced a valid p-value). Methods included: JTK, Cosinor OLS, Lomb-Scargle,
-    Harmonic Cosinor.
-  - period_concordance: Standard deviation of all detected periods across methods.
-    Lower values indicate greater agreement among methods on the dominant period.
-  - amplitude_relative: Cosinor amplitude divided by the absolute value of the
-    mesor. Provides a signal-to-baseline ratio independent of absolute units.
-
-================================================================================
-4. TRAINING DATA
-================================================================================
-
-4.1 DATA GENERATION
-
-Training data was generated synthetically using known mathematical functions
-with controlled parameters. This ensures ground truth labels are exact (no
-human annotation bias). All data was generated in-memory and used directly
-for training without saving to disk.
-
-Random seed: 42 (for reproducibility)
-Total instances generated: 1600
-  - Rhythmic (label = 1): 800 instances (50.0%)
-  - Non-rhythmic (label = 0): 800 instances (50.0%)
-
-v1.2 key improvements over v1.1:
-  - Balanced classes: 800 rhythmic vs 800 non-rhythmic (was 800 vs 152)
-  - 32 non-rhythmic signal types (was 9)
-  - 15% of all instances contaminated with 1-2 spike outliers (~240 instances)
-  - Sentinel imputation (constant=-999) replaces median imputation
-
-4.2 PARAMETER SWEEPS
-
-Each signal type was instantiated across multiple combinations of:
-
-  - Timepoints:   6, 12, 24, or 48 evenly-spaced samples
-  - Sampling:     2-hour or 4-hour intervals
-  - Replicates:   1 or 3 biological replicates per time point
-  - Noise levels: variable per signal type (see below)
-  - Periods:      5 circadian periods (rhythmic only): 23.0, 23.5, 24.0, 24.5, 25.0 h
-  - Phase:        Random uniform [0, 2*pi] per instance
-
-Timepoint configurations:
-  - 6 timepoints x 4h sampling  = 20h total duration (~1 day, Rosbash-like)
-  - 12 timepoints x 4h sampling = 44h total duration (~2 days)
-  - 24 timepoints x 2h sampling = 46h total duration (~2 days)
-  - 48 timepoints x 2h sampling = 94h total duration (~4 days)
-
-The 6-timepoint configuration was specifically included to support scRNAseq
-datasets (e.g., Rosbash et al.) where sampling is typically limited to 6
-Zeitgeber time points (ZT2, ZT6, ZT10, ZT14, ZT18, ZT22) spanning ~20 hours.
-
-4.3 RHYTHMIC SIGNAL TYPES (label = 1)
-
-10 signal types, 800 instances total:
-
-  Signal Type            | Function                    | Amplitude | Mesor | Noise Stds  | Notes
-  -----------------------|-----------------------------|-----------|-------|-------------|---------------------------
-  circadian_clean        | y = M + A*cos(2pi*t/T - p)  | 2.0       | 10.0  | 0.2, 0.5    | SNR ~10, ~4
-  circadian_medium       | y = M + A*cos(2pi*t/T - p)  | 2.0       | 10.0  | 0.67, 1.0   | SNR ~3, ~2
-  circadian_low_snr      | y = M + A*cos(2pi*t/T - p)  | 1.5       | 10.0  | 1.5, 2.0    | SNR ~1, ~0.75
-  damped_oscillation     | exp(-0.015*t) * cos(...)     | 2.5       | 10.0  | 0.4, 0.8    | Exponential decay envelope
-  square_wave            | square(2pi*t/T - p)          | 1.5       | 10.0  | 0.5, 1.0    | Non-sinusoidal
-  sawtooth_wave          | sawtooth(2pi*t/T - p)        | 1.5       | 10.0  | 0.5, 1.0    | Non-sinusoidal
-  amplitude_modulated    | (0.5+0.5*cos(t/120)) * cos   | 2.5       | 12.0  | 0.4, 0.8    | Slow modulation (120h)
-  multi_harmonic_2       | Sum of 2 harmonics           | 2.0       | 15.0  | 0.4, 0.8    | Fundamental + 2nd harmonic
-  multi_harmonic_3       | Sum of 3 harmonics           | 2.5       | 18.0  | 0.5, 1.0    | Fundamental + 2nd + 3rd
-  borderline_rhythm      | y = M + A*cos(2pi*t/T - p)  | 0.5       | 10.0  | 0.4, 0.6    | Very low amplitude
-
-  Each rhythmic type: 2 noise levels x 5 periods x 4 timepoint configs x 2 replicate counts = 80 instances per type
-  Total: 10 types x 80 = 800 rhythmic instances
-
-4.4 NON-RHYTHMIC SIGNAL TYPES (label = 0)
-
-32 signal types, 800 instances total, organized in three categories:
-
-  A) Aperiodic noise/trends (17 types, 440 instances):
-
-  Signal Type        | Function                   | Parameters               | Noise Stds           | Instances
-  -------------------|----------------------------|--------------------------|----------------------|---------
-  white_noise        | N(0, sigma)                | mesor=10                 | 0.2, 0.5, 1.0, 2.0, 5.0 | 40
-  pink_noise         | 1/f spectral noise         | mesor=10                 | 0.3, 0.5, 1.0, 2.0, 5.0 | 40
-  brown_noise        | Brownian motion            | mesor=10                 | 0.5, 1.0, 2.0       | 24
-  bimodal_noise      | Mixture of 2 Gaussians     | mesor=10, sep=+/-1.5     | 0.5, 1.0, 2.0       | 24
-  autocorr_rho02     | AR(1), rho=0.2             | mesor=10                 | 0.5, 1.0, 2.0       | 24
-  autocorr_rho03     | AR(1), rho=0.3             | mesor=10                 | 0.5, 1.0, 2.0       | 24
-  autocorr_rho04     | AR(1), rho=0.4             | mesor=10                 | 0.5, 1.0, 2.0       | 24
-  autocorr_rho06     | AR(1), rho=0.6             | mesor=10                 | 0.5, 1.0, 2.0       | 24
-  autocorr_rho07     | AR(1), rho=0.7             | mesor=10                 | 0.5, 1.0, 2.0       | 24
-  autocorr_rho08     | AR(1), rho=0.8             | mesor=10                 | 0.5, 1.0, 2.0       | 24
-  autocorr_rho095    | AR(1), rho=0.95            | mesor=10                 | 0.5, 1.0, 2.0       | 24
-  trend_linear_pos   | slope*t + noise            | mesor=10, slope=+0.05    | 0.3, 0.5, 1.0       | 24
-  trend_linear_neg   | slope*t + noise            | mesor=10, slope=-0.05    | 0.3, 0.5, 1.0       | 24
-  trend_quadratic    | a*(t-0.5)^2 + noise        | mesor=10, parabolic      | 0.3, 0.5, 1.0       | 24
-  step_function      | step at midpoint           | mesor=10, step=+/-2      | 0.3, 0.5, 1.0       | 24
-  piecewise_constant | 3 constant levels          | mesor=10, levels=U(-2,2) | 0.3, 0.5, 1.0       | 24
-  exponential_decay  | M + 5*exp(-0.05*t)         | mesor=10, monotonic      | 0.3, 0.5, 1.0       | 24
-
-  B) Non-circadian rhythms (13 periods, 312 instances):
-  Periodic signals with periods OUTSIDE the circadian range (22-26h).
-  Labeled as non-rhythmic because the model detects CIRCADIAN rhythmicity.
-
-  Period (h) | Category        | Amplitude | Noise Stds     | Instances
-  -----------|-----------------|-----------|----------------|----------
-  4.0        | ultradian       | 1.5       | 0.3, 0.6, 1.0  | 24
-  5.0        | ultradian       | 1.5       | 0.3, 0.6, 1.0  | 24
-  6.0        | ultradian       | 1.5       | 0.3, 0.6, 1.0  | 24
-  8.0        | ultradian       | 1.5       | 0.3, 0.6, 1.0  | 24
-  10.0       | ultradian       | 1.5       | 0.3, 0.6, 1.0  | 24
-  12.0       | ultradian       | 1.5       | 0.3, 0.6, 1.0  | 24
-  14.0       | sub-circadian   | 2.0       | 0.3, 0.6, 1.0  | 24
-  16.0       | sub-circadian   | 2.0       | 0.3, 0.6, 1.0  | 24
-  18.0       | sub-circadian   | 2.0       | 0.3, 0.6, 1.0  | 24
-  20.0       | sub-circadian   | 2.0       | 0.3, 0.6, 1.0  | 24
-  30.0       | infradian       | 2.0       | 0.3, 0.6, 1.0  | 24
-  36.0       | infradian       | 2.0       | 0.3, 0.6, 1.0  | 24
-  48.0       | infradian       | 2.0       | 0.3, 0.6, 1.0  | 24
-
-  C) Fast-damped oscillations (2 configs, 48 instances):
-  Oscillations that start with circadian-like period but decay rapidly,
-  dying within 1-2 cycles. Not sustained rhythmicity.
-
-  Config                | Decay Rate | Period | Noise Stds     | Instances
-  ----------------------|------------|--------|----------------|----------
-  fast_damped_moderate  | 0.15       | 24.0h  | 0.3, 0.5, 1.0  | 24
-  fast_damped_extreme   | 0.30       | 24.0h  | 0.3, 0.5, 1.0  | 24
-
-  Non-rhythmic totals: 440 (aperiodic) + 312 (non-circadian) + 48 (fast-damped) = 800
-
-4.5 OUTLIER CONTAMINATION (NEW IN v1.2)
-
-15% of all instances (~240 instances) are contaminated with spike outliers to
-simulate experimental artifacts (sensor spikes, pipette failures, etc.).
-
-  - Contamination applied to BOTH rhythmic and non-rhythmic instances
-  - Each contaminated instance receives 1-2 random spikes per replicate
-  - Spike magnitude: 3-5 standard deviations of the signal
-  - Spike direction: randomly positive or negative
-  - Contamination flag tracked in metadata ('has_outliers')
-
-Rationale: Without outlier training, the model learns that Cosinor R-squared
-is always reliable. In practice, Cosinor OLS (least squares) is highly
-sensitive to outliers, while JTK (rank-based Kendall's tau) is robust to
-them. By training with outlier-contaminated data, the Random Forest learns
-the relative reliability of each sub-method under noisy conditions:
-
-  - When Cosinor R2 is low BUT JTK tau is high -> probably has outliers,
-    trust JTK over Cosinor
-  - When both methods agree -> strong confidence regardless of outliers
-
-4.6 DATA FORMAT
-
-Each instance is stored as a pandas DataFrame with columns:
-  - time: float, time in hours from start
-  - condition: str, always 'control' for training data
-  - replicate: str, 'rep1', 'rep2', or 'rep3'
-  - var_<instance_id>: float, measurement values
-
-For feature extraction, replicate values are averaged at each time point
-to produce a single time series per instance.
-
-================================================================================
-5. MODEL ARCHITECTURE
-================================================================================
-
-5.1 PIPELINE
-
-The model is a scikit-learn Pipeline with three sequential stages:
-
-  Stage 1: SimpleImputer
-    - Strategy: constant (fill_value = -999)
-    - Purpose: Replace NaN values (from failed sub-methods) with a sentinel
-      value clearly outside the natural range of all 20 features.
-    - The Random Forest learns clean decision splits: if a feature equals
-      -999, the method that produced it was unavailable (e.g., CWT on short
-      series), and the model should rely on other features instead.
-
-    IMPORTANT: v1.2 changed from 'median' to 'constant' imputation. The
-    median strategy was problematic because with 84% rhythmic training data
-    (v1.1), the median CWT stability value was biased toward "good rhythm".
-    When a short arrhythmic series caused CWT to fail (NaN), the median
-    imputer would fill in a value suggesting rhythmic stability, potentially
-    causing false positives. The constant sentinel (-999) is data-independent
-    and lets the RF learn to ignore unavailable features.
-
-  Stage 2: StandardScaler
-    - Standardizes each feature to zero mean and unit variance
-    - Fitted on training set, applied identically at inference
-
-  Stage 3: RandomForestClassifier
-    - n_estimators: 200 (number of decision trees)
-    - max_depth: 10 (maximum tree depth to prevent overfitting)
-    - min_samples_leaf: 5 (minimum samples in leaf nodes)
-    - class_weight: 'balanced' (retained for additional robustness, even
-      though classes are now balanced at 50/50)
-    - random_state: 42 (for reproducibility)
-    - n_jobs: -1 (parallel training using all CPU cores)
-
-5.2 HYPERPARAMETER RATIONALE
-
-  - n_estimators=200: Sufficient for stable predictions; diminishing returns
-    beyond ~150 trees for this feature space dimensionality.
-  - max_depth=10: Prevents overfitting on the 20-feature input space.
-    Allows learning of complex interactions without memorizing noise.
-  - min_samples_leaf=5: Further regularization to avoid overfitting on
-    edge cases.
-  - class_weight='balanced': Retained from v1.1 for robustness even though
-    classes are now balanced at 50/50. Has negligible effect when classes
-    are already balanced.
-
-================================================================================
-6. TRAINING PROCEDURE
-================================================================================
-
-6.1 DATA SPLIT
-
-  - Total usable instances: 1600
-  - Train set: 1280 samples (80%)
-  - Test set: 320 samples (20%)
-  - Stratification: Split preserves class proportions in both sets
-  - Random state: 42
-
-6.2 CROSS-VALIDATION
-
-  - Method: 5-fold Stratified K-Fold
-  - Metric: ROC-AUC (Area Under the Receiver Operating Characteristic Curve)
-  - Shuffle: Yes
-  - Random state: 42
-
-6.3 FEATURE EXTRACTION DURING TRAINING
-
-  For each of the 1600 instances:
-    1. Replicate values averaged at each unique time point
-    2. Six sub-methods run on the averaged time series
-    3. 20 features extracted (NaN if method failed)
-    4. Feature vector paired with ground truth label
-
-  Feature extraction runs all six sub-methods per instance. Methods that fail
-  (e.g., CWT on very short time series) produce NaN values, which are later
-  handled by the SimpleImputer stage (constant fill = -999).
-
-================================================================================
-7. EVALUATION RESULTS
-================================================================================
-
-7.1 CROSS-VALIDATION (5-FOLD, ON TRAINING SET)
-
-  Metric    | Value
-  ----------|------------------
-  ROC-AUC   | 0.9531 +/- 0.0122
-
-  Per-fold ROC-AUC: [0.9648, 0.9426, 0.9680, 0.9534, 0.9365]
-
-7.2 TEST SET EVALUATION (HOLDOUT, 20%)
-
-  Metric     | Value
-  -----------|--------
-  Accuracy   | 0.8906
-  Precision  | 0.8834
-  Recall     | 0.9000
-  F1 Score   | 0.8916
-  ROC-AUC    | 0.9631
-
-  Classification Report:
+  Training date: 2026-02-19
+
+1. MODEL OVERVIEW
+--------------------------------------------------------------------------------
+
+The Consensus Rhythmicity Score (CRS-AI) is a meta-classifier that
+integrates the outputs of five established circadian rhythm detection
+methods into a single binary prediction (rhythmic vs. non-rhythmic).
+A Random Forest classifier is trained on features extracted from each
+sub-method, enabling robust detection that combines the strengths of
+multiple independent algorithms.
+
+2. SOFTWARE ENVIRONMENT
+--------------------------------------------------------------------------------
+
+  Python:        3.12.10
+  scikit-learn:  1.8.0
+  NumPy:         2.4.2
+  pandas:        3.0.1
+
+3. MODEL ARCHITECTURE
+--------------------------------------------------------------------------------
+
+  Pipeline:  SimpleImputer -> StandardScaler -> RandomForestClassifier
+
+  Step 1 - SimpleImputer:
+    Strategy:      constant (fill_value = -999)
+    Rationale:     Sentinel value for structurally-missing features
+                   (i.e., any sub-method that fails on a given time
+                   series, e.g., Harmonic Cosinor on very short
+                   series). Avoids bias from median imputation. The
+                   RF learns to split on 'feature <= -500' as
+                   'feature was unavailable'.
+
+  Step 2 - StandardScaler:
+    Method:        Zero mean, unit variance normalization
+
+  Step 3 - RandomForestClassifier:
+    n_estimators:    200
+    max_depth:       10
+    min_samples_leaf: 5
+    class_weight:    balanced
+    random_state:    42
+
+4. FEATURE SET (18 features)
+--------------------------------------------------------------------------------
+
+Features are extracted from five circadian detection sub-methods
+plus derived consensus metrics:
+
+  Sub-methods:
+    - JTK_CYCLE:        Non-parametric rhythmicity test (Hughes 2010)
+    - Cosinor OLS:      Cosine regression with period optimization
+    - Lomb-Scargle:     Spectral analysis for unevenly-sampled data
+    - Fourier F24:      24-hour Fourier component significance test
+    - Harmonic Cosinor: Multi-harmonic cosine regression (2 harmonics)
+
+  Feature                        Importance   Description
+  -----------------------------  ----------   ------------------------------------
+  f24_score                          0.1838   Fourier F24 test score (24h periodicity statistic)
+  cosinor_p_value                    0.1204   Cosinor OLS regression adjusted p-value
+  cosinor_r_squared                  0.1101   Cosinor OLS goodness-of-fit (R-squared)
+  jtk_p_value                        0.0900   JTK_CYCLE adjusted p-value (non-parametric rhythmicity test)
+  cosinor_amplitude                  0.0764   Cosinor fitted amplitude (expression units)
+  ls_power                           0.0682   Lomb-Scargle dominant spectral power
+  amplitude_relative                 0.0488   Amplitude relative to mesor (amplitude / |mean|)
+  period_dev_24h                     0.0431   Min |period - 24h| across methods (circadian proximity)
+  method_agreement                   0.0404   Fraction of methods with p < 0.05 (consensus score)
+  harmonic_p_value                   0.0349   Harmonic cosinor adjusted p-value (2 harmonics)
+  ls_p_value                         0.0326   Lomb-Scargle false alarm probability
+  ls_dominant_period                 0.0318   Lomb-Scargle dominant period (hours)
+  log_min_p_value                    0.0303   log10(min p-value) across all methods (compresses range)
+  harmonic_r_squared                 0.0278   Harmonic cosinor goodness-of-fit (R-squared)
+  period_concordance                 0.0191   Std. deviation of periods across methods (lower=better)
+  cosinor_period                     0.0168   Cosinor detected period (hours)
+  jtk_tau                            0.0161   JTK_CYCLE tau statistic (cyclic pattern strength)
+  jtk_period                         0.0093   JTK_CYCLE detected period (hours)
+
+  Feature completeness (NaN analysis):
+    All features complete (0% NaN)
+
+5. TRAINING DATA
+--------------------------------------------------------------------------------
+
+  Total instances:        3299
+    Synthetic:            1600
+    Real biological:      1699
+  Class distribution:
+    Rhythmic (label=1):   1660 (50.3%)
+    Non-rhythmic (label=0): 1639 (49.7%)
+
+  5.1 Synthetic data (1600 instances)
+
+    Generated with generate_training_data.py. Includes cosine waves,
+    multi-harmonic waveforms, pulse-like patterns, noisy oscillations,
+    and various non-rhythmic signals (flat, linear trend, random walk,
+    exponential decay, etc.). 15% of instances include outlier
+    contamination. Periods sampled from 20-28 hours. Variable SNR,
+    sampling intervals (1h, 2h, 4h), and series lengths (6-48 points).
+
+  5.2 Real biological data (1699 instances)
+
+    Dataset 1: GSE11923 (Hughes et al., 2009)
+      Organism:    Mus musculus (mouse liver)
+      Platform:    GPL1261 (Affymetrix Mouse Genome 430 2.0)
+      Design:      48 samples, hourly for 48 hours
+      Labels:      Known circadian (20 core clock genes) and
+                   housekeeping genes (13 found in dataset)
+      Subsampling: Original 1h, 2h, and 4h resolutions
+      Instances:   99 (33 genes x 3 resolutions)
+
+    Dataset 2: GSE11516 (Circadian gene expression, mouse liver)
+      Organism:    Mus musculus (mouse liver)
+      Platform:    GPL6880 (Illumina MouseWG-6 v2.0)
+      Design:      36 samples (12 timepoints x 3 biological replicates),
+                   4-hour intervals, 48-hour span
+      Labels:      BioCycle algorithm (RhythmicDB) + known genes
+      Instances:   1600 (capped at 800 per class)
+
+  5.3 BioCycle labeling criteria
+
+    Source:        RhythmicDB (rhythmicdb.biocycle.org)
+    Algorithm:     BioCycle (machine learning-based, independent of
+                   JTK_CYCLE and Lomb-Scargle to avoid circular
+                   reasoning with model features)
+    Dataset ID:    E-GEOD-11516
+    Rhythmic:      Q-value <= 0.01 (FDR-corrected)
+    Non-rhythmic:  Q-value > 0.20 (FDR-corrected)
+    Excluded:      0.01 < Q-value <= 0.20 (ambiguous zone)
+    Rationale:     The ambiguity gap eliminates borderline genes
+                   that would introduce label noise. Only high-
+                   confidence classifications are used.
+
+  5.4 Known gene labels (ground truth)
+
+    Circadian genes (20): Core clock Transcription-Translation
+      Feedback Loop (TTFL) components and robust
+      clock-controlled output genes confirmed by decades of knockout
+      studies. Per1, Per2, Per3, Cry1, Cry2, Arntl (Bmal1), Clock,
+      Npas2, Nr1d1, Nr1d2, Dbp, Tef, Hlf, Rora, Rorb, Rorc,
+      Ciart, Bhlhe40, Bhlhe41, Nfil3.
+
+    Non-rhythmic genes (16): Standard qPCR reference/housekeeping
+      genes. Gapdh, Actb, Tbp, Hprt, Hprt1, Rpl13a, B2m, Ubc,
+      Ppia, Rpl32, Eef1a1, Sdha, Hmbs, Ywhaz, Pgk1, Tfrc.
+
+6. EVALUATION
+--------------------------------------------------------------------------------
+
+  Train/test split: 80/20 (stratified), random_state=42
+  Train set: 2639 samples
+  Test set:  660 samples
+
+  6.1 Cross-validation (5-fold stratified, on training set)
+
+    ROC-AUC:   0.9362 +/- 0.0101
+    Per-fold:  0.9381, 0.9199, 0.9484, 0.9441, 0.9306
+
+  6.2 Holdout test set performance
+
+    Accuracy:    0.8848
+    Precision:   0.8832
+    Recall:      0.8886
+    Specificity: 0.8811
+    F1 Score:    0.8859
+    ROC-AUC:     0.9416
+    MCC:         0.7697
+
+  6.3 Confusion matrix
+
+                       Predicted
+                   Non-rhythmic  Rhythmic
+    Actual NR          289           39
+    Actual R            37          295
+
+    TP=295, FP=39, TN=289, FN=37
+
+  6.4 Classification report
 
                   precision    recall  f1-score   support
+    
+    Non-rhythmic       0.89      0.88      0.88       328
+        Rhythmic       0.88      0.89      0.89       332
+    
+        accuracy                           0.88       660
+       macro avg       0.88      0.88      0.88       660
+    weighted avg       0.88      0.88      0.88       660
+    
 
-  Non-rhythmic       0.90      0.88      0.89       160
-  Rhythmic           0.88      0.90      0.89       160
+7. FEATURE IMPORTANCES (Random Forest, MDI)
+--------------------------------------------------------------------------------
 
-  accuracy                               0.89       320
-  macro avg          0.89      0.89      0.89       320
-  weighted avg       0.89      0.89      0.89       320
+  Rank   Feature                        Importance  Cumulative
+  -----  -----------------------------  ----------  ----------
+  1      f24_score                          0.1838      0.1838
+  2      cosinor_p_value                    0.1204      0.3043
+  3      cosinor_r_squared                  0.1101      0.4143
+  4      jtk_p_value                        0.0900      0.5043
+  5      cosinor_amplitude                  0.0764      0.5807
+  6      ls_power                           0.0682      0.6489
+  7      amplitude_relative                 0.0488      0.6978
+  8      period_dev_24h                     0.0431      0.7409
+  9      method_agreement                   0.0404      0.7813
+  10     harmonic_p_value                   0.0349      0.8162
+  11     ls_p_value                         0.0326      0.8488
+  12     ls_dominant_period                 0.0318      0.8806
+  13     log_min_p_value                    0.0303      0.9109
+  14     harmonic_r_squared                 0.0278      0.9387
+  15     period_concordance                 0.0191      0.9578
+  16     cosinor_period                     0.0168      0.9746
+  17     jtk_tau                            0.0161      0.9907
+  18     jtk_period                         0.0093      1.0000
 
-  KEY OBSERVATION: Precision and recall are now BALANCED between classes
-  (0.90/0.88 for non-rhythmic vs 0.88/0.90 for rhythmic). In v1.1, the
-  model was biased toward rhythmic (precision 0.96, non-rhythmic precision
-  only 0.75). The balanced training eliminated the "trigger-happy" tendency.
+8. REPRODUCIBILITY
+--------------------------------------------------------------------------------
 
-7.3 FEATURE IMPORTANCES (TOP 15)
+  All random seeds fixed at 42 for full reproducibility.
+  To retrain:
+    python train_consensus_model.py
 
-  Rank | Feature                 | Importance
-  -----|-------------------------|------------
-    1  | f24_score               | 0.1765
-    2  | cosinor_amplitude       | 0.1233
-    3  | cosinor_r_squared       | 0.1191
-    4  | amplitude_relative      | 0.0759
-    5  | cosinor_p_value         | 0.0712
-    6  | ls_dominant_period      | 0.0616
-    7  | jtk_p_value             | 0.0578
-    8  | ls_power                | 0.0555
-    9  | method_agreement        | 0.0448
-   10  | harmonic_r_squared      | 0.0392
-   11  | ls_p_value              | 0.0286
-   12  | jtk_tau                 | 0.0261
-   13  | harmonic_p_value        | 0.0225
-   14  | n_timepoints            | 0.0209
-   15  | period_concordance      | 0.0202
+  Output files:
+    Model:          core/models/consensus_rf_model.pkl
+    Feature names:  core/models/feature_names.json
+    This report:    core/models/training_report.txt
 
-  Changes from v1.1:
-    - f24_score rose to #1 (was #3): The F24 spectral ratio is critical for
-      distinguishing circadian from non-circadian rhythms (the expanded
-      non-circadian training types emphasize this)
-    - ls_dominant_period appeared in top 10 (#6): The model now uses the
-      Lomb-Scargle detected period to reject non-circadian oscillations
-    - period_concordance entered top 15: Agreement on period across methods
-      helps reject signals with wrong periodicity
-
-7.4 NaN RATES IN TRAINING DATA
-
-  Some features had high NaN rates due to method failures on short time series:
-
-  Feature              | NaN %  | Reason
-  ---------------------|--------|---------------------------------------------
-  cwt_period_variation | ~75%   | CWT requires sufficient time series length;
-                       |        | fails for 6 and 12-timepoint series
-  cwt_amplitude_mods   | ~75%   | Same as above
-  Other features       | <5%    | Occasional method failures
-
-  The SimpleImputer (constant strategy, fill=-999) handles these NaN values.
-  Unlike median imputation (v1.1), the constant sentinel does NOT introduce
-  bias from the training set distribution.
-
-7.5 PERFORMANCE COMPARISON ACROSS VERSIONS
-
-  Metric            | v1.0     | v1.1     | v1.2     | Notes
-  ------------------|----------|----------|----------|------------------------------
-  Training instances| 714      | 952      | 1600     | 50/50 balanced in v1.2
-  Non-rhythmic types| 9        | 9        | 32       | 3.5x more diversity
-  Outlier injection | No       | No       | Yes (15%)| Teaches method robustness
-  Imputer strategy  | median   | median   | const    | -999 sentinel, no bias
-  CV ROC-AUC        | 0.9934   | 0.9763   | 0.9531   | Harder test = lower score
-  Test Accuracy     | 0.9510   | 0.9267   | 0.8906   | Expected with harder data
-  Test ROC-AUC      | 0.9739   | 0.9656   | 0.9631   | Nearly unchanged
-  Non-rhythm Prec.  | -        | 0.75     | 0.90     | KEY: much fewer false pos
-  Non-rhythm Recall | -        | 0.80     | 0.88     | KEY: much fewer false neg
-  Rhythm Precision  | -        | 0.96     | 0.88     | Less overconfident
-  Rhythm Recall     | -        | 0.95     | 0.90     | Slightly lower
-
-  Interpretation: The overall ROC-AUC decreased from 0.97 to 0.95 because
-  the model is now evaluated against a much harder test set (32 non-rhythmic
-  types including tricky cases like high-rho AR noise, non-circadian
-  oscillations, and outlier-contaminated data). However:
-
-  1. The model is now BALANCED: non-rhythmic precision jumped from 0.75 to
-     0.90. The v1.1 model had too many false positives (classifying noise
-     as rhythmic). The v1.2 model is properly calibrated.
-
-  2. Test ROC-AUC barely changed (0.9656 -> 0.9631): The discriminative
-     ability is maintained; the model just has a harder decision boundary.
-
-  3. The model now handles outliers: With 15% outlier contamination in
-     training, the RF learned that Cosinor features can be unreliable
-     (outliers drag OLS fits), while JTK and Lomb-Scargle are more robust.
-
-================================================================================
-8. MODEL OUTPUT SPECIFICATION
-================================================================================
-
-At inference time, the model produces:
-
-  1. Probability (float, 0-1):
-     The Random Forest's predicted probability that the input time series
-     exhibits circadian rhythmicity.
-
-  2. Classification (string):
-     - "Rhythmic"    if probability >= 0.70
-     - "Borderline"  if 0.30 <= probability < 0.70
-     - "Arrhythmic"  if probability < 0.30
-
-  3. Method contribution scores (for radar chart visualization):
-     - JTK:           1 - jtk_p_value
-     - Cosinor OLS:   cosinor_r_squared
-     - Lomb-Scargle:  1 - ls_false_alarm_probability
-     - F24:           f24_score / 5.0 (capped at 1.0)
-     - Harmonic:      1 - harmonic_p_value
-     - CWT Stability: 1 - cwt_period_variation / 5.0
-     - Agreement:     method_agreement (fraction of methods with p < 0.05)
-
-  4. Feature importances:
-     Per-feature importance values from the Random Forest, indicating
-     each feature's contribution to the model's decisions.
-
-================================================================================
-9. SCOPE AND LIMITATIONS
-================================================================================
-
-9.1 SCOPE
-
-  The model is specifically designed to detect CIRCADIAN rhythmicity, defined
-  as oscillations with periods in the approximate range of 20-28 hours.
-
-  - Ultradian rhythms (period < 20h) are intentionally classified as arrhythmic
-  - Infradian rhythms (period > 28h) are intentionally classified as arrhythmic
-  - This is by design: the sub-methods all operate with circadian period ranges
-
-9.2 SUPPORTED DATA TYPES
-
-  The model has been trained on time series with 6 to 48 timepoints, covering
-  experimental designs including:
-
-  - Standard circadian sampling (every 2-4h over 2-4 days)
-  - Sparse scRNAseq sampling (6 Zeitgeber time points, ~20h span)
-  - Single replicate and multi-replicate (3 replicates) designs
-
-9.3 LIMITATIONS
-
-  - Trained exclusively on synthetic data. Performance on experimental data
-    may differ, particularly for complex biological signals with multiple
-    overlapping rhythmic components.
-  - The model does not account for experimental batch effects or technical
-    artifacts beyond spike outliers.
-  - CWT features are frequently NaN for short time series (< 24 time points),
-    reducing the model's available information for these cases. The constant
-    sentinel (-999) prevents this from biasing predictions.
-  - For 6-timepoint series spanning < 24 hours, rhythmicity detection is
-    inherently less reliable due to insufficient temporal coverage of a
-    full circadian cycle.
-  - Outlier contamination in training uses 3-5 sigma spikes. Extreme
-    artifacts (e.g., a fly stuck on a sensor for hours) may not be fully
-    represented.
-
-================================================================================
-10. SOFTWARE DEPENDENCIES
-================================================================================
-
-  Package          | Version    | Purpose
-  -----------------|------------|-------------------------------------------
-  scikit-learn     | >= 1.3.0   | RandomForestClassifier, Pipeline, metrics
-  joblib           | >= 1.3.0   | Model serialization (pickle format)
-  numpy            | >= 1.24.0  | Numerical computation
-  pandas           | >= 2.0.0   | Data handling
-  scipy            | >= 1.10.0  | Signal processing, Lomb-Scargle, wavelets
-  statsmodels      | >= 0.14.0  | Cosinor regression
-  PyWavelets       | >= 1.4.0   | Continuous wavelet transform
-
-================================================================================
-11. FILE MANIFEST
-================================================================================
-
-  File                                  | Description
-  --------------------------------------|------------------------------------------
-  core/models/consensus_rf_model.pkl    | Trained sklearn Pipeline (1921 KB)
-  core/models/feature_names.json        | Ordered list of 20 feature names
-  core/models/training_report.txt       | This file
-  core/feature_extraction.py            | Feature extraction module (shared)
-  core/meta_classifier.py               | ConsensusClassifier class (inference)
-  generate_training_data.py             | Synthetic training data generator
-  train_consensus_model.py              | Model training script
-
-================================================================================
-12. REPRODUCIBILITY
-================================================================================
-
-To reproduce the trained model:
-
-  1. Ensure all dependencies are installed:
-     pip install -r requirements.txt
-
-  2. Run the training script from the project root:
-     python train_consensus_model.py
-
-  3. The script will:
-     a. Generate 1600 synthetic training instances (seed=42, balanced 50/50)
-     b. Apply 15% outlier contamination to both classes
-     c. Extract 20 features per instance using 6 sub-methods
-     d. Train the Random Forest pipeline with 5-fold cross-validation
-     e. Evaluate on a 20% stratified holdout test set
-     f. Save the model to core/models/consensus_rf_model.pkl
-     g. Save feature names to core/models/feature_names.json
-
-  Expected output:
-     - CV ROC-AUC: ~0.9531
-     - Test Accuracy: ~0.8906
-     - Test ROC-AUC: ~0.9631
-
-  Note: Exact reproducibility requires identical package versions and hardware
-  due to floating-point arithmetic differences across platforms.
-
-================================================================================
-13. VERSION HISTORY
-================================================================================
-
-  Version | Date         | Changes
-  --------|--------------|------------------------------------------------------
-  1.0     | Jan 2026     | Initial model. 714 instances (12-48 timepoints).
-          |              | CV ROC-AUC: 0.9934, Test ROC-AUC: 0.9739.
-  1.1     | Jan 2026     | Added 6-timepoint training instances to support
-          |              | scRNAseq datasets (Rosbash-like sparse sampling).
-          |              | 952 instances total. CV ROC-AUC: 0.9763,
-          |              | Test ROC-AUC: 0.9656. Model size: 713 KB.
-  1.2     | Feb 2026     | Major training improvements:
-          |              | - Balanced classes: 800 vs 800 (was 800 vs 152)
-          |              | - 32 non-rhythmic types (was 9): pink/brown/bimodal
-          |              |   noise, 7 AR rho values, quadratic/piecewise trends,
-          |              |   13 non-circadian periods, fast-damped oscillations
-          |              | - 15% outlier contamination (spike artifacts)
-          |              | - Constant sentinel imputation (-999) replaces median
-          |              | - 1600 instances total. CV ROC-AUC: 0.9531,
-          |              |   Test ROC-AUC: 0.9631. Model size: 1921 KB.
-          |              | - Key result: non-rhythmic precision 0.75 -> 0.90
+  Model file size:  3437.8 KB
 
 ================================================================================
 END OF REPORT

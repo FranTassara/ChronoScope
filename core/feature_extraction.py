@@ -30,14 +30,12 @@ FEATURE_NAMES: List[str] = [
     'ls_dominant_period',
     'f24_score',
     'harmonic_p_value',
-    'harmonic_n_components',
     'harmonic_r_squared',
-    'cwt_period_variation',
-    'cwt_amplitude_mods',
     'method_agreement',
     'period_concordance',
     'amplitude_relative',
-    'n_timepoints',
+    'log_min_p_value',
+    'period_dev_24h',
 ]
 
 
@@ -83,7 +81,6 @@ def extract_features(
         Dict mapping feature names to float values
     """
     features: Dict[str, float] = {name: np.nan for name in FEATURE_NAMES}
-    features['n_timepoints'] = float(len(times))
 
     parameters = parameters or {}
     default_params = {
@@ -197,34 +194,11 @@ def extract_features(
 
         if harm_result is not None:
             features['harmonic_p_value'] = harm_result.adj_p_value
-            features['harmonic_n_components'] = float(harm_result.n_harmonics)
             p_values_for_agreement.append(harm_result.adj_p_value)
 
             # Get R-squared from fit_model if available
             if harm_result.fit_model and 'r_squared' in harm_result.fit_model:
                 features['harmonic_r_squared'] = harm_result.fit_model['r_squared']
-    except Exception:
-        pass
-
-    # --- CWT ---
-    try:
-        from .rhythm_analysis import _compute_cwt
-
-        sorted_times = np.sort(times)
-        diffs = np.diff(sorted_times)
-        nonzero_diffs = diffs[diffs > 0]
-        sampling_interval = float(np.median(nonzero_diffs)) if len(nonzero_diffs) > 0 else 1.0
-
-        cwt_result = _compute_cwt(
-            times, values,
-            sampling_interval=sampling_interval,
-            wavelet='cmor1.5-1.0',
-            period_range=(20.0, 28.0)
-        )
-
-        if cwt_result is not None:
-            features['cwt_period_variation'] = cwt_result.period_variation
-            features['cwt_amplitude_mods'] = float(cwt_result.amplitude_modulations)
     except Exception:
         pass
 
@@ -241,5 +215,17 @@ def extract_features(
         valid_periods = [p for p in periods_for_concordance if p is not None and not np.isnan(p)]
         if len(valid_periods) >= 2:
             features['period_concordance'] = float(np.std(valid_periods))
+
+    # Log of minimum p-value across methods (compresses dynamic range)
+    if p_values_for_agreement:
+        valid_p = [p for p in p_values_for_agreement if p is not None and not np.isnan(p) and p > 0]
+        if valid_p:
+            features['log_min_p_value'] = float(np.log10(min(valid_p)))
+
+    # Period deviation from 24h: min |period - 24| across methods
+    if periods_for_concordance:
+        valid_periods = [p for p in periods_for_concordance if p is not None and not np.isnan(p)]
+        if valid_periods:
+            features['period_dev_24h'] = float(min(abs(p - 24.0) for p in valid_periods))
 
     return features

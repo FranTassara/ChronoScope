@@ -11,12 +11,10 @@
   "ls_dominant_period",
   "f24_score",
   "harmonic_p_value",
-  "harmonic_n_components",
   "harmonic_r_squared",
-  "cwt_period_variation",
-  "cwt_amplitude_mods",
   "method_agreement",
   "period_concordance",
   "amplitude_relative",
-  "n_timepoints"
+  "log_min_p_value",
+  "period_dev_24h"
 ]
