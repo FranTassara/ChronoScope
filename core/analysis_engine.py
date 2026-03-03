@@ -3004,6 +3004,8 @@ class AnalysisEngine:
         try:
             per_type = parameters.get('per_type', 'per')
             max_per = parameters.get('max_per', 240.0)
+            detrending = parameters.get('detrending', True)
+            prominent = parameters.get('prominent', False)
 
             X = times
             Y = values
@@ -3027,7 +3029,9 @@ class AnalysisEngine:
                         success=False, message="Need at least 2 time points"
                     )
 
-                f, Pxx_den = signal.periodogram(Y_u, sampling_f)
+                f, Pxx_den = signal.periodogram(
+                    Y_u, sampling_f, detrend='constant' if detrending else False
+                )
 
             elif per_type == 'welch':
                 # Welch's method
@@ -3048,14 +3052,17 @@ class AnalysisEngine:
                         success=False, message="Need at least 2 time points"
                     )
 
-                f, Pxx_den = signal.welch(Y_u, sampling_f)
+                f, Pxx_den = signal.welch(
+                    Y_u, sampling_f, detrend='constant' if detrending else False
+                )
 
             elif per_type == 'lombscargle':
                 # Lomb-Scargle can handle uneven sampling
                 min_per = 2
                 f = np.linspace(1/max_per, 1/min_per, 1000)
-                Pxx_den = signal.lombscargle(X, Y, f)
-                Y_u = Y  # For significance calculation
+                Y_proc = Y - np.mean(Y) if detrending else Y
+                Pxx_den = signal.lombscargle(X, Y_proc, f)
+                Y_u = Y_proc  # For significance calculation
 
             else:
                 return AnalysisResult(
@@ -3082,22 +3089,26 @@ class AnalysisEngine:
             N = len(Y_u)
             T = (1 - (p_t/N)**(1/(N-1))) * sum(Pxx_den)
 
-            # Find dominant period
+            # Find dominant period (highest power peak — always computed)
             max_idx = np.argmax(Pxx)
             dominant_per = float(per[max_idx])
 
-            # Find significant peaks
+            # Find significant peaks only when requested via 'prominent' flag
             significant_peaks = []
-            if len(Pxx) >= 10:
-                locs, heights = signal.find_peaks(Pxx, height=T)
-                if len(locs) > 0:
-                    heights = heights['peak_heights']
-                    s = list(zip(heights, locs))
-                    s.sort(reverse=True)
-                    significant_peaks = [float(per[loc]) for _, loc in s]
-            else:
-                significant_indices = np.where(Pxx > T)[0]
-                significant_peaks = [float(per[i]) for i in significant_indices]
+            if prominent:
+                if len(Pxx) >= 10:
+                    locs, heights = signal.find_peaks(Pxx, height=T)
+                    if len(locs) > 0:
+                        heights = heights['peak_heights']
+                        s = list(zip(heights, locs))
+                        s.sort(reverse=True)
+                        significant_peaks = [float(per[loc]) for _, loc in s]
+                else:
+                    significant_indices = np.where(Pxx > T)[0]
+                    significant_peaks = [float(per[i]) for i in significant_indices]
+
+            msg = (f"Found {len(significant_peaks)} significant peaks"
+                   if prominent else f"Dominant period: {dominant_per:.1f}h")
 
             return AnalysisResult(
                 variable=variable,
@@ -3112,7 +3123,7 @@ class AnalysisEngine:
                 times=times,
                 values=values,
                 success=True,
-                message=f"Found {len(significant_peaks)} significant peaks"
+                message=msg
             )
 
         except Exception as e:
@@ -3150,6 +3161,7 @@ class AnalysisEngine:
 
         ar_lag = parameters.get('ar_lag', 1)
         ljungbox_lag = parameters.get('ljungbox_lag', 10)
+        prewhiten = parameters.get('prewhiten', False)
 
         try:
             # Create series with time as index
@@ -3160,7 +3172,8 @@ class AnalysisEngine:
                 period_range=period_range,
                 asymmetries=asymmetries,
                 ar_lag=ar_lag,
-                ljungbox_lag=ljungbox_lag
+                ljungbox_lag=ljungbox_lag,
+                force_prewhiten=prewhiten
             )
 
             if result is None:

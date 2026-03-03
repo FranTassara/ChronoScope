@@ -1617,13 +1617,14 @@ class AnalysisPanel(QWidget):
         # Resolution/Interval (for Cosine-Kendall)
         self._resolution_spin = QDoubleSpinBox()
         self._resolution_spin.setRange(0.1, 10.0)
-        self._resolution_spin.setValue(1.0)
+        self._resolution_spin.setValue(0.5)
         self._resolution_spin.setSingleStep(0.1)
         self._resolution_spin.setDecimals(1)
         self._resolution_spin.setSuffix(" h")
         self._resolution_spin.setToolTip(
-            "Time resolution for template interpolation.\n"
-            "Smaller values = higher resolution but slower."
+            "Lag sweep step size for acrophase search.\n"
+            "Smaller values = finer resolution (more accurate acrophase, slower).\n"
+            "Default 0.5h."
         )
         self._params_layout.addRow("Resolution:", self._resolution_spin)
 
@@ -2306,6 +2307,7 @@ class AnalysisPanel(QWidget):
                 self._show_param("Periodogram Type:")
                 self._show_param("Max Period:")
                 self._show_checkbox(self._detrending_check)
+                self._show_checkbox(self._prominent_check)
 
             # 10. Linear Mixed Effects (Cosinor-based)
             elif method_text == "Linear Mixed Effects":

@@ -822,11 +822,12 @@ def _run_ar_jtk(
     lag_range: Optional[np.ndarray] = None,
     asymmetries: List[float] = None,
     ar_lag: int = 1,
-    ljungbox_lag: int = 10
+    ljungbox_lag: int = 10,
+    force_prewhiten: bool = False
 ) -> Tuple[JTKResult, bool]:
     """
     Run JTK with autoregressive noise handling.
-    
+
     Args:
         series: pandas Series with time as index
         period_range: List of periods to test
@@ -834,7 +835,10 @@ def _run_ar_jtk(
         asymmetries: List of asymmetry values
         ar_lag: AR model lag for prewhitening
         ljungbox_lag: Lag for Ljung-Box test
-    
+        force_prewhiten: If True, skip Ljung-Box test and always apply AR
+            pre-whitening. If False (default), pre-whitening is applied only
+            when autocorrelation is detected.
+
     Returns:
         Tuple of (JTKResult, ar_applied_flag)
     """
@@ -862,8 +866,8 @@ def _run_ar_jtk(
     r = series.rank()
     e = r - template_rank
 
-    # Autocorrelation test on rank-residuals
-    if _is_white_noise_ranked(e, lags=ljungbox_lag):
+    # Autocorrelation test on rank-residuals (skipped when force_prewhiten=True)
+    if not force_prewhiten and _is_white_noise_ranked(e, lags=ljungbox_lag):
         return temp_res, False  # No AR detected
 
     # AR prewhiten residuals only
@@ -911,7 +915,9 @@ def _run_cosine_kendall(
     Args:
         series: pandas Series with time as index
         period_range: List of periods to test
-        interval: Time interval between samples (used if times are indices)
+        interval: Lag sweep step size in hours for the acrophase search.
+            Smaller values give finer resolution (more accurate acrophase) but
+            are slower. Default 0.5h.
 
     Returns:
         JTKResult object with both Bonferroni and BH corrections
@@ -934,7 +940,7 @@ def _run_cosine_kendall(
     test_results = []
 
     for period in period_range:
-        for lag in np.arange(0, period, 0.5):
+        for lag in np.arange(0, period, interval):
             radians = 2 * np.pi * (t - lag) / period
             ref = np.cos(radians)
             ref_ranked = pd.Series(ref).rank().values
