@@ -48,6 +48,9 @@ COSINOR_METHODS = {
     'harmonic_cosinor',
 }
 
+# JTK-family methods (nonparametric Kendall-based)
+JTK_METHODS = {'jtk', 'ar_jtk', 'cosine_kendall'}
+
 # Methods that show Periodogram, Polar (if acrophase), Parameter Bars
 PERIODOGRAM_METHODS = {
     'lomb_scargle',
@@ -956,6 +959,9 @@ class ResultsPanel(QWidget):
         # Check if we have Consensus AI results
         has_consensus_ai = any(r.get('method') == 'consensus_ai' for r in self._results)
 
+        # Check if we have JTK-family results
+        has_jtk = any(r.get('method') in JTK_METHODS for r in self._results)
+
         # Determine columns based on result type
         if is_comparison:
             columns = ['variable', 'condition1', 'condition2', 'method', 'n_components', 'period',
@@ -999,6 +1005,17 @@ class ResultsPanel(QWidget):
             elif has_consensus_ai:
                 columns = ['variable', 'condition', 'method', 'ai_probability', 'ai_classification']
                 headers = ['Variable', 'Condition', 'Method', 'Probability', 'Classification']
+            # For JTK-family methods (JTK, AR-JTK, Cosine-Kendall)
+            elif has_jtk:
+                columns = ['variable', 'condition', 'method', 'period', 'amplitude',
+                           'acrophase_hours', 'tau', 'lag', 'asymmetry',
+                           'raw_p_value', 'p_value', 'bonf_p_value', 'n_tests', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Period (h)', 'Amplitude',
+                           'Acrophase (h)', 'Tau', 'Lag (h)', 'Asymmetry',
+                           'p (raw)', 'p (BH adj)', 'p (Bonf adj)', 'N tests', 'Notes']
+                if any(r.get('best_model') is not None for r in self._results):
+                    columns.append('best_model')
+                    headers.append('Best Fit')
             else:
                 # Basic identification
                 columns = ['variable', 'condition', 'method', 'n_components']

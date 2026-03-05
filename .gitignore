@@ -21,7 +21,7 @@ wheels/
 *.egg
 
 # Virtual environments
-venv/
+.venv/
 ENV/
 env/
 
@@ -49,7 +49,7 @@ output/
 Bibliografia/
 figures/
 CircaScope_Comparative_Table.docx
-
+ChronoScope_v1.0.0_windows.zip
 
 # Keep examples
 !examples/*.csv

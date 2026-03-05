@@ -148,7 +148,12 @@ class AnalysisResult:
     trough_times: Optional[List[float]] = None  # Times of rhythm troughs (hours)
     
     # Method-specific
-    tau: Optional[float] = None  # JTK
+    tau: Optional[float] = None  # JTK Kendall tau
+    bonf_p_value: Optional[float] = None  # Bonferroni-corrected p-value (JTK)
+    raw_p_value: Optional[float] = None   # Raw (uncorrected) p-value (JTK)
+    lag: Optional[float] = None           # Phase lag in hours (JTK/Cosine-Kendall)
+    asymmetry: Optional[float] = None     # Waveform asymmetry parameter (JTK)
+    n_tests: Optional[int] = None         # Number of hypotheses tested (JTK)
     power: Optional[float] = None  # Lomb-Scargle
     dominant_period: Optional[float] = None
     n_components: Optional[int] = None  # Multi-component cosinor
@@ -2100,9 +2105,9 @@ class AnalysisEngine:
         variable: str,
         condition: str,
         parameters: Dict[str, Any]
-    ) -> AnalysisResult:
+    ) -> Union[AnalysisResult, List[AnalysisResult]]:
         """Run JTK Cycle analysis."""
-        from .rhythm_analysis import _run_discrete_jtk
+        from .rhythm_analysis import _run_discrete_jtk, _run_discrete_jtk_all_periods
         import pandas as pd
 
         # Get period range - support both period_range tuple and period list
@@ -2121,6 +2126,39 @@ class AnalysisEngine:
 
         # Create series with time as index
         series = pd.Series(values, index=times)
+
+        show_all = parameters.get('show_all_periods', False) and len(period_range) > 1
+
+        if show_all:
+            per_period = _run_discrete_jtk_all_periods(
+                series, period_range=period_range, asymmetries=asymmetries
+            )
+            if not per_period:
+                return AnalysisResult(
+                    variable=variable, condition=condition,
+                    method="jtk", success=False, message="JTK analysis failed"
+                )
+            best_p = min(r.p_value for r in per_period)
+            results = []
+            for r in per_period:
+                results.append(AnalysisResult(
+                    variable=variable, condition=condition,
+                    method="jtk",
+                    period=r.period,
+                    acrophase_hours=r.acrophase,
+                    p_value=r.bh_p_value,
+                    raw_p_value=r.p_value,
+                    bonf_p_value=r.bonf_p_value,
+                    tau=r.tau,
+                    lag=r.lag,
+                    asymmetry=r.asymmetry,
+                    n_tests=r.n_tests,
+                    amplitude=r.amplitude,
+                    times=times, values=values,
+                    success=True,
+                    best_model="Yes" if r.p_value == best_p else "No"
+                ))
+            return results
 
         result = _run_discrete_jtk(
             series,
@@ -2141,8 +2179,13 @@ class AnalysisEngine:
             method="jtk",
             period=result.period,
             acrophase_hours=result.acrophase,
-            p_value=result.adj_p_value,
+            p_value=result.bh_p_value,
+            raw_p_value=result.p_value,
+            bonf_p_value=result.bonf_p_value,
             tau=result.tau,
+            lag=result.lag,
+            asymmetry=result.asymmetry,
+            n_tests=result.n_tests,
             amplitude=result.amplitude,
             times=times,
             values=values,
@@ -3140,9 +3183,10 @@ class AnalysisEngine:
         variable: str,
         condition: str,
         parameters: Dict[str, Any]
-    ) -> AnalysisResult:
+    ) -> Union[AnalysisResult, List[AnalysisResult]]:
         """Run AR-JTK Cycle analysis (JTK with autocorrelation correction)."""
-        from .rhythm_analysis import _run_ar_jtk
+        from .rhythm_analysis import _run_ar_jtk, _run_discrete_jtk_all_periods
+        from .rhythm_analysis import _is_white_noise_ranked, _prewhiten_ranked_residuals, _generate_triangle_template_time
         import pandas as pd
 
         # Get period range - support both period_range tuple and period list
@@ -3193,16 +3237,74 @@ class AnalysisEngine:
                 )
 
             msg = "AR correction applied" if autocorr_detected else "No autocorrelation detected"
+            show_all = parameters.get('show_all_periods', False) and len(period_range) > 1
+
+            if show_all:
+                # Re-run all-periods on the (possibly prewhitened) series used internally
+                # We use the same prewhitening logic as _run_ar_jtk
+                import numpy as _np
+                unique_t = _np.unique(times)
+                if len(unique_t) < len(times):
+                    avg_v = _np.array([_np.mean(values[times == t]) for t in unique_t])
+                    series_ap = pd.Series(avg_v, index=unique_t)
+                else:
+                    series_ap = pd.Series(values, index=times)
+
+                if autocorr_detected:
+                    from .rhythm_analysis import _run_discrete_jtk
+                    temp = _run_discrete_jtk(series_ap, period_range=period_range, asymmetries=asymmetries)
+                    if temp is not None:
+                        import pandas as _pd
+                        template_vals = _generate_triangle_template_time(
+                            series_ap.index.to_numpy(), temp.period, temp.lag, temp.asymmetry
+                        )
+                        template_rank = _pd.Series(template_vals, index=series_ap.index).rank()
+                        r_rank = series_ap.rank()
+                        e = r_rank - template_rank
+                        e_pw = _prewhiten_ranked_residuals(e, maxlag=ar_lag)
+                        series_ap = template_rank + e_pw
+
+                per_period = _run_discrete_jtk_all_periods(
+                    series_ap, period_range=period_range, asymmetries=asymmetries
+                )
+                amp = (series.values.max() - series.values.min()) / 2  # from original data
+                best_p = min(r.p_value for r in per_period)
+                results = []
+                for r in per_period:
+                    results.append(AnalysisResult(
+                        variable=variable, condition=condition,
+                        method="ar_jtk",
+                        period=r.period,
+                        acrophase_hours=r.acrophase,
+                        p_value=r.bh_p_value,
+                        raw_p_value=r.p_value,
+                        bonf_p_value=r.bonf_p_value,
+                        tau=r.tau,
+                        lag=r.lag,
+                        asymmetry=r.asymmetry,
+                        n_tests=r.n_tests,
+                        amplitude=r.amplitude,
+                        times=times, values=values,
+                        success=True,
+                        message=msg,
+                        best_model="Yes" if r.p_value == best_p else "No"
+                    ))
+                return results
 
             return AnalysisResult(
                 variable=variable,
                 condition=condition,
                 method="ar_jtk",
                 period=result.period,
-                p_value=result.adj_p_value,
+                p_value=result.bh_p_value,
+                raw_p_value=result.p_value,
+                bonf_p_value=result.bonf_p_value,
                 acrophase_hours=result.acrophase,
                 amplitude=result.amplitude,
                 tau=result.tau,
+                lag=result.lag,
+                asymmetry=result.asymmetry,
+                n_tests=result.n_tests,
                 times=times,
                 values=values,
                 success=True,
@@ -3222,9 +3324,9 @@ class AnalysisEngine:
         variable: str,
         condition: str,
         parameters: Dict[str, Any]
-    ) -> AnalysisResult:
+    ) -> Union[AnalysisResult, List[AnalysisResult]]:
         """Run Cosine-Kendall nonparametric analysis."""
-        from .rhythm_analysis import _run_cosine_kendall, DefaultPeriodRanges
+        from .rhythm_analysis import _run_cosine_kendall, _run_cosine_kendall_all_periods, DefaultPeriodRanges
         import pandas as pd
 
         # Get period range - support both period_range tuple and period list
@@ -3253,15 +3355,48 @@ class AnalysisEngine:
                     success=False, message="Analysis failed"
                 )
 
+            show_all = parameters.get('show_all_periods', False) and len(period_range) > 1
+
+            if show_all:
+                per_period = _run_cosine_kendall_all_periods(
+                    series, period_range=period_range, interval=interval
+                )
+                best_p = min(r.p_value for r in per_period)
+                results = []
+                for r in per_period:
+                    results.append(AnalysisResult(
+                        variable=variable, condition=condition,
+                        method="cosine_kendall",
+                        period=r.period,
+                        acrophase_hours=r.acrophase,
+                        p_value=r.bh_p_value,
+                        raw_p_value=r.p_value,
+                        bonf_p_value=r.bonf_p_value,
+                        tau=r.tau,
+                        lag=r.lag,
+                        asymmetry=r.asymmetry,
+                        n_tests=r.n_tests,
+                        amplitude=r.amplitude,
+                        times=times, values=values,
+                        success=True,
+                        best_model="Yes" if r.p_value == best_p else "No"
+                    ))
+                return results
+
             return AnalysisResult(
                 variable=variable,
                 condition=condition,
                 method="cosine_kendall",
                 period=result.period,
-                p_value=result.adj_p_value,
+                p_value=result.bh_p_value,
+                raw_p_value=result.p_value,
+                bonf_p_value=result.bonf_p_value,
                 acrophase_hours=result.acrophase,
                 amplitude=result.amplitude,
                 tau=result.tau,
+                lag=result.lag,
+                asymmetry=result.asymmetry,
+                n_tests=result.n_tests,
                 times=times,
                 values=values,
                 success=True

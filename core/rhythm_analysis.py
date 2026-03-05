@@ -759,6 +759,85 @@ def _run_discrete_jtk(
     )
 
 
+def _run_discrete_jtk_all_periods(
+    series: pd.Series,
+    period_range: List[float] = None,
+    lag_range: Optional[np.ndarray] = None,
+    asymmetries: List[float] = None
+) -> List['JTKResult']:
+    """
+    Run JTK for each period in period_range and return one JTKResult per period.
+
+    p-value corrections (BH and Bonferroni) are computed globally across ALL
+    period/lag/asymmetry combinations, keeping the same statistical rigor as
+    the standard single-result run.
+
+    Returns:
+        List of JTKResult objects (one per period), ordered by period.
+    """
+    if period_range is None:
+        period_range = DefaultPeriodRanges.CIRCADIAN_INT
+    if asymmetries is None:
+        asymmetries = [0.5]
+
+    times = series.index.to_numpy()
+    y = series.rank().values
+
+    # Collect ALL tests globally (same pool as _run_discrete_jtk)
+    all_test_results = []  # (pval, tau, period, lag, asym)
+
+    # Per-period tracking: best (p, tau, lag, asym, global_idx)
+    per_period_best = {p: (1.0, 0.0, 0.0, 0.5, -1) for p in period_range}
+
+    for period in period_range:
+        lags = lag_range if lag_range is not None else np.arange(0, period, 1)
+        for asym in asymmetries:
+            for lag in lags:
+                ref = _generate_triangle_template_time(times, period, lag, asym)
+                tau, pval = kendalltau(y, ref)
+                idx = len(all_test_results)
+                all_test_results.append((pval, tau, period, lag, asym))
+                if pval < per_period_best[period][0]:
+                    per_period_best[period] = (pval, tau, lag, asym, idx)
+
+    n_tests = len(all_test_results)
+    amp = (np.percentile(series.values, 90) - np.percentile(series.values, 10)) / 2
+
+    # Global BH ranks
+    all_pvals = np.array([r[0] for r in all_test_results])
+    sorted_indices = np.argsort(all_pvals)
+    ranks = np.empty_like(sorted_indices)
+    ranks[sorted_indices] = np.arange(1, n_tests + 1)
+
+    results = []
+    for period in period_range:
+        best_p, best_tau, best_lag, best_asym, best_idx = per_period_best[period]
+
+        bonf_p = min(1.0, best_p * n_tests)
+        bh_p = min(1.0, best_p * n_tests / ranks[best_idx]) if best_idx >= 0 else best_p
+
+        acrophase = (
+            (best_lag + best_asym * period + period / 2) % period if best_tau < 0
+            else (best_lag + best_asym * period) % period
+        )
+
+        results.append(JTKResult(
+            p_value=round(best_p, 6),
+            bonf_p_value=round(bonf_p, 6),
+            bh_p_value=round(bh_p, 6),
+            period=round(float(period), 2),
+            amplitude=round(amp, 4),
+            acrophase=round(acrophase, 2),
+            asymmetry=round(best_asym, 2),
+            tau=round(best_tau, 4),
+            lag=round(best_lag, 2),
+            n_tests=n_tests,
+            method='Python-JTK'
+        ))
+
+    return results
+
+
 # =============================================================================
 # AR-JTK NOISE HANDLING FUNCTIONS
 # =============================================================================
@@ -987,6 +1066,73 @@ def _run_cosine_kendall(
         n_tests=n_tests,
         method='Cosine-Kendall'
     )
+
+
+def _run_cosine_kendall_all_periods(
+    series: pd.Series,
+    period_range: List[float] = None,
+    interval: float = 1.0
+) -> List['JTKResult']:
+    """
+    Run Cosine-Kendall for each period and return one JTKResult per period.
+
+    p-value corrections are global (same pool as the standard single-result run).
+
+    Returns:
+        List of JTKResult objects (one per period), ordered by period.
+    """
+    if period_range is None:
+        period_range = DefaultPeriodRanges.CIRCADIAN
+
+    y = series.rank().values
+    t = series.index.to_numpy().astype(float)
+
+    all_test_results = []  # (pval, tau, period, lag)
+    per_period_best = {p: (1.0, 0.0, 0.0, -1) for p in period_range}
+
+    for period in period_range:
+        for lag in np.arange(0, period, interval):
+            radians = 2 * np.pi * (t - lag) / period
+            ref = np.cos(radians)
+            ref_ranked = pd.Series(ref).rank().values
+            tau, pval = kendalltau(y, ref_ranked)
+            idx = len(all_test_results)
+            all_test_results.append((pval, tau, period, lag))
+            if pval < per_period_best[period][0]:
+                per_period_best[period] = (pval, tau, lag, idx)
+
+    n_tests = len(all_test_results) if all_test_results else 1
+    amp = (np.percentile(series.values, 90) - np.percentile(series.values, 10)) / 2
+
+    all_pvals = np.array([r[0] for r in all_test_results])
+    sorted_indices = np.argsort(all_pvals)
+    ranks = np.empty_like(sorted_indices)
+    ranks[sorted_indices] = np.arange(1, n_tests + 1)
+
+    results = []
+    for period in period_range:
+        best_p, best_tau, best_lag, best_idx = per_period_best[period]
+
+        bonf_p = min(1.0, best_p * n_tests)
+        bh_p = min(1.0, best_p * n_tests / ranks[best_idx]) if best_idx >= 0 else best_p
+
+        corrected_lag = (best_lag + period / 2) % period if best_tau < 0 else best_lag
+
+        results.append(JTKResult(
+            p_value=round(best_p, 6),
+            bonf_p_value=round(bonf_p, 6),
+            bh_p_value=round(bh_p, 6),
+            period=round(float(period), 2),
+            amplitude=round(amp, 4),
+            acrophase=round(corrected_lag, 2),
+            asymmetry=0.5,
+            tau=round(best_tau, 4),
+            lag=round(best_lag, 2),
+            n_tests=n_tests,
+            method='Cosine-Kendall'
+        ))
+
+    return results
 
 
 # =============================================================================
