@@ -60,7 +60,7 @@ class ConsensusClassifier:
             base_dir = Path(sys._MEIPASS) / 'core'
         else:
             base_dir = Path(__file__).parent
-        return base_dir / 'models'
+        return base_dir / 'models_meta_classifier'
 
     def load_model(self) -> bool:
         """Load the pre-trained model. Returns True if successful."""

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CircaScope - Circadian Rhythm Analysis Application
+ChronoScope - Circadian Rhythm Analysis Application
 ===================================================
 
 A comprehensive desktop application for circadian rhythm analysis
@@ -92,7 +92,7 @@ def main():
     app = QApplication(sys.argv)
     
     # Application metadata
-    app.setApplicationName("CircaScope")
+    app.setApplicationName("ChronoScope")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("LabCeriani")
     

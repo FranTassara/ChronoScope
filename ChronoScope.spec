@@ -59,9 +59,11 @@ hidden_imports = [
     'statsmodels.formula',
     'statsmodels.formula.api',
 
-    # matplotlib - backend Qt
+    # matplotlib - backends (Qt para render, file backends para exportar)
     'matplotlib.backends.backend_qtagg',
     'matplotlib.backends.backend_pdf',
+    'matplotlib.backends.backend_ps',   # EPS / PS
+    'matplotlib.backends.backend_svg',  # SVG
 
     # PyWavelets
     'pywt',
@@ -107,7 +109,7 @@ hidden_imports = [
 # ---------------------------------------------------------------------------
 datas = [
     # Modelo Random Forest entrenado + metadatos de features
-    ('core/models', 'core/models'),
+    ('core/models_meta_classifier', 'core/models_meta_classifier'),
 
     # Ejemplos de datos (cargados desde el GUI)
     ('examples', 'examples'),
@@ -128,7 +130,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={
         'matplotlib': {
-            'backends': 'qtagg',   # solo el backend Qt, reduce tamaño
+            'backends': ['qtagg', 'pdf', 'ps', 'svg'],
         },
     },
     runtime_hooks=[],

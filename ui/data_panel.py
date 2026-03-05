@@ -177,16 +177,6 @@ class DataPanel(QWidget):
         cond_layout.addWidget(self._cond_col_combo)
         mapping_layout.addLayout(cond_layout)
         
-        # Replicate column (optional)
-        rep_layout = QVBoxLayout()
-        rep_layout.addWidget(QLabel("Replicate (optional):"))
-        self._rep_col_combo = QComboBox()
-        self._rep_col_combo.addItem("(None)")
-        self._rep_col_combo.setMinimumWidth(120)
-        self._rep_col_combo.setToolTip("For INDEPENDENT data: Different individuals at each timepoint")
-        rep_layout.addWidget(self._rep_col_combo)
-        mapping_layout.addLayout(rep_layout)
-
         # Subject column (optional)
         subj_layout = QVBoxLayout()
         subj_layout.addWidget(QLabel("Subject (optional):"))
@@ -699,15 +689,12 @@ class DataPanel(QWidget):
             self._time_col_combo.clear()
             self._cond_col_combo.clear()
             self._cond_col_combo.addItem("(None)")
-            self._rep_col_combo.clear()
-            self._rep_col_combo.addItem("(None)")
             self._subj_col_combo.clear()
             self._subj_col_combo.addItem("(None)")
 
             for col in columns:
                 self._time_col_combo.addItem(col)
                 self._cond_col_combo.addItem(col)
-                self._rep_col_combo.addItem(col)
                 self._subj_col_combo.addItem(col)
 
             # Auto-select likely columns
@@ -724,13 +711,6 @@ class DataPanel(QWidget):
                 idx = self._cond_col_combo.findText(cond_col)
                 if idx >= 0:
                     self._cond_col_combo.setCurrentIndex(idx)
-
-            # Auto-select replicate column
-            rep_col = loader._replicate_col
-            if rep_col:
-                idx = self._rep_col_combo.findText(rep_col)
-                if idx >= 0:
-                    self._rep_col_combo.setCurrentIndex(idx)
 
             # Auto-select subject column
             subj_col = loader._subject_col
@@ -806,10 +786,6 @@ class DataPanel(QWidget):
             cond_col = self._cond_col_combo.currentText()
             if cond_col != "(None)":
                 loader.set_condition_column(cond_col)
-
-            rep_col = self._rep_col_combo.currentText()
-            if rep_col != "(None)":
-                loader.set_replicate_column(rep_col)
 
             subj_col = self._subj_col_combo.currentText()
             if subj_col != "(None)":

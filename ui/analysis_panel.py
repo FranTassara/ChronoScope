@@ -3068,33 +3068,19 @@ class AnalysisPanel(QWidget):
             # Use the loader's dataset info which has already correctly detected columns
             info = self._loader.get_dataset_info()
 
-            # DEBUG: Print what loader detected
-            print(f"[DEBUG _detect_and_display_data_type]")
-            print(f"  subject_column from loader: {info.subject_column}")
-            print(f"  replicate_column from loader: {info.replicate_column}")
-
-            # Determine data type based on loader's detection
-            # If loader detected a subject column, it's DEPENDENT
-            # Otherwise (including replicate-only data), it's INDEPENDENT
+            # Determine data type: subject column present → DEPENDENT, otherwise → INDEPENDENT
             if info.subject_column is not None:
                 data_type = "DEPENDENT (Longitudinal)"
                 description = "✓ Same subjects measured at multiple timepoints"
                 recommendation = "Recommended methods: <b>Population Mean</b>"
                 color_bg = "#E8F5E9"
                 color_border = "#4CAF50"
-            elif info.replicate_column is not None or info.subject_column is None:
-                # INDEPENDENT: either has replicate column, or no subject column
+            else:
                 data_type = "INDEPENDENT"
-                description = "✓ Different subjects/replicates at each timepoint"
+                description = "✓ Different subjects at each timepoint"
                 recommendation = "Recommended methods: <b>Single Cosinor</b>, <b>Multi-Component</b>"
                 color_bg = "#E3F2FD"
                 color_border = "#2196F3"
-            else:
-                data_type = "UNKNOWN"
-                description = "⚠ Could not determine data structure"
-                recommendation = "Check your data format. See documentation for details."
-                color_bg = "#FFF8E1"
-                color_border = "#FFC107"
 
             # Update labels - DISABLED (panel removed)
             # self._data_type_label.setText(f"<b>Data Type:</b> {data_type}<br>{description}")

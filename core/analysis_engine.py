@@ -3164,8 +3164,17 @@ class AnalysisEngine:
         prewhiten = parameters.get('prewhiten', False)
 
         try:
-            # Create series with time as index
-            series = pd.Series(values, index=times)
+            # AR-JTK requires a proper time series (one value per timepoint).
+            # Independent data with multiple replicates per timepoint would cause
+            # the Ljung-Box test to flag spurious within-timepoint autocorrelation,
+            # leading to incorrect prewhitening and a wrong acrophase.
+            # Fix: average replicates at each unique timepoint before running AR-JTK.
+            unique_times = np.unique(times)
+            if len(unique_times) < len(times):
+                avg_values = np.array([np.mean(values[times == t]) for t in unique_times])
+                series = pd.Series(avg_values, index=unique_times)
+            else:
+                series = pd.Series(values, index=times)
 
             result, autocorr_detected = _run_ar_jtk(
                 series,

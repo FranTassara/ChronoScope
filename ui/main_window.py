@@ -2,7 +2,7 @@
 Main Window
 ===========
 
-Main application window for CircaScope.
+Main application window for ChronoScope.
 Integrates data loading, analysis configuration, and results visualization.
 """
 
@@ -26,7 +26,7 @@ from ui.results_panel import ResultsPanel
 
 class MainWindow(QMainWindow):
     """
-    Main application window for CircaScope.
+    Main application window for ChronoScope.
     
     Features a tab-based interface with:
     1. Data tab - Load and configure data
@@ -35,13 +35,13 @@ class MainWindow(QMainWindow):
     4. Export tab - Export data and figures
     """
     
-    APP_NAME = "CircaScope"
+    APP_NAME = "ChronoScope"
     APP_VERSION = "1.0.0"
     
     def __init__(self):
         super().__init__()
         
-        self._settings = QSettings("CircaScope", "CircaScope")
+        self._settings = QSettings("ChronoScope", "ChronoScope")
         
         self._setup_ui()
         self._setup_menu()
@@ -146,7 +146,7 @@ class MainWindow(QMainWindow):
         # Help menu
         help_menu = menubar.addMenu("&Help")
         
-        about_action = QAction("About CircaScope", self)
+        about_action = QAction("About ChronoScope", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
         
@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "Documentation",
-            """CircaScope Documentation
+            """ChronoScope Documentation
 
 Data Input:
 - CSV files with columns: time, condition, [variables]
@@ -279,7 +279,7 @@ Analysis Methods:
 3. Rhythm Analysis: JTK, Lomb-Scargle, Wavelet, etc.
 
 For detailed documentation, visit:
-https://github.com/FranTassara/circascope
+https://github.com/FranTassara/chronoscope
             """
         )
     
@@ -357,8 +357,8 @@ https://github.com/FranTassara/circascope
 def main():
     """Application entry point."""
     app = QApplication(sys.argv)
-    app.setApplicationName("CircaScope")
-    app.setOrganizationName("CircaScope")
+    app.setApplicationName("ChronoScope")
+    app.setOrganizationName("ChronoScope")
     
     # Set style
     app.setStyle("Fusion")
