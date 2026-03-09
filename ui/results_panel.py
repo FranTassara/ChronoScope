@@ -947,8 +947,11 @@ class ResultsPanel(QWidget):
         # Check if we have nonlinear comparison results
         has_nonlinear_comparison = any(r.get('amplification_diff') is not None or r.get('lin_comp_diff') is not None for r in self._results)
 
-        # Check if we have periodogram results (Spectral Analysis, Lomb-Scargle, F24)
-        has_periodogram = any(r.get('periods') is not None and r.get('method') in ['spectral_analysis', 'lomb_scargle', 'fourier_f24'] for r in self._results)
+        # Check if we have periodogram results (Spectral Analysis, Lomb-Scargle)
+        has_periodogram = any(r.get('periods') is not None and r.get('method') in ['spectral_analysis', 'lomb_scargle'] for r in self._results)
+
+        # Check if we have Fourier F24 results (separate from generic periodogram)
+        has_f24 = any(r.get('method') == 'fourier_f24' for r in self._results)
 
         # Check if we have CosinorPy periodogram (just shows message)
         has_cosinorpy_periodogram = any(r.get('method') == 'cosinorpy_periodogram' for r in self._results)
@@ -993,7 +996,11 @@ class ResultsPanel(QWidget):
             elif has_cosinorpy_periodogram:
                 columns = ['variable', 'condition', 'method', 'message']
                 headers = ['Variable', 'Condition', 'Method', 'Status']
-            # For periodogram-based methods (Spectral, Lomb-Scargle, F24)
+            # For Fourier F24 (effect size, no p-value)
+            elif has_f24:
+                columns = ['variable', 'condition', 'method', 'period', 'dominant_period', 'power', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Target Period (h)', 'Dominant Period (h)', 'F24 Score', 'Notes']
+            # For periodogram-based methods (Spectral, Lomb-Scargle)
             elif has_periodogram:
                 columns = ['variable', 'condition', 'method', 'dominant_period', 'p_value', 'message']
                 headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'P-value', 'Notes']
@@ -1016,6 +1023,28 @@ class ResultsPanel(QWidget):
                 if any(r.get('best_model') is not None for r in self._results):
                     columns.append('best_model')
                     headers.append('Best Fit')
+            # For Harmonic Cosinor
+            elif any(r.get('method') == 'harmonic_cosinor' for r in self._results):
+                columns = ['variable', 'condition', 'method', 'period', 'n_components',
+                           'amplitude', 'acrophase_hours',
+                           'trough_times', 'peak_times',
+                           'p_value', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Period (h)', 'Harmonics',
+                           'Primary Amplitude (H1)', 'Primary Acrophase H1 (h)',
+                           'All Amplitudes', 'All Acrophases (h)',
+                           'p (F-test)', 'Notes']
+            # For Cosinor OLS
+            elif any(r.get('method') == 'cosinor_ols' for r in self._results):
+                columns = ['variable', 'condition', 'method', 'period', 'mesor', 'amplitude',
+                           'acrophase_hours', 'acrophase',
+                           'p_value', 'bonf_p_value',
+                           'p_amplitude', 'p_acrophase',
+                           'amplitude_ci', 'acrophase_ci', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Period (h)', 'MESOR', 'Amplitude',
+                           'Acrophase (h)', 'Acrophase (rad)',
+                           'p (raw)', 'p (Bonf adj)',
+                           'p(Amplitude)', 'p(Acrophase)',
+                           'CI(Amplitude)', 'CI(Acrophase)', 'Notes']
             else:
                 # Basic identification
                 columns = ['variable', 'condition', 'method', 'n_components']

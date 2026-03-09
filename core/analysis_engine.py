@@ -2114,9 +2114,9 @@ class AnalysisEngine:
         period = parameters.get('period', None)
         if period is not None:
             if isinstance(period, list):
-                period_range = [int(p) for p in period]
+                period_range = [float(p) for p in period]
             else:
-                period_range = [int(period)]
+                period_range = [float(period)]
         else:
             period_range = list(range(20, 29))  # Default circadian range
 
@@ -2127,7 +2127,7 @@ class AnalysisEngine:
         # Create series with time as index
         series = pd.Series(values, index=times)
 
-        show_all = parameters.get('show_all_periods', False) and len(period_range) > 1
+        show_all = len(period_range) > 1
 
         if show_all:
             per_period = _run_discrete_jtk_all_periods(
@@ -2244,7 +2244,8 @@ class AnalysisEngine:
             acrophase=result.acrophase_rad,
             acrophase_hours=result.acrophase_hours,
             period=result.period,
-            p_value=result.adj_p_value,
+            p_value=result.p_value,
+            bonf_p_value=result.adj_p_value,
             amplitude_ci=result.amplitude_ci,
             acrophase_ci=result.acrophase_ci,
             p_amplitude=result.amplitude_p,
@@ -2283,6 +2284,15 @@ class AnalysisEngine:
         primary_amplitude = result.amplitudes[0] if result.amplitudes else None
         primary_acrophase = result.acrophases[0] if result.acrophases else None
 
+        # Build amplitude/acrophase info for all harmonics in message
+        harmonic_details = ", ".join(
+            f"H{i+1}: A={a:.4f} φ={p:.2f}h"
+            for i, (a, p) in enumerate(zip(result.amplitudes, result.acrophases))
+        )
+        msg = result.warning or ""
+        if len(result.amplitudes) > 1:
+            msg = (msg + f" | Harmonics: [{harmonic_details}]").lstrip(" | ")
+
         return AnalysisResult(
             variable=variable,
             condition=condition,
@@ -2292,10 +2302,12 @@ class AnalysisEngine:
             period=result.period,
             p_value=result.adj_p_value,
             n_components=result.n_harmonics,
-            peak_times=result.acrophases,
+            peak_times=result.acrophases,    # all harmonic acrophases (h)
+            trough_times=result.amplitudes,  # all harmonic amplitudes (repurposed field)
             times=times,
             values=values,
-            success=True
+            success=True,
+            message=msg
         )
     
     def _run_lomb_scargle(
@@ -3193,9 +3205,9 @@ class AnalysisEngine:
         period = parameters.get('period', None)
         if period is not None:
             if isinstance(period, list):
-                period_range = [int(p) for p in period]
+                period_range = [float(p) for p in period]
             else:
-                period_range = [int(period)]
+                period_range = [float(period)]
         else:
             period_range = list(range(20, 29))  # Default circadian range
 
@@ -3237,7 +3249,7 @@ class AnalysisEngine:
                 )
 
             msg = "AR correction applied" if autocorr_detected else "No autocorrelation detected"
-            show_all = parameters.get('show_all_periods', False) and len(period_range) > 1
+            show_all = len(period_range) > 1
 
             if show_all:
                 # Re-run all-periods on the (possibly prewhitened) series used internally
@@ -3250,20 +3262,12 @@ class AnalysisEngine:
                 else:
                     series_ap = pd.Series(values, index=times)
 
-                if autocorr_detected:
-                    from .rhythm_analysis import _run_discrete_jtk
-                    temp = _run_discrete_jtk(series_ap, period_range=period_range, asymmetries=asymmetries)
-                    if temp is not None:
-                        import pandas as _pd
-                        template_vals = _generate_triangle_template_time(
-                            series_ap.index.to_numpy(), temp.period, temp.lag, temp.asymmetry
-                        )
-                        template_rank = _pd.Series(template_vals, index=series_ap.index).rank()
-                        r_rank = series_ap.rank()
-                        e = r_rank - template_rank
-                        e_pw = _prewhiten_ranked_residuals(e, maxlag=ar_lag)
-                        series_ap = template_rank + e_pw
-
+                # Always run all-periods on the original (non-prewhitened) series.
+                # Running on the prewhitened series (rank space) causes two bugs:
+                # (1) Amplitude in rank-space units instead of original data units.
+                # (2) Phase inversion: when the first JTK selects a template with tau<0,
+                #     the prewhitened series peaks where the original data troughs, so
+                #     the second JTK reports the trough time as the acrophase (off by T/2).
                 per_period = _run_discrete_jtk_all_periods(
                     series_ap, period_range=period_range, asymmetries=asymmetries
                 )
@@ -3283,7 +3287,7 @@ class AnalysisEngine:
                         lag=r.lag,
                         asymmetry=r.asymmetry,
                         n_tests=r.n_tests,
-                        amplitude=r.amplitude,
+                        amplitude=amp,  # from original data (not rank space)
                         times=times, values=values,
                         success=True,
                         message=msg,
@@ -3333,9 +3337,9 @@ class AnalysisEngine:
         period = parameters.get('period', None)
         if period is not None:
             if isinstance(period, list):
-                period_range = period
+                period_range = [float(p) for p in period]
             else:
-                period_range = DefaultPeriodRanges.CIRCADIAN
+                period_range = [float(period)]
         else:
             period_range = DefaultPeriodRanges.CIRCADIAN
 
@@ -3355,7 +3359,7 @@ class AnalysisEngine:
                     success=False, message="Analysis failed"
                 )
 
-            show_all = parameters.get('show_all_periods', False) and len(period_range) > 1
+            show_all = len(period_range) > 1
 
             if show_all:
                 per_period = _run_cosine_kendall_all_periods(

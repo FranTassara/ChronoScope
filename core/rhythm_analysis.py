@@ -962,16 +962,22 @@ def _run_ar_jtk(
     # Update method and recalculate amplitude from original data
     amp = (np.percentile(series.values, 90) - np.percentile(series.values, 10)) / 2
 
+    # Use phase parameters from temp_res (original data JTK), not jtk_res (prewhitened JTK).
+    # The prewhitening builds r_pw from the best template of temp_res. If temp_res.tau < 0,
+    # that template anti-correlates with the original data, so r_pw peaks where the original
+    # data troughs. The second JTK on r_pw then finds tau > 0 for that same template and
+    # computes acrophase at the data TROUGH (wrong by T/2). Using temp_res preserves the
+    # correct phase estimate while still benefiting from the prewhitened p-values.
     return JTKResult(
         p_value=jtk_res.p_value,
         bonf_p_value=jtk_res.bonf_p_value,
         bh_p_value=jtk_res.bh_p_value,
-        period=jtk_res.period,
+        period=temp_res.period,
         amplitude=round(amp, 4),
-        acrophase=jtk_res.acrophase,
-        asymmetry=jtk_res.asymmetry,
-        tau=jtk_res.tau,
-        lag=jtk_res.lag,
+        acrophase=temp_res.acrophase,
+        asymmetry=temp_res.asymmetry,
+        tau=temp_res.tau,
+        lag=temp_res.lag,
         n_tests=jtk_res.n_tests,
         method='AR-JTK'
     ), True
