@@ -1773,8 +1773,9 @@ def _compute_cwt(
 
     n_samples = len(y)
 
-    # Use detected interval as sampling interval
-    if detected_interval > 0:
+    # For non-uniform data that was resampled the grid interval has changed — must update.
+    # For uniform data, respect the sampling_interval provided by the caller (user or auto-detected).
+    if not is_uniform and detected_interval > 0:
         sampling_interval = detected_interval
 
     # Detrend the signal
@@ -1871,6 +1872,23 @@ def _compute_cwt(
 # LINEAR MIXED EFFECTS MODEL
 # =============================================================================
 
+def _compute_lme_ic(result, nobs: int) -> tuple:
+    """Compute AIC and BIC for a MixedLM result.
+
+    Uses log-likelihood directly to avoid statsmodels version differences.
+    k = fixed effects + 1 random intercept variance + 1 residual variance.
+    Returns (aic, bic) as floats, or (None, None) on failure.
+    """
+    try:
+        llf = float(result.llf)
+        k = len(result.params) + 2  # fixed effects + random var + residual var
+        aic = round(-2 * llf + 2 * k, 2)
+        bic = round(-2 * llf + np.log(nobs) * k, 2)
+        return aic, bic
+    except Exception:
+        return None, None
+
+
 def _fit_lme_model(
     times: np.ndarray,
     values: np.ndarray,
@@ -1913,22 +1931,30 @@ def _fit_lme_model(
     # Calculate data mean for fallback
     data_mean = float(df['y'].mean())
 
+    import warnings as _warnings
+
+    def _fit_with_fallback(model):
+        """Try fitting with lbfgs, falling back to powell/bfgs/nm on failure."""
+        for method in ('lbfgs', 'powell', 'bfgs', 'nm'):
+            try:
+                with _warnings.catch_warnings():
+                    _warnings.simplefilter("ignore")
+                    return model.fit(method=method, maxiter=2000)
+            except Exception:
+                continue
+        raise RuntimeError("LME model failed to converge with all available optimizers "
+                           "(lbfgs, powell, bfgs, nm). Try a different grouping variable "
+                           "or check that the data has sufficient between-group variability.")
+
     # Fit full model with cosinor terms
     formula = "y ~ cos_t + sin_t"
     model = smf.mixedlm(formula, df, groups=df['group'])
-
-    # Fit with suppressed warnings
-    import warnings as _warnings
-    with _warnings.catch_warnings():
-        _warnings.simplefilter("ignore")
-        result = model.fit(method='lbfgs', maxiter=1000)
+    result = _fit_with_fallback(model)
 
     # Fit null model (no rhythm) for likelihood ratio test
     null_formula = "y ~ 1"
     null_model = smf.mixedlm(null_formula, df, groups=df['group'])
-    with _warnings.catch_warnings():
-        _warnings.simplefilter("ignore")
-        null_result = null_model.fit(method='lbfgs', maxiter=1000)
+    null_result = _fit_with_fallback(null_model)
 
     # Likelihood ratio test for rhythm significance
     # LR = -2 * (log_lik_null - log_lik_full)
@@ -1993,8 +2019,8 @@ def _fit_lme_model(
         beta_cos=round(float(beta_cos), 4),
         beta_sin=round(float(beta_sin), 4),
         r_squared=round(float(r_squared), 4) if r_squared is not None else None,
-        aic=round(float(result.aic), 2) if hasattr(result, 'aic') else None,
-        bic=round(float(result.bic), 2) if hasattr(result, 'bic') else None,
+        aic=_compute_lme_ic(result, len(df))[0],
+        bic=_compute_lme_ic(result, len(df))[1],
         random_effect_var=round(float(random_effect_var), 4) if random_effect_var is not None else None,
         residual_var=round(float(residual_var), 4) if residual_var is not None else None,
         method='LME-Cosinor'

@@ -947,14 +947,22 @@ class ResultsPanel(QWidget):
         # Check if we have nonlinear comparison results
         has_nonlinear_comparison = any(r.get('amplification_diff') is not None or r.get('lin_comp_diff') is not None for r in self._results)
 
-        # Check if we have periodogram results (Spectral Analysis, Lomb-Scargle)
-        has_periodogram = any(r.get('periods') is not None and r.get('method') in ['spectral_analysis', 'lomb_scargle'] for r in self._results)
+        # Check if we have periodogram results (Spectral Analysis or Lomb-Scargle)
+        has_lomb_scargle = any(r.get('method') == 'lomb_scargle' for r in self._results)
+        has_spectral = any(r.get('method') == 'spectral_analysis' for r in self._results)
+        has_periodogram = has_lomb_scargle or has_spectral  # kept for plot routing
 
         # Check if we have Fourier F24 results (separate from generic periodogram)
         has_f24 = any(r.get('method') == 'fourier_f24' for r in self._results)
 
         # Check if we have CosinorPy periodogram (just shows message)
         has_cosinorpy_periodogram = any(r.get('method') == 'cosinorpy_periodogram' for r in self._results)
+
+        # Check if we have CircaCompare Single Fit results
+        has_circacompare_single = any(r.get('method') == 'circacompare_single' for r in self._results)
+
+        # Check if we have LME results
+        has_lme = any(r.get('method') == 'lme' for r in self._results)
 
         # Check if we have CWT (Wavelet) results
         has_cwt = any(r.get('method') == 'cwt' for r in self._results)
@@ -967,25 +975,38 @@ class ResultsPanel(QWidget):
 
         # Determine columns based on result type
         if is_comparison:
-            columns = ['variable', 'condition1', 'condition2', 'method', 'n_components', 'period',
-                      'p1', 'q1', 'p2', 'q2',  # Population-specific p/q values (for dependent multi-component)
-                      'amplitude_g0', 'amplitude_g1', 'amplitude_diff', 'p_amplitude', 'q_amplitude', 'amplitude_diff_ci',
-                      'acrophase_g0', 'acrophase_g1', 'acrophase_diff', 'p_acrophase', 'q_acrophase', 'acrophase_diff_ci',
-                      'mesor_g0', 'mesor_g1', 'mesor_diff', 'p_mesor', 'q_mesor', 'mesor_diff_ci',
-                      'me', 'resid_se', 'aic', 'bic']
-            headers = ['Variable', 'Cond1', 'Cond2', 'Method', 'Components', 'Period (h)',
-                      'p-Cond1', 'q-Cond1', 'p-Cond2', 'q-Cond2',  # Individual condition rhythm p/q values
-                      'Amp-1', 'Amp-2', 'Amp-Diff', 'p-Amp', 'q-Amp', 'CI-Amp',
-                      'Acro-1', 'Acro-2', 'Acro-Diff', 'p-Acro', 'q-Acro', 'CI-Acro',
-                      'MESOR-1', 'MESOR-2', 'MESOR-Diff', 'p-MESOR', 'q-MESOR', 'CI-MESOR',
-                      'ME', 'Resid-SE', 'AIC', 'BIC']
+            has_circacompare_compare = any(r.get('method') == 'circacompare_compare' for r in self._results)
 
-            # Add nonlinear comparison columns if present
-            if has_nonlinear_comparison:
-                columns.extend(['amplification_g0', 'amplification_g1', 'amplification_diff', 'p_amplification', 'q_amplification', 'amplification_diff_ci',
-                               'lin_comp_g0', 'lin_comp_g1', 'lin_comp_diff', 'p_lin_comp', 'q_lin_comp', 'lin_comp_diff_ci'])
-                headers.extend(['Amplif-1', 'Amplif-2', 'Amplif-Diff', 'p-Amplif', 'q-Amplif', 'CI-Amplif',
-                               'LinComp-1', 'LinComp-2', 'LinComp-Diff', 'p-LinComp', 'q-LinComp', 'CI-LinComp'])
+            if has_circacompare_compare:
+                columns = ['variable', 'condition1', 'condition2', 'method', 'period',
+                           'mesor_g0', 'mesor_g1', 'mesor_diff', 'mesor_diff_ci', 'p_mesor',
+                           'amplitude_g0', 'amplitude_g1', 'amplitude_diff', 'amplitude_diff_ci', 'p_amplitude',
+                           'acrophase_g0_hours', 'acrophase_g1_hours', 'acrophase_diff_hours', 'acrophase_diff_ci', 'p_acrophase']
+                headers = ['Variable', 'Cond1', 'Cond2', 'Method', 'Period (h)',
+                           'MESOR-1', 'MESOR-2', 'MESOR-Diff', 'CI (MESOR-Diff)', 'sig (MESOR)',
+                           'Amp-1', 'Amp-2', 'Amp-Diff', 'CI (Amp-Diff)', 'sig (Amp)',
+                           'Acro-1 (h)', 'Acro-2 (h)', 'Acro-Diff (h)', 'CI (Acro-Diff, rad)', 'sig (Acro)']
+            else:
+                # CosinorPy / generic comparison table
+                columns = ['variable', 'condition1', 'condition2', 'method', 'n_components', 'period',
+                          'p1', 'q1', 'p2', 'q2',  # Population-specific p/q values (for dependent multi-component)
+                          'amplitude_g0', 'amplitude_g1', 'amplitude_diff', 'p_amplitude', 'q_amplitude', 'amplitude_diff_ci',
+                          'acrophase_g0', 'acrophase_g1', 'acrophase_diff', 'p_acrophase', 'q_acrophase', 'acrophase_diff_ci',
+                          'mesor_g0', 'mesor_g1', 'mesor_diff', 'p_mesor', 'q_mesor', 'mesor_diff_ci',
+                          'me', 'resid_se', 'aic', 'bic']
+                headers = ['Variable', 'Cond1', 'Cond2', 'Method', 'Components', 'Period (h)',
+                          'p-Cond1', 'q-Cond1', 'p-Cond2', 'q-Cond2',
+                          'Amp-1', 'Amp-2', 'Amp-Diff', 'p-Amp', 'q-Amp', 'CI-Amp',
+                          'Acro-1', 'Acro-2', 'Acro-Diff', 'p-Acro', 'q-Acro', 'CI-Acro',
+                          'MESOR-1', 'MESOR-2', 'MESOR-Diff', 'p-MESOR', 'q-MESOR', 'CI-MESOR',
+                          'ME', 'Resid-SE', 'AIC', 'BIC']
+
+                # Add nonlinear comparison columns if present
+                if has_nonlinear_comparison:
+                    columns.extend(['amplification_g0', 'amplification_g1', 'amplification_diff', 'p_amplification', 'q_amplification', 'amplification_diff_ci',
+                                   'lin_comp_g0', 'lin_comp_g1', 'lin_comp_diff', 'p_lin_comp', 'q_lin_comp', 'lin_comp_diff_ci'])
+                    headers.extend(['Amplif-1', 'Amplif-2', 'Amplif-Diff', 'p-Amplif', 'q-Amplif', 'CI-Amplif',
+                                   'LinComp-1', 'LinComp-2', 'LinComp-Diff', 'p-LinComp', 'q-LinComp', 'CI-LinComp'])
         else:
             # Check if this is an Activity Profile visualization
             is_activity_profile = any(r.get('type') == 'activity_profile' for r in self._results)
@@ -998,12 +1019,37 @@ class ResultsPanel(QWidget):
                 headers = ['Variable', 'Condition', 'Method', 'Status']
             # For Fourier F24 (effect size, no p-value)
             elif has_f24:
-                columns = ['variable', 'condition', 'method', 'period', 'dominant_period', 'power', 'message']
-                headers = ['Variable', 'Condition', 'Method', 'Target Period (h)', 'Dominant Period (h)', 'F24 Score', 'Notes']
-            # For periodogram-based methods (Spectral, Lomb-Scargle)
-            elif has_periodogram:
-                columns = ['variable', 'condition', 'method', 'dominant_period', 'p_value', 'message']
-                headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'P-value', 'Notes']
+                columns = ['variable', 'condition', 'method', 'period', 'dominant_period', 'power', 'dominant_power', 'target_power', 'correlation_r', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Target Period (h)', 'Dominant Period (h)', 'F24 Score', 'Dominant Power', 'Target Power', 'Correlation r', 'Notes']
+            # For Spectral Analysis (Periodogram)
+            elif has_spectral:
+                columns = ['variable', 'condition', 'method', 'dominant_period', 'power', 'threshold', 'significant_peaks', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'Max Power', 'Threshold (Refinetti)', 'Significant Peaks (h)', 'Notes']
+            # For Lomb-Scargle
+            elif has_lomb_scargle:
+                columns = ['variable', 'condition', 'method', 'dominant_period', 'power', 'p_value', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'Dominant Power', 'FAP', 'Notes']
+            # For CircaCompare Single Fit
+            elif has_circacompare_single:
+                columns = ['variable', 'condition', 'method', 'period',
+                           'mesor', 'se_mesor', 'mesor_ci',
+                           'amplitude', 'se_amplitude', 'amplitude_ci',
+                           'acrophase_hours', 'se_acrophase', 'acrophase_ci']
+                headers = ['Variable', 'Condition', 'Method', 'Period (h)',
+                           'MESOR', 'SE (MESOR)', 'CI (MESOR)',
+                           'Amplitude', 'SE (Amplitude)', 'CI (Amplitude)',
+                           'Acrophase (h)', 'SE (Acrophase)', 'CI (Acrophase, rad)']
+            # For LME results
+            elif has_lme:
+                columns = ['variable', 'condition', 'method', 'period', 'mesor', 'amplitude',
+                           'acrophase_hours', 'p_value', 'r_squared', 'aic', 'bic',
+                           'random_effect_var', 'residual_var', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Period (h)', 'MESOR', 'Amplitude',
+                           'Acrophase (h)', 'p (LRT)', 'R² (marginal)', 'AIC', 'BIC',
+                           'Var (random)', 'Var (residual)', 'Notes']
+                if any(r.get('best_model') is not None for r in self._results):
+                    columns.append('best_model')
+                    headers.append('Best Period')
             # For CWT (Wavelet) results
             elif has_cwt:
                 columns = ['variable', 'condition', 'method', 'period', 'power', 'period_variation', 'amplitude_modulations']

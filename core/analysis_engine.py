@@ -156,6 +156,9 @@ class AnalysisResult:
     n_tests: Optional[int] = None         # Number of hypotheses tested (JTK)
     power: Optional[float] = None  # Lomb-Scargle
     dominant_period: Optional[float] = None
+    dominant_power: Optional[float] = None  # Fourier F24
+    target_power: Optional[float] = None    # Fourier F24
+    correlation_r: Optional[float] = None   # Fourier F24 (replicate correlation)
     n_components: Optional[int] = None  # Multi-component cosinor
     amplification: Optional[float] = None  # Nonlinear cosinor - damping/forcing coefficient
     lin_comp: Optional[float] = None  # Nonlinear cosinor - linear trend component
@@ -178,6 +181,15 @@ class AnalysisResult:
     scalogram_periods: Optional[np.ndarray] = None  # Period array for scalogram
     period_variation: Optional[float] = None  # CWT period variation
     amplitude_modulations: Optional[int] = None  # CWT amplitude modulation count
+
+    # LME-specific
+    random_effect_var: Optional[float] = None  # Between-group (random intercept) variance
+    residual_var: Optional[float] = None        # Within-group residual variance
+
+    # CircaCompare-specific (standard errors)
+    se_mesor: Optional[float] = None
+    se_amplitude: Optional[float] = None
+    se_acrophase: Optional[float] = None
 
     # Raw data for plotting
     times: Optional[np.ndarray] = None
@@ -238,10 +250,15 @@ class ComparisonResult:
     q1: Optional[float] = None  # Condition 1 rhythm detection q-value
     q2: Optional[float] = None  # Condition 2 rhythm detection q-value
 
+    # Acrophase in hours (CircaCompare)
+    acrophase_g0_hours: Optional[float] = None
+    acrophase_g1_hours: Optional[float] = None
+
     # Differences
     mesor_diff: Optional[float] = None
     amplitude_diff: Optional[float] = None
     acrophase_diff: Optional[float] = None
+    acrophase_diff_hours: Optional[float] = None
 
     # Confidence intervals for differences (tuple of lower, upper)
     amplitude_diff_ci: Optional[Tuple[float, float]] = None
@@ -490,7 +507,7 @@ class AnalysisEngine:
 
             elif analysis_type == AnalysisType.CWT:
                 return self._run_cwt(
-                    times, values, variable, condition, parameters
+                    data, variable, condition, time_col, condition_col, parameters
                 )
 
             elif analysis_type == AnalysisType.LME:
@@ -1946,6 +1963,7 @@ class AnalysisEngine:
             if acrophase_hours < 0:
                 acrophase_hours += p
 
+            se = result.standard_errors
             results.append(AnalysisResult(
                 variable=variable,
                 condition=condition,
@@ -1958,6 +1976,9 @@ class AnalysisEngine:
                 mesor_ci=result.mesor_ci,
                 amplitude_ci=result.amplitude_ci,
                 acrophase_ci=result.acrophase_ci,
+                se_mesor=float(se[0]) if se is not None else None,
+                se_amplitude=float(se[1]) if se is not None else None,
+                se_acrophase=float(se[2]) if se is not None else None,
                 times=times,
                 values=values,
                 success=getattr(result, 'success', True)
@@ -2068,12 +2089,15 @@ class AnalysisEngine:
                 amplitude_g1=result.amplitude_g1,
                 acrophase_g0=result.acrophase_g0,
                 acrophase_g1=result.acrophase_g1,
+                acrophase_g0_hours=result.acrophase_g0_hours,
+                acrophase_g1_hours=result.acrophase_g1_hours,
                 p_mesor=p_mesor,
                 p_amplitude=p_amplitude,
                 p_acrophase=p_acrophase,
                 mesor_diff=result.d_mesor,
                 amplitude_diff=result.d_amplitude,
                 acrophase_diff=result.d_acrophase,
+                acrophase_diff_hours=result.d_acrophase_hours,
                 mesor_diff_ci=mesor_diff_ci,
                 amplitude_diff_ci=amplitude_diff_ci,
                 acrophase_diff_ci=acrophase_diff_ci,
@@ -2323,6 +2347,7 @@ class AnalysisEngine:
 
         period_range = parameters.get('period_range', (18.0, 32.0))
         n_periods = parameters.get('n_periods', 1000)
+        alpha = parameters.get('alpha', 0.05)
 
         result = _compute_lomb_scargle(times, values, period_range=period_range, n_periods=n_periods)
 
@@ -2332,6 +2357,11 @@ class AnalysisEngine:
                 method="lomb_scargle",
                 success=False, message="Lomb-Scargle failed"
             )
+
+        fap = result.false_alarm_probability
+        is_significant = fap is not None and fap < alpha
+        msg = (f"FAP={fap:.4f} ({'significant' if is_significant else 'not significant'}, "
+               f"α={alpha}), dominant period={result.dominant_period:.2f}h")
 
         return AnalysisResult(
             variable=variable,
@@ -2345,7 +2375,8 @@ class AnalysisEngine:
             power_spectrum=result.power_spectrum,
             times=times,
             values=values,
-            success=True
+            success=True,
+            message=msg
         )
     
     # =========================================================================
@@ -3170,6 +3201,7 @@ class AnalysisEngine:
                 condition=condition,
                 method="spectral_analysis",
                 dominant_period=dominant_per,
+                power=float(Pxx[max_idx]),
                 period=dominant_per,
                 periods=per,
                 power_spectrum=Pxx,
@@ -3423,30 +3455,81 @@ class AnalysisEngine:
     ) -> AnalysisResult:
         """Run Fourier F24 analysis (effect size measure).
 
-        Note: F24 is an effect size measure, not a significance test.
-        Requires at least 2 replicates for full analysis.
+        Uses the two-replicate method (with correlation_r) when a 'replicate'
+        or 'subject' column is present and has at least 2 unique values.
+        Falls back to the single-series method otherwise.
         """
-        from .rhythm_analysis import _compute_fourier_f24
+        from .rhythm_analysis import _compute_fourier_f24, _compute_fourier_f24_with_replicates
 
         target_period = parameters.get('target_period', 24.0)
         n_permutations = parameters.get('n_permutations', 1000)
 
         try:
             # Filter data for this condition
-            cond_data = data[data[condition_col] == condition]
-            times = cond_data[time_col].values.astype(float)
-            values = cond_data[variable].values.astype(float)
+            cond_data = data[data[condition_col] == condition].copy()
 
-            # Remove NaN
-            mask = ~(np.isnan(times) | np.isnan(values))
-            times = times[mask]
-            values = values[mask]
+            # Raw times/values for storing in result (used for plotting)
+            all_times = cond_data[time_col].values.astype(float)
+            all_values = cond_data[variable].values.astype(float)
+            valid = ~(np.isnan(all_times) | np.isnan(all_values))
+            all_times = all_times[valid]
+            all_values = all_values[valid]
 
-            result = _compute_fourier_f24(
-                times, values,
-                target_period=target_period,
-                n_permutations=n_permutations
-            )
+            # Detect replicate column
+            rep_col = None
+            for col in ('replicate', 'subject'):
+                if col in cond_data.columns:
+                    rep_col = col
+                    break
+
+            use_replicates = rep_col is not None and cond_data[rep_col].nunique() >= 2
+
+            if use_replicates:
+                rep_ids = cond_data[rep_col].unique()
+
+                if len(rep_ids) == 2:
+                    rep1 = cond_data[cond_data[rep_col] == rep_ids[0]]
+                    rep2 = cond_data[cond_data[rep_col] == rep_ids[1]]
+                    times1 = rep1[time_col].values.astype(float)
+                    values1 = rep1[variable].values.astype(float)
+                    times2 = rep2[time_col].values.astype(float)
+                    values2 = rep2[variable].values.astype(float)
+                else:
+                    # More than 2 replicates: randomly split into two groups and average
+                    rng = np.random.default_rng()
+                    indices = np.arange(len(rep_ids))
+                    rng.shuffle(indices)
+                    mid = len(indices) // 2
+                    group1_ids = rep_ids[indices[:mid]]
+                    group2_ids = rep_ids[indices[mid:]]
+
+                    g1_avg = (cond_data[cond_data[rep_col].isin(group1_ids)]
+                              .groupby(time_col)[variable].mean().reset_index())
+                    g2_avg = (cond_data[cond_data[rep_col].isin(group2_ids)]
+                              .groupby(time_col)[variable].mean().reset_index())
+
+                    times1 = g1_avg[time_col].values.astype(float)
+                    values1 = g1_avg[variable].values.astype(float)
+                    times2 = g2_avg[time_col].values.astype(float)
+                    values2 = g2_avg[variable].values.astype(float)
+
+                # Remove NaN per replicate
+                mask1 = ~(np.isnan(times1) | np.isnan(values1))
+                mask2 = ~(np.isnan(times2) | np.isnan(values2))
+                times1, values1 = times1[mask1], values1[mask1]
+                times2, values2 = times2[mask2], values2[mask2]
+
+                result = _compute_fourier_f24_with_replicates(
+                    times1, values1, times2, values2,
+                    target_period=target_period,
+                    n_permutations=n_permutations
+                )
+            else:
+                result = _compute_fourier_f24(
+                    all_times, all_values,
+                    target_period=target_period,
+                    n_permutations=n_permutations
+                )
 
             if result is None:
                 return AnalysisResult(
@@ -3457,7 +3540,8 @@ class AnalysisEngine:
 
             # F24 > 2 is typically considered rhythmic (Wijnen et al., 2006)
             is_rhythmic = result.f24_score > 2.0
-            msg = f"F24={result.f24_score:.2f} ({'rhythmic' if is_rhythmic else 'not rhythmic'}, threshold=2.0)"
+            rep_note = " (2-replicate method)" if use_replicates else ""
+            msg = f"F24={result.f24_score:.2f} ({'rhythmic' if is_rhythmic else 'not rhythmic'}, threshold=2.0){rep_note}"
 
             # Convert frequencies to periods for plotting
             frequencies = result.frequencies
@@ -3474,10 +3558,13 @@ class AnalysisEngine:
                 period=result.target_period,
                 dominant_period=result.dominant_period,
                 power=result.f24_score,  # F24 score as effect size
-                times=times,
-                values=values,
-                periods=periods,  # Add periods for plotting
-                power_spectrum=result.power_spectrum,  # Add power spectrum for plotting
+                dominant_power=result.dominant_power,
+                target_power=result.target_power,
+                correlation_r=result.correlation_r,
+                times=all_times,
+                values=all_values,
+                periods=periods,
+                power_spectrum=result.power_spectrum,
                 success=True,
                 message=msg
             )
@@ -3490,68 +3577,168 @@ class AnalysisEngine:
 
     def _run_cwt(
         self,
-        times: np.ndarray,
-        values: np.ndarray,
+        data: pd.DataFrame,
         variable: str,
         condition: str,
+        time_col: str,
+        condition_col: str,
         parameters: Dict[str, Any]
     ) -> AnalysisResult:
-        """Run Continuous Wavelet Transform analysis."""
+        """Run Continuous Wavelet Transform analysis.
+
+        Uses per-subject CWT when a 'replicate' or 'subject' column is present
+        and has at least 2 unique values, then aggregates by averaging global
+        wavelet spectra across subjects.  Falls back to single-series CWT otherwise.
+        """
         from .rhythm_analysis import _compute_cwt
 
-        sampling_interval = parameters.get('sampling_interval', None)
-        if sampling_interval is None:
-            # Auto-detect sampling interval
-            sorted_times = np.sort(times)
-            diffs = np.diff(sorted_times)
-            nonzero_diffs = diffs[diffs > 0]
-            sampling_interval = np.median(nonzero_diffs) if len(nonzero_diffs) > 0 else 1.0
-
+        sampling_interval_param = parameters.get('sampling_interval', None)
         wavelet = parameters.get('wavelet', 'cmor1.5-1.0')
         period_range = parameters.get('period_range', (20.0, 28.0))
 
         try:
-            result = _compute_cwt(
-                times, values,
-                sampling_interval=sampling_interval,
-                wavelet=wavelet,
-                period_range=period_range
-            )
+            cond_data = data[data[condition_col] == condition].copy()
 
-            if result is None:
+            # Full times/values for storing in result (used for raw-data plot)
+            all_times = cond_data[time_col].values.astype(float)
+            all_values = cond_data[variable].values.astype(float)
+            valid = ~(np.isnan(all_times) | np.isnan(all_values))
+            all_times = all_times[valid]
+            all_values = all_values[valid]
+
+            # Detect replicate/subject column
+            rep_col = None
+            for col in ('replicate', 'subject'):
+                if col in cond_data.columns:
+                    rep_col = col
+                    break
+
+            use_subjects = rep_col is not None and cond_data[rep_col].nunique() >= 2
+
+            def _auto_si(t: np.ndarray) -> float:
+                """Auto-detect sampling interval from a time array."""
+                diffs = np.diff(np.sort(t))
+                nonzero = diffs[diffs > 0]
+                return float(np.median(nonzero)) if len(nonzero) > 0 else 1.0
+
+            if use_subjects:
+                subject_ids = cond_data[rep_col].unique()
+                subject_results = []
+
+                for sid in subject_ids:
+                    subj = cond_data[cond_data[rep_col] == sid]
+                    t = subj[time_col].values.astype(float)
+                    v = subj[variable].values.astype(float)
+                    mask = ~(np.isnan(t) | np.isnan(v))
+                    t, v = t[mask], v[mask]
+                    if len(t) < 4:
+                        continue
+                    si = sampling_interval_param if sampling_interval_param is not None else _auto_si(t)
+                    r = _compute_cwt(t, v, sampling_interval=si, wavelet=wavelet, period_range=period_range)
+                    if r is not None and not np.isnan(r.dominant_period):
+                        subject_results.append(r)
+
+                if not subject_results:
+                    return AnalysisResult(
+                        variable=variable, condition=condition,
+                        method="cwt", success=False,
+                        message="CWT failed for all subjects"
+                    )
+
+                # Average global wavelet spectra (power averaged over time per period)
+                # global_power shape is (n_periods,) — same for all subjects since
+                # period_range is identical; only the time dimension may differ.
+                global_powers = [
+                    r.power_matrix.mean(axis=1)
+                    for r in subject_results
+                    if r.power_matrix is not None
+                ]
+
+                if global_powers and all(len(gp) == len(global_powers[0]) for gp in global_powers):
+                    avg_global = np.mean(global_powers, axis=0)
+                    period_array = subject_results[0].periods
+                    dominant_period = float(period_array[np.argmax(avg_global)])
+                    mean_power = float(np.mean(avg_global))
+                else:
+                    # Fallback: average scalar outputs
+                    dominant_period = float(np.mean([r.dominant_period for r in subject_results]))
+                    mean_power = float(np.mean([r.mean_power for r in subject_results]))
+
+                period_variation = float(np.mean([r.period_variation for r in subject_results]))
+                amplitude_modulations = int(round(np.mean([r.amplitude_modulations for r in subject_results])))
+
+                n = len(subject_results)
+                msg = (f"Multi-subject CWT (n={n}): dominant period={dominant_period:.2f}h, "
+                       f"period variation={period_variation:.2f}h, "
+                       f"amplitude modulations={amplitude_modulations}")
+
+                # Use first subject's scalogram as representative for the plot
+                rep = subject_results[0]
                 return AnalysisResult(
-                    variable=variable, condition=condition,
-                    method="cwt",
-                    success=False, message="Analysis failed"
+                    variable=variable, condition=condition, method="cwt",
+                    period=dominant_period, dominant_period=dominant_period,
+                    power=mean_power,
+                    period_variation=period_variation,
+                    amplitude_modulations=amplitude_modulations,
+                    times=all_times, values=all_values,
+                    scalogram_power=rep.power_matrix,
+                    scalogram_times=rep.times,
+                    scalogram_periods=rep.periods,
+                    success=True, message=msg
                 )
 
+            else:
+                # Single series: original behaviour
+                si = sampling_interval_param if sampling_interval_param is not None else _auto_si(all_times)
+                result = _compute_cwt(
+                    all_times, all_values,
+                    sampling_interval=si,
+                    wavelet=wavelet,
+                    period_range=period_range
+                )
+
+                if result is None:
+                    return AnalysisResult(
+                        variable=variable, condition=condition,
+                        method="cwt", success=False, message="Analysis failed"
+                    )
+
+                if np.isnan(result.dominant_period):
+                    total_duration = float(all_times.max() - all_times.min()) if len(all_times) > 1 else 0.0
+                    max_analyzable = total_duration / 3.0
+                    return AnalysisResult(
+                        variable=variable, condition=condition,
+                        method="cwt", success=False,
+                        message=(f"Time series too short for period range "
+                                 f"[{period_range[0]:.1f}, {period_range[1]:.1f}]h. "
+                                 f"Data spans {total_duration:.1f}h; maximum analyzable period "
+                                 f"is {max_analyzable:.1f}h. Reduce the period range or use "
+                                 f"longer time series.")
+                    )
+
+                return AnalysisResult(
+                    variable=variable, condition=condition, method="cwt",
+                    period=result.dominant_period,
+                    dominant_period=result.dominant_period,
+                    power=result.mean_power,
+                    period_variation=result.period_variation,
+                    amplitude_modulations=result.amplitude_modulations,
+                    times=all_times, values=all_values,
+                    scalogram_power=result.power_matrix,
+                    scalogram_times=result.times,
+                    scalogram_periods=result.periods,
+                    success=True,
+                    message=f"Period variation: {result.period_variation:.2f}h, Amplitude modulations: {result.amplitude_modulations}"
+                )
+
+        except ImportError:
             return AnalysisResult(
-                variable=variable,
-                condition=condition,
-                method="cwt",
-                period=result.dominant_period,
-                dominant_period=result.dominant_period,
-                power=result.mean_power,
-                period_variation=result.period_variation,
-                amplitude_modulations=result.amplitude_modulations,
-                times=times,
-                values=values,
-                scalogram_power=result.power_matrix,
-                scalogram_times=result.times,
-                scalogram_periods=result.periods,
-                success=True,
-                message=f"Period variation: {result.period_variation:.2f}h, Amplitude modulations: {result.amplitude_modulations}"
-            )
-        except ImportError as e:
-            return AnalysisResult(
-                variable=variable, condition=condition,
-                method="cwt",
+                variable=variable, condition=condition, method="cwt",
                 success=False, message="PyWavelets not installed. Install with: pip install PyWavelets"
             )
         except Exception as e:
             return AnalysisResult(
-                variable=variable, condition=condition,
-                method="cwt",
+                variable=variable, condition=condition, method="cwt",
                 success=False, message=f"Error: {str(e)}"
             )
 
@@ -3683,9 +3870,10 @@ class AnalysisEngine:
         from .rhythm_analysis import _fit_lme_model
 
         period = parameters.get('period', 24.0)
-        # Handle period being a list (use single value for LME cosinor)
         if isinstance(period, (list, tuple)):
-            period = period[0] if len(period) == 1 else 24.0  # Use first or default to 24h
+            period_list = [float(p) for p in period] if len(period) > 0 else [24.0]
+        else:
+            period_list = [float(period)]
         random_effect = parameters.get('random_effect', 'replicate')
 
         try:
@@ -3695,92 +3883,108 @@ class AnalysisEngine:
             else:
                 df = data.copy()
 
-            # Check if random effect column exists
+            # Resolve random effect column
             if random_effect not in df.columns:
-                # Try to find a suitable grouping column
                 potential_groups = ['replicate', 'subject', 'animal', 'id', 'sample', 'day']
                 found_group = None
                 for col in potential_groups:
                     if col in df.columns:
                         found_group = col
                         break
-
                 if found_group is None:
                     return AnalysisResult(
                         variable=variable, condition=condition,
-                        method="lme",
-                        success=False,
+                        method="lme", success=False,
                         message=f"Random effect column '{random_effect}' not found. "
                                 f"Available columns: {list(df.columns)}. "
                                 f"Please specify a grouping variable (e.g., subject ID, replicate)."
                     )
                 random_effect = found_group
 
-            # Get times, values, and groups
             times = df[time_col].values.astype(float)
             values = df[variable].values.astype(float)
             groups = df[random_effect].values
 
-            # Check for sufficient data
             if len(times) < 5:
                 return AnalysisResult(
                     variable=variable, condition=condition,
-                    method="lme",
-                    success=False,
+                    method="lme", success=False,
                     message="Not enough data points for LME analysis (need at least 5)"
                 )
 
-            # Check for multiple groups
             unique_groups = np.unique(groups)
             if len(unique_groups) < 2:
                 return AnalysisResult(
                     variable=variable, condition=condition,
-                    method="lme",
-                    success=False,
+                    method="lme", success=False,
                     message=f"LME requires at least 2 groups for random effect. "
                             f"Found only {len(unique_groups)} unique value(s) in '{random_effect}' column."
                 )
 
-            result = _fit_lme_model(
-                times=times,
-                values=values,
-                random_groups=groups,
-                period=period
-            )
-
-            if result is None:
+            def _make_result(lme_res, p):
                 return AnalysisResult(
-                    variable=variable, condition=condition,
-                    method="lme",
-                    success=False, message="Analysis failed"
+                    variable=variable, condition=condition, method="lme",
+                    mesor=lme_res.mesor,
+                    amplitude=lme_res.amplitude,
+                    acrophase=lme_res.acrophase_rad,
+                    acrophase_hours=lme_res.acrophase,
+                    period=lme_res.period,
+                    p_value=lme_res.p_value,
+                    r_squared=lme_res.r_squared,
+                    aic=lme_res.aic,
+                    bic=lme_res.bic,
+                    random_effect_var=lme_res.random_effect_var,
+                    residual_var=lme_res.residual_var,
+                    times=times, values=values,
+                    success=True,
+                    message=f"Random effect: {random_effect} ({len(unique_groups)} groups), period={p:.2f}h"
                 )
 
-            return AnalysisResult(
-                variable=variable,
-                condition=condition,
-                method="lme",
-                mesor=result.mesor,
-                amplitude=result.amplitude,
-                acrophase=result.acrophase_rad,
-                acrophase_hours=result.acrophase,
-                period=result.period,
-                p_value=result.p_value,
-                r_squared=result.r_squared,
-                aic=result.aic,
-                bic=result.bic,
-                times=times,
-                values=values,
-                success=True,
-                message=f"Random effect: {random_effect} ({len(unique_groups)} groups)"
-            )
+            if len(period_list) == 1:
+                result = _fit_lme_model(
+                    times=times, values=values, random_groups=groups, period=period_list[0]
+                )
+                if result is None:
+                    return AnalysisResult(
+                        variable=variable, condition=condition,
+                        method="lme", success=False, message="Analysis failed"
+                    )
+                return _make_result(result, period_list[0])
+
+            # Multi-period scan: fit at each period, mark best by lowest p-value
+            per_period = []
+            for p in period_list:
+                try:
+                    r = _fit_lme_model(
+                        times=times, values=values, random_groups=groups, period=p
+                    )
+                    if r is not None:
+                        per_period.append((p, r))
+                except Exception:
+                    continue
+
+            if not per_period:
+                return AnalysisResult(
+                    variable=variable, condition=condition,
+                    method="lme", success=False,
+                    message="LME analysis failed for all tested periods"
+                )
+
+            best_p_val = min(r.p_value for _, r in per_period)
+            results = []
+            for p, r in per_period:
+                ar = _make_result(r, p)
+                ar.best_model = "Yes" if r.p_value == best_p_val else "No"
+                results.append(ar)
+            return results
+
         except Exception as e:
             import traceback
             print(f"[DEBUG _run_lme] Exception caught: {e}")
             print(traceback.format_exc())
             return AnalysisResult(
                 variable=variable, condition=condition,
-                method="lme",
-                success=False, message=f"Error: {str(e)}"
+                method="lme", success=False, message=f"Error: {str(e)}"
             )
 
     # ========================================================================

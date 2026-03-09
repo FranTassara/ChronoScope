@@ -2292,15 +2292,19 @@ class AnalysisPanel(QWidget):
 
             # 7. Lomb-Scargle
             elif method_text == "Lomb-Scargle":
-                self._show_param("Period:")  # Period Range (Min-Max)
+                self._show_param("Period:")  # Period Range (Min-Max), Step hidden
                 self._show_param("Oversampling:")
                 self._show_param("Significance Level:")
+                self._period_min_spin.setValue(18.0)
+                self._period_max_spin.setValue(32.0)
+                self._hide_period_step()
 
             # 8. Wavelet (CWT)
             elif method_text == "Wavelet (CWT)":
-                self._show_param("Period:")  # Period Range (Min-Max)
+                self._show_param("Period:")  # Period Range (Min-Max), Step hidden
                 self._show_param("Wavelet Type:")
                 self._show_param("Sampling Interval:")
+                self._hide_period_step()
 
             # 9. Spectral Analysis (Periodogram)
             elif method_text == "Spectral Analysis (Periodogram)":
@@ -2382,6 +2386,19 @@ class AnalysisPanel(QWidget):
                             child = layout.itemAt(j)
                             if child and child.widget():
                                 child.widget().setVisible(True)
+                break
+
+    def _hide_period_step(self):
+        """Hide the Step sub-widgets from the Period row (irrelevant for Lomb-Scargle)."""
+        for i in range(self._params_layout.rowCount()):
+            label_item = self._params_layout.itemAt(i, QFormLayout.LabelRole)
+            if label_item and label_item.widget() and label_item.widget().text() == "Period:":
+                field_item = self._params_layout.itemAt(i, QFormLayout.FieldRole)
+                if field_item and field_item.widget():
+                    layout = field_item.widget().layout()
+                    if layout and layout.count() >= 5:
+                        layout.itemAt(3).widget().setVisible(False)  # "Step:" label
+                        layout.itemAt(4).widget().setVisible(False)  # step spinbox
                 break
 
     def _show_param(self, label: str):
@@ -2906,7 +2923,7 @@ class AnalysisPanel(QWidget):
             'target_period': self._target_period_spin.value(),
             'n_periods': self._n_periods_spin.value(),
             'alpha': float(self._alpha_combo.currentText()),
-            'wavelet': 'cmor1.5-1.0' if 'Morlet' in self._wavelet_combo.currentText() else 'ricker',
+            'wavelet': 'cmor1.5-1.0' if 'Morlet' in self._wavelet_combo.currentText() else 'mexh',
             'sampling_interval': None if self._sampling_interval_spin.value() == 0.0 else self._sampling_interval_spin.value(),
             'detrending': self._detrending_check.isChecked(),
             # LME parameters
