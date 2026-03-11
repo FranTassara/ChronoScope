@@ -120,7 +120,8 @@ class PlotCanvas(FigureCanvas):
         acrophase_rad: float,
         period: float = 24.0,
         title: str = "",
-        condition: str = ""
+        condition: str = "",
+        n_components: int = 1
     ):
         """Plot raw data with cosinor fit overlay."""
         self.clear()
@@ -134,10 +135,25 @@ class PlotCanvas(FigureCanvas):
         ax.scatter(times, values, alpha=0.6, label='Data', color='steelblue')
 
         # Plot fit curve covering the full data range
-        # Formula: y = mesor + amplitude * cos(2π * t / period - acrophase)
         n_points = max(200, int((t_max - t_min) / period * 200))
         t_fit = np.linspace(t_min, t_max, n_points)
-        y_fit = mesor + amplitude * np.cos(2 * np.pi * t_fit / period - acrophase_rad)
+
+        if n_components > 1:
+            # Multi-component: reconstruct the full harmonic fit using OLS
+            try:
+                import statsmodels.api as sm
+                from CosinorPy.cosinor import generate_independents
+                X_raw = generate_independents(times, n_components=n_components, period=period)
+                model = sm.OLS(values, X_raw).fit()
+                X_dense = generate_independents(t_fit, n_components=n_components, period=period)
+                y_fit = model.predict(X_dense)
+            except Exception:
+                # Fallback to single-component approximation
+                y_fit = mesor + amplitude * np.cos(2 * np.pi * t_fit / period - acrophase_rad)
+        else:
+            # Single component: standard formula
+            y_fit = mesor + amplitude * np.cos(2 * np.pi * t_fit / period - acrophase_rad)
+
         ax.plot(t_fit, y_fit, 'r-', linewidth=2, label='Cosinor Fit')
 
         # Add horizontal line at MESOR
@@ -1618,9 +1634,14 @@ class ResultsPanel(QWidget):
             values = mesor + amplitude * np.cos(
                 2 * np.pi * times / period - acrophase_rad) + np.random.normal(0, amplitude * 0.1, len(times))
 
+        n_components = result.get('n_components') or 1
+        if isinstance(n_components, list):
+            n_components = n_components[0]
+
         self._fit_canvas.plot_cosinor_fit(
             times, values, mesor, amplitude, acrophase_rad,
-            period, title=variable, condition=condition
+            period, title=variable, condition=condition,
+            n_components=int(n_components)
         )
 
     def _plot_harmonic_cosinor_result(self, result: Dict, times: np.ndarray, values: np.ndarray):

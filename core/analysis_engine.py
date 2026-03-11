@@ -4384,7 +4384,7 @@ class AnalysisEngine:
 
             model_type_str = parameters.get('model_type', 'normal')
             from .cosinor_analysis import ModelType, AnalysisMethod, Criterium, DataType
-            model_type = ModelType[model_type_str.upper()] if model_type_str else ModelType.NORMAL
+            model_type = ModelType[model_type_str.upper().replace(' ', '_')] if model_type_str else ModelType.NORMAL
 
             criterium_str = parameters.get('criterium', 'RSS')
             # Replace hyphen with underscore for LOG-LIKELIHOOD
@@ -4583,7 +4583,10 @@ class AnalysisEngine:
             if not isinstance(n_components, list):
                 n_components = [n_components]
 
-            from .cosinor_analysis import Criterium, DataType
+            from .cosinor_analysis import ModelType, Criterium, DataType
+            model_type_str = parameters.get('model_type', 'normal')
+            model_type = ModelType[model_type_str.upper().replace(' ', '_')] if model_type_str else ModelType.NORMAL
+
             criterium_str = parameters.get('criterium', 'RSS')
             # Replace hyphen with underscore for LOG-LIKELIHOOD
             criterium_str = criterium_str.replace('-', '_') if criterium_str else 'RSS'
@@ -4625,6 +4628,7 @@ class AnalysisEngine:
                 condition=condition,
                 period=period,
                 n_components=n_components,
+                model_type=model_type,
                 criterium=criterium,
                 params_ci_analysis=params_ci_analysis,
                 bootstrap_size=bootstrap_size,

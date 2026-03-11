@@ -220,17 +220,18 @@ class CosinorAnalyzer:
         print(f"[DEBUG cosinor_independent] Filtered {len(df_test)} rows for {test_name}")
 
         try:
-            # Single component analysis
-            if len(n_components) == 1 and n_components[0] == 1:
+            # Single component analysis (only for normal/linear model - cosinor1 doesn't support Poisson/NB)
+            if len(n_components) == 1 and n_components[0] == 1 and model_type == ModelType.NORMAL:
                 return self._cosinor_independent_single(
                     df_test, test_name, period, save_folder, save_cosinorpy_plots
                 )
 
-            # Multi-component analysis
+            # Multi-component analysis (also handles non-normal model types for single component)
             else:
                 return self._cosinor_independent_multi(
                     df_test, test_name, period, n_components,
-                    criterium, analysis_method, bootstrap_size, save_folder, save_cosinorpy_plots
+                    criterium, analysis_method, bootstrap_size, save_folder, save_cosinorpy_plots,
+                    model_type=model_type
                 )
 
         except Exception as e:
@@ -463,7 +464,8 @@ class CosinorAnalyzer:
         analysis_method: AnalysisMethod,
         bootstrap_size: int,
         save_folder: Optional[str],
-        save_cosinorpy_plots: bool = False
+        save_cosinorpy_plots: bool = False,
+        model_type: ModelType = ModelType.NORMAL
     ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         """Multi-component cosinor analysis using cosinor.
 
@@ -471,6 +473,14 @@ class CosinorAnalyzer:
             - If only one combination (single period + single component): Dict
             - If multiple combinations: List[Dict] with best_model indicators
         """
+        # Map our ModelType enum to CosinorPy's expected string values
+        _model_type_map = {
+            ModelType.NORMAL: 'lin',
+            ModelType.POISSON: 'poisson',
+            ModelType.NEGATIVE_BINOMIAL: 'nb',
+        }
+        cosinorpy_model_type = _model_type_map.get(model_type, 'lin')
+
         print(f"[DEBUG] Using cosinor.fit_group for multi-component")
         print(f"[DEBUG] save_cosinorpy_plots={save_cosinorpy_plots}")
 
@@ -504,16 +514,26 @@ class CosinorAnalyzer:
         # =====================================================================
 
         # Map criterium to available columns in fit_group results
-        # fit_group provides: RSS, R2, R2_adj, log-likelihood (but NOT AIC/BIC)
         # Note: get_best_fits with reverse=False means MAXIMIZE, reverse=True means MINIMIZE
         criterium_map = {
-            'RSS': ('RSS', True),  # minimize RSS (reverse=True)
-            'AIC': ('R2_adj', False),  # Use R2_adj as proxy - maximize (reverse=False)
-            'BIC': ('R2_adj', False),  # Use R2_adj as proxy - maximize (reverse=False)
-            'LOG_LIKELIHOOD': ('log-likelihood', False)  # maximize log-likelihood (reverse=False)
+            'RSS': ('RSS', True),              # minimize RSS
+            'AIC': ('AIC', True),              # minimize AIC (computed below)
+            'BIC': ('BIC', True),              # minimize BIC (computed below)
+            'LOG_LIKELIHOOD': ('log-likelihood', False)  # maximize log-likelihood
         }
         criterium_column, reverse = criterium_map.get(criterium.value, ('R2_adj', False))
         print(f"[DEBUG] Using criterium column: {criterium_column} (requested: {criterium.value}), reverse={reverse}")
+
+        N_obs = len(df_test)  # Number of observations (needed for BIC)
+
+        def _add_aic_bic(df: pd.DataFrame) -> pd.DataFrame:
+            """Compute AIC and BIC from log-likelihood and n_components and add as columns."""
+            df = df.copy()
+            k = df['n_components'] * 2 + 1  # params: 2 per harmonic + MESOR
+            logL = df['log-likelihood']
+            df['AIC'] = 2 * k - 2 * logL
+            df['BIC'] = k * np.log(N_obs) - 2 * logL
+            return df
 
         # Check if we have multiple periods
         if isinstance(period, list) and len(period) > 1:
@@ -533,8 +553,11 @@ class CosinorAnalyzer:
             df_period_results = cosinor.fit_group(
                 df_test,
                 n_components=period_search_n,
-                period=period
+                period=period,
+                plot=save_cosinorpy_plots,
+                model_type=cosinorpy_model_type
             )
+            df_period_results = _add_aic_bic(df_period_results)
             print(f"[DEBUG]   Fitted {len(df_period_results)} periods with n_components={period_search_n}")
 
             # Step 1b: Select best period based on criterium
@@ -560,8 +583,11 @@ class CosinorAnalyzer:
                 df_results = cosinor.fit_group(
                     df_test,
                     n_components=n_components,
-                    period=[best_period]  # Must be a list for fit_group
+                    period=[best_period],  # Must be a list for fit_group
+                    plot=save_cosinorpy_plots,
+                    model_type=cosinorpy_model_type
                 )
+                df_results = _add_aic_bic(df_results)
                 print(f"[DEBUG]   Fitted {len(df_results)} n_components with best period")
 
         else:
@@ -571,8 +597,11 @@ class CosinorAnalyzer:
             df_results = cosinor.fit_group(
                 df_test,
                 n_components=n_components,
-                period=[single_period]  # Wrap in list - fit_group expects a list
+                period=[single_period],  # Wrap in list - fit_group expects a list
+                plot=save_cosinorpy_plots,
+                model_type=cosinorpy_model_type
             )
+            df_results = _add_aic_bic(df_results)
             print(f"[DEBUG] fit_group returned {len(df_results)} rows")
 
         print(f"[DEBUG] Available columns: {df_results.columns.tolist()}")
@@ -611,12 +640,15 @@ class CosinorAnalyzer:
             print(f"[DEBUG] Best models columns: {df_best_models.columns.tolist()}")
 
             # Step 5: Extended analysis (only for best model)
-            df_extended = cosinor.analyse_best_models(
-                df_test,
-                df_best_models,
-                analysis=analysis_method.value,
-                bootstrap_size=bootstrap_size
-            )
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=UserWarning, module='skopt')
+                df_extended = cosinor.analyse_best_models(
+                    df_test,
+                    df_best_models,
+                    analysis=analysis_method.value,
+                    bootstrap_size=bootstrap_size
+                )
             print(f"[DEBUG] analyse_best_models returned {len(df_extended)} rows")
         else:
             # Single component (but N>1, not N=1 which uses cosinor1)
@@ -626,12 +658,15 @@ class CosinorAnalyzer:
             df_best_models = df_results  # The single component is the "best model" trivially
 
             # Call analyse_best_models to get CIs and p-values per parameter
-            df_extended = cosinor.analyse_best_models(
-                df_test,
-                df_best_models,
-                analysis=analysis_method.value,
-                bootstrap_size=bootstrap_size
-            )
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=UserWarning, module='skopt')
+                df_extended = cosinor.analyse_best_models(
+                    df_test,
+                    df_best_models,
+                    analysis=analysis_method.value,
+                    bootstrap_size=bootstrap_size
+                )
             print(f"[DEBUG] analyse_best_models returned {len(df_extended)} rows")
             print(f"[DEBUG] analyse_best_models columns: {df_extended.columns.tolist()}")
 
@@ -742,7 +777,9 @@ class CosinorAnalyzer:
                 # Model parameters
                 'amplitude': safe_get('amplitude'),
                 'acrophase': safe_get('acrophase'),
-                'acrophase_hours': safe_get('acrophase[h]'),
+                'acrophase_hours': safe_get('acrophase[h]') if safe_get('acrophase[h]') is not None
+                    else (-result_row['period'] * safe_get('acrophase') / (2 * np.pi)
+                          if safe_get('acrophase') is not None else None),
                 'mesor': safe_get('MESOR', safe_get('mesor')),
                 # Basic statistics
                 'p_value': safe_get('p'),
@@ -922,7 +959,9 @@ class CosinorAnalyzer:
                     # Model parameters
                     'amplitude': safe_get('amplitude'),
                     'acrophase': safe_get('acrophase'),
-                    'acrophase_hours': safe_get('acrophase[h]'),
+                    'acrophase_hours': safe_get('acrophase[h]') if safe_get('acrophase[h]') is not None
+                        else (-period_val * safe_get('acrophase') / (2 * np.pi)
+                              if safe_get('acrophase') is not None else None),
                     'mesor': safe_get('MESOR', safe_get('mesor')),
                     # Basic statistics (from fit_group)
                     'p_value': safe_get('p'),
@@ -974,6 +1013,7 @@ class CosinorAnalyzer:
         condition: str,
         period: Union[float, List[float]],
         n_components: List[int] = [1],
+        model_type: ModelType = ModelType.NORMAL,
         criterium: Criterium = Criterium.RSS,
         params_ci_analysis: str = "sampling",
         bootstrap_size: int = 1000,
@@ -1021,17 +1061,18 @@ class CosinorAnalyzer:
         print(f"[DEBUG cosinor_dependent] Filtered {len(df_test)} rows")
 
         try:
-            # Single component
-            if len(n_components) == 1 and n_components[0] == 1:
+            # Single component (only Normal model uses cosinor1; Poisson/NB need cosinor path)
+            if len(n_components) == 1 and n_components[0] == 1 and model_type == ModelType.NORMAL:
                 return self._cosinor_dependent_single(
                     df_test, test_name, period, save_folder, save_cosinorpy_plots
                 )
 
-            # Multi-component
+            # Multi-component (also handles non-normal model types for single component)
             else:
                 return self._cosinor_dependent_multi(
                     df_test, test_name, period, n_components,
-                    criterium, params_ci_analysis, bootstrap_size, save_folder, save_cosinorpy_plots
+                    criterium, params_ci_analysis, bootstrap_size, save_folder, save_cosinorpy_plots,
+                    model_type=model_type
                 )
 
         except Exception as e:
@@ -1119,7 +1160,9 @@ class CosinorAnalyzer:
                     'n_components': 1,
                     'amplitude': row.get('amplitude'),
                     'acrophase': row.get('acrophase'),
-                    'acrophase_hours': row.get('acrophase[h]'),
+                    'acrophase_hours': row.get('acrophase[h]') if row.get('acrophase[h]') is not None
+                        else (-row.get('period', period_list[0]) * row.get('acrophase') / (2 * np.pi)
+                              if row.get('acrophase') is not None else None),
                     'mesor': row.get('mesor'),
                     'p_value': row.get('p'),
                     'q_value': row.get('q'),
@@ -1154,7 +1197,9 @@ class CosinorAnalyzer:
                 'n_components': 1,
                 'amplitude': result_row.get('amplitude'),
                 'acrophase': result_row.get('acrophase'),
-                'acrophase_hours': result_row.get('acrophase[h]'),
+                'acrophase_hours': result_row.get('acrophase[h]') if result_row.get('acrophase[h]') is not None
+                    else (-result_row.get('period', period_list[0]) * result_row.get('acrophase') / (2 * np.pi)
+                          if result_row.get('acrophase') is not None else None),
                 'mesor': result_row.get('mesor'),
                 'p_value': result_row.get('p'),
                 'q_value': result_row.get('q'),
@@ -1222,7 +1267,8 @@ class CosinorAnalyzer:
         params_ci_analysis: str,
         bootstrap_size: int,
         save_folder: Optional[str],
-        save_cosinorpy_plots: bool = False
+        save_cosinorpy_plots: bool = False,
+        model_type: ModelType = ModelType.NORMAL
     ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         """Multi-component population cosinor.
 
@@ -1230,6 +1276,35 @@ class CosinorAnalyzer:
             - If only one combination (single component): Dict
             - If multiple combinations: List[Dict] with best_model indicators
         """
+        # Map ModelType enum to CosinorPy expected strings
+        _model_type_map = {
+            ModelType.NORMAL: 'lin',
+            ModelType.POISSON: 'poisson',
+            ModelType.NEGATIVE_BINOMIAL: 'nb',
+        }
+        cosinorpy_model_type = _model_type_map.get(model_type, 'lin')
+
+        # Map criterium to column name and sort direction for get_best_models_population
+        criterium_map = {
+            'RSS': ('RSS', True),
+            'AIC': ('AIC', True),
+            'BIC': ('BIC', True),
+            'LOG_LIKELIHOOD': ('log-likelihood', False),
+        }
+        criterium_column, reverse = criterium_map.get(criterium.value, ('RSS', True))
+
+        N_obs = len(df_test)
+
+        def _add_aic_bic(df: pd.DataFrame) -> pd.DataFrame:
+            """Compute AIC and BIC from log-likelihood when available."""
+            df = df.copy()
+            if 'log-likelihood' in df.columns:
+                k = df['n_components'] * 2 + 1
+                logL = df['log-likelihood']
+                df['AIC'] = 2 * k - 2 * logL
+                df['BIC'] = k * np.log(N_obs) - 2 * logL
+            return df
+
         print(f"[DEBUG] Using cosinor.population_fit_group for multi-component")
         print(f"[DEBUG] save_cosinorpy_plots={save_cosinorpy_plots}")
 
@@ -1251,15 +1326,16 @@ class CosinorAnalyzer:
                     df_test,
                     n_components=n_components,
                     period=[p],
-                    folder=save_folder
+                    folder=save_folder,
+                    model_type=cosinorpy_model_type
                 )
                 print(f"[DEBUG] CosinorPy plots saved to {save_folder}")
             else:
-                # No plots - don't pass folder parameter at all
                 df_result = cosinor.population_fit_group(
                     df_test,
                     n_components=n_components,
-                    period=[p]
+                    period=[p],
+                    model_type=cosinorpy_model_type
                 )
             print(f"[DEBUG] Period {p} returned {len(df_result)} rows with periods: {df_result['period'].unique().tolist()}")
             results_dfs.append(df_result)
@@ -1270,14 +1346,17 @@ class CosinorAnalyzer:
         else:
             df_results = results_dfs[0]
 
+        df_results = _add_aic_bic(df_results)
         print(f"[DEBUG] population_fit_group returned {len(df_results)} rows")
         print(f"[DEBUG] Columns: {df_results.columns.tolist()}")
 
-        # Step 2: Get best models (overall best by p-value)
+        # Step 2: Get best models using the user-selected criterium
         df_best_models = cosinor.get_best_models_population(
             df_test,
             df_results,
-            n_components=n_components
+            n_components=n_components,
+            criterium=criterium_column,
+            reverse=reverse
         )
 
         print(f"[DEBUG] get_best_models_population returned {len(df_best_models)} rows")
@@ -1537,7 +1616,9 @@ class CosinorAnalyzer:
                 'n_components': n_comp,
                 'amplitude': safe_get(row, 'amplitude'),
                 'acrophase': safe_get(row, 'acrophase'),
-                'acrophase_hours': safe_get(row, 'acrophase[h]'),
+                'acrophase_hours': safe_get(row, 'acrophase[h]') if safe_get(row, 'acrophase[h]') is not None
+                    else (-period_val * safe_get(row, 'acrophase') / (2 * np.pi)
+                          if safe_get(row, 'acrophase') is not None else None),
                 'mesor': safe_get(row, 'MESOR', safe_get(row, 'mesor')),
                 'p_value': safe_get(row, 'p'),
                 'q_value': safe_get(row, 'q'),
