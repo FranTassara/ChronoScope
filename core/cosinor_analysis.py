@@ -519,7 +519,7 @@ class CosinorAnalyzer:
             'RSS': ('RSS', True),              # minimize RSS
             'AIC': ('AIC', True),              # minimize AIC (computed below)
             'BIC': ('BIC', True),              # minimize BIC (computed below)
-            'LOG_LIKELIHOOD': ('log-likelihood', False)  # maximize log-likelihood
+            'log-likelihood': ('log-likelihood', False)  # maximize log-likelihood
         }
         criterium_column, reverse = criterium_map.get(criterium.value, ('R2_adj', False))
         print(f"[DEBUG] Using criterium column: {criterium_column} (requested: {criterium.value}), reverse={reverse}")
@@ -881,10 +881,14 @@ class CosinorAnalyzer:
                     # Use the actual criterium column name (mapped from user's choice)
                     if criterium_column == 'RSS':
                         best_model_value = f'Best fit (min RSS)'
+                    elif criterium_column == 'AIC':
+                        best_model_value = f'Best fit (min AIC)'
+                    elif criterium_column == 'BIC':
+                        best_model_value = f'Best fit (min BIC)'
                     elif criterium_column == 'log-likelihood':
                         best_model_value = f'Best fit (max log-likelihood)'
-                    else:  # R2_adj
-                        best_model_value = f'Best fit (max R2_adj)'
+                    else:
+                        best_model_value = f'Best fit ({criterium_column})'
                 else:
                     best_model_value = 'No'
     
@@ -1285,11 +1289,13 @@ class CosinorAnalyzer:
         cosinorpy_model_type = _model_type_map.get(model_type, 'lin')
 
         # Map criterium to column name and sort direction for get_best_models_population
+        # NOTE: population_fit_group does NOT return log-likelihood, so AIC/BIC/log-likelihood
+        # are not valid criteria for dependent data. We fall back to RSS with a warning.
         criterium_map = {
             'RSS': ('RSS', True),
             'AIC': ('AIC', True),
             'BIC': ('BIC', True),
-            'LOG_LIKELIHOOD': ('log-likelihood', False),
+            'log-likelihood': ('log-likelihood', False),
         }
         criterium_column, reverse = criterium_map.get(criterium.value, ('RSS', True))
 
@@ -1349,6 +1355,14 @@ class CosinorAnalyzer:
         df_results = _add_aic_bic(df_results)
         print(f"[DEBUG] population_fit_group returned {len(df_results)} rows")
         print(f"[DEBUG] Columns: {df_results.columns.tolist()}")
+
+        # Guard: population_fit_group does not return log-likelihood, so AIC/BIC/log-likelihood
+        # columns may not exist. Fall back to RSS to avoid KeyError in get_best_fits.
+        if criterium_column not in df_results.columns:
+            print(f"[WARNING] Criterium column '{criterium_column}' not available for dependent data "
+                  f"(population_fit_group does not return log-likelihood). Falling back to RSS.")
+            criterium_column = 'RSS'
+            reverse = True
 
         # Step 2: Get best models using the user-selected criterium
         df_best_models = cosinor.get_best_models_population(

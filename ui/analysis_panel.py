@@ -1763,6 +1763,30 @@ class AnalysisPanel(QWidget):
             else:
                 self._analysis_method_combo.setCurrentText('CI')
 
+        # Also update criterium options: population_fit_group does not return log-likelihood,
+        # so AIC/BIC/Log-Likelihood are only valid for independent data.
+        self._update_criterium_options(method_text)
+
+    def _update_criterium_options(self, method_text: str):
+        """Update Criterium combo to only show options available in the current data type."""
+        current_selection = self._criterium_combo.currentText()
+        is_dependent = 'Dependent' in method_text
+
+        self._criterium_combo.clear()
+
+        if is_dependent:
+            # population_fit_group does not output log-likelihood, so AIC/BIC/Log-Likelihood
+            # cannot be computed. Only RSS is valid.
+            self._criterium_combo.addItems(['RSS'])
+            self._criterium_combo.setCurrentText('RSS')
+        else:
+            # fit_group outputs log-likelihood, so all criteria are valid.
+            self._criterium_combo.addItems(['RSS', 'AIC', 'BIC', 'Log-Likelihood'])
+            if current_selection in ['RSS', 'AIC', 'BIC', 'Log-Likelihood']:
+                self._criterium_combo.setCurrentText(current_selection)
+            else:
+                self._criterium_combo.setCurrentText('RSS')
+
     def _update_limo_analysis_options(self, comparison_method: str):
         """Update Analysis Method options when Comparison Method changes (for Compare Conditions)."""
         # Only update if we're in a Compare Conditions method
