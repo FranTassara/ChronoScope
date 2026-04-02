@@ -4774,21 +4774,29 @@ class AnalysisEngine:
             if cond2.strip().startswith(var_prefix):
                 cond2 = cond2.strip()[len(var_prefix):]
 
-            # Extract period (handle both single-component and multi-component)
-            period = row.get('period', 24.0)
+            # Extract period (handle both single-component and multi-component).
+            # test_cosinor_pairs_independent returns 'period1'/'period2' (not 'period'),
+            # so fall back to 'period1' when 'period' is absent.
+            period = row.get('period') or row.get('period1', 24.0)
             if isinstance(period, (list, np.ndarray)):
                 period = period[0] if len(period) > 0 else 24.0
 
-            # Build method string (normalized snake_case format)
-            if comparison_type == 'pooled_model':
+            # Build method string from the result dict's comparison_type (snake_case),
+            # which is more reliable than the function argument (which may be a UI string).
+            actual_ct = result.get('comparison_type', comparison_type)
+            if actual_ct == 'pooled_model':
                 method_str = 'cosinorpy_compare_pooled'
-            elif comparison_type == 'independent_models':
+            elif actual_ct == 'independent_models':
                 method_str = 'cosinorpy_compare_independent_models'
-            elif comparison_type.startswith('multi_'):
-                if comparison_method.lower() == 'limorhyde':
+            elif actual_ct in ('multi_independent', 'multi_limorhyde', 'multi_limo'):
+                if 'limo' in actual_ct:
                     method_str = 'cosinorpy_compare_limorhyde'
                 else:
                     method_str = 'cosinorpy_compare_multi'
+            elif actual_ct == 'dependent_single':
+                method_str = 'cosinorpy_compare_dependent'
+            elif actual_ct == 'dependent_multi':
+                method_str = 'cosinorpy_compare_dependent_multi'
             else:
                 method_str = 'cosinorpy_compare'
 
@@ -4820,20 +4828,36 @@ class AnalysisEngine:
             is_dependent_multi = 'p1' in df_results.columns
 
             if is_limo:
-                # LimoRhyde: use overall p-values for the model
-                # Use p/q params for all parameters (LimoRhyde tests all together)
-                p_amplitude = row.get('p params')
-                p_acrophase = row.get('p params')
-                p_mesor = row.get('p params')
+                # LimoRhyde with empty analysis ('None'): only 'p params'/'q params' are
+                # available (joint test across all parameters).
+                # LimoRhyde with non-empty analysis (CI1/CI2/Bootstrap1/Bootstrap2):
+                # compare_pairs_limo also populates 'p(d_amplitude)', 'CI(d_amplitude)', etc.
+                # In that case, use the per-parameter values instead of the joint test.
+                has_per_param_limo = 'p(d_amplitude)' in df_results.columns
 
-                q_amplitude = row.get('q params')
-                q_acrophase = row.get('q params')
-                q_mesor = row.get('q params')
-
-                # LimoRhyde doesn't provide CIs for differences
-                amplitude_diff_ci = None
-                acrophase_diff_ci = None
-                mesor_diff_ci = None
+                if has_per_param_limo:
+                    # Per-parameter p-values and CIs are available
+                    p_amplitude = row.get('p(d_amplitude)')
+                    p_acrophase = row.get('p(d_acrophase)')
+                    p_mesor = row.get('p(d_mesor)')
+                    # q values remain NaN in limo (only q params / q(F test) are FDR-corrected)
+                    q_amplitude = row.get('q(d_amplitude)')  # will be NaN → N/A
+                    q_acrophase = row.get('q(d_acrophase)')
+                    q_mesor = row.get('q(d_mesor)')
+                    amplitude_diff_ci = self._parse_ci(row.get('CI(d_amplitude)'))
+                    acrophase_diff_ci = self._parse_ci(row.get('CI(d_acrophase)'))
+                    mesor_diff_ci = self._parse_ci(row.get('CI(d_mesor)'))
+                else:
+                    # Empty analysis: only joint p/q params available
+                    p_amplitude = row.get('p params')
+                    p_acrophase = row.get('p params')
+                    p_mesor = row.get('p params')
+                    q_amplitude = row.get('q params')
+                    q_acrophase = row.get('q params')
+                    q_mesor = row.get('q params')
+                    amplitude_diff_ci = None
+                    acrophase_diff_ci = None
+                    mesor_diff_ci = None
             else:
                 # Independent or Dependent: has specific p/q/CI for each parameter
                 p_amplitude = row.get('p(d_amplitude)')
@@ -4844,8 +4868,13 @@ class AnalysisEngine:
                 q_acrophase = row.get('q(d_acrophase)')
                 q_mesor = row.get('q(d_mesor)')
 
-                # Extract confidence intervals (parse from string if needed)
-                amplitude_diff_ci = self._parse_ci(row.get('CI(d_amplitude)'))
+                # Extract confidence intervals (parse from string if needed).
+                # cosinor1.test_cosinor_pairs (pooled model) has a typo in the library:
+                # the column is 'CI(d_amplitde)' instead of 'CI(d_amplitude)'.
+                # We try the correct spelling first, then the typo as fallback.
+                amplitude_diff_ci = self._parse_ci(
+                    row.get('CI(d_amplitude)') or row.get('CI(d_amplitde)')
+                )
                 acrophase_diff_ci = self._parse_ci(row.get('CI(d_acrophase)'))
                 mesor_diff_ci = self._parse_ci(row.get('CI(d_mesor)'))
 
@@ -4979,8 +5008,6 @@ class AnalysisEngine:
 
             # Get parameters
             period = parameters.get('period', 24.0)
-            period1 = parameters.get('period1', None)
-            period2 = parameters.get('period2', None)
             n_components = parameters.get('n_components', [1])
             if not isinstance(n_components, list):
                 n_components = [n_components]
@@ -4993,6 +5020,18 @@ class AnalysisEngine:
             include_lin_comp = parameters.get('include_lin_comp', False)
             bootstrap_size = parameters.get('bootstrap_size', 1000)
             save_cosinorpy_plots = parameters.get('save_cosinorpy_plots', False)
+
+            # Per-condition periods: only valid for "Independent Models" with exactly 2 conditions.
+            # The UI always sends period1/period2 as spinbox floats (never None), so we must
+            # explicitly set them to None when the per-condition period widgets are hidden,
+            # otherwise _compare_independent_single_independent always uses them and ignores
+            # the shared period (the else/shared-period branch would never be reached).
+            if comparison_type == 'Independent Models' and len(conditions) == 2:
+                period1 = parameters.get('period1', None)
+                period2 = parameters.get('period2', None)
+            else:
+                period1 = None
+                period2 = None
 
             from .cosinor_analysis import DataType
 

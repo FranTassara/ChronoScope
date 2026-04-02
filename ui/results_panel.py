@@ -83,6 +83,7 @@ COMPARISON_METHODS = {
     'cosinorpy_compare_limorhyde',
     'cosinorpy_compare_independent',
     'cosinorpy_compare_dependent',
+    'cosinorpy_compare_dependent_multi',
     'cosinorpy_nonlinear_compare_independent',
     'cosinorpy_nonlinear_compare_dependent',
     'cosinorpy_compare_all',
