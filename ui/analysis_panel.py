@@ -1198,6 +1198,8 @@ class AnalysisPanel(QWidget):
         )
         # Connect signal to update comparison parameters when components change
         self._components_edit.textChanged.connect(self._on_components_changed)
+        # Connect use_dependent_model toggle to refresh period widget visibility for Method 8
+        self._use_dependent_model_check.toggled.connect(lambda _: self._update_parameter_visibility())
 
         components_label = QLabel("Components:")
         components_label.setToolTip(
@@ -1972,12 +1974,22 @@ class AnalysisPanel(QWidget):
         - Model Type doesn't apply (always uses generalized cosinor model)
         - Criterium doesn't apply (best model selected by p-value automatically)
         - Analysis Method doesn't apply (no CI vs Bootstrap option)
-        - Bootstrap Size: only needed when n_components > 1 (for amplitude/acrophase stats)
+        - Bootstrap Size: only needed for Independent methods with n_components > 1
+          (for amplitude/acrophase stats via bootstrap_generalized_cosinor_n_comp_group).
+          Dependent/population methods never use bootstrap — stats are derived from
+          between-replicate variance, regardless of n_components.
         """
         method_text = self._method_combo.currentText()
 
         # Only apply to Nonlinear methods
         if "Nonlinear" not in method_text:
+            return
+
+        # Dependent/population nonlinear methods never use bootstrap
+        is_dependent = "Dependent" in method_text
+        if is_dependent:
+            self._bootstrap_size_label.setVisible(False)
+            self._bootstrap_size_spin.setVisible(False)
             return
 
         # Parse n_components
@@ -1996,6 +2008,47 @@ class AnalysisPanel(QWidget):
         # For 1-component models, stats are calculated analytically (no bootstrap needed)
         self._bootstrap_size_label.setVisible(has_component_gt_one)
         self._bootstrap_size_spin.setVisible(has_component_gt_one)
+
+    def _update_nonlinear_independent_period_visibility(self):
+        """
+        Update period widget visibility for Method 8 (Nonlinear Compare Independent).
+
+        When use_dependent_model is unchecked (independent model): allow different periods
+        per condition. Show per-condition spinboxes when exactly 2 conditions are loaded.
+        When checked (shared period): show a single period spinbox for both conditions.
+        For 3+ conditions in independent mode: fall back to single shared period
+        (CosinorPy compare_pairs uses global period1/period2, not per-pair periods).
+        """
+        use_dep = self._use_dependent_model_check.isChecked()
+
+        if not use_dep:
+            # Independent: attempt to show per-condition periods
+            n_conditions = 0
+            conditions = []
+            if hasattr(self, '_loader') and self._loader and self._source_type in ('csv', 'dam'):
+                try:
+                    dataset_info = self._loader.get_dataset_info()
+                    n_conditions = len(dataset_info.conditions) if dataset_info.conditions else 0
+                    conditions = list(dataset_info.conditions) if dataset_info.conditions else []
+                except Exception:
+                    pass
+
+            if n_conditions == 2:
+                self._hide_param("Period:")
+                self._show_param("Periods:")
+                self._period_cond1_label.setText(f"Period for {conditions[0]}:")
+                self._period_cond2_label.setText(f"Period for {conditions[1]}:")
+                self._period_multi_cond_info.setVisible(False)
+            else:
+                # 3+ conditions or unknown: shared period only
+                self._show_param("Period:")
+                self._hide_param("Periods:")
+                self._period_multi_cond_info.setVisible(False)
+        else:
+            # Dependent/shared period
+            self._show_param("Period:")
+            self._hide_param("Periods:")
+            self._period_multi_cond_info.setVisible(False)
 
     def _update_compare_conditions_parameters(self):
         """Update parameter visibility based on n_components and comparison method for Compare Conditions."""
@@ -2250,12 +2303,13 @@ class AnalysisPanel(QWidget):
             # Method 8: Nonlinear Compare (Independent)
             # Compare conditions using nonlinear model
             elif method_text == "Nonlinear Compare (Independent)":
-                self._show_param("Period:")
                 self._show_param("Components:")
                 self._show_checkbox(self._use_dependent_model_check)
                 self._show_checkbox(self._save_cosinorpy_plots_check)
                 # Show bootstrap size only if n_components might be > 1
                 self._update_nonlinear_independent_params_visibility()
+                # Period widget visibility depends on use_dependent_model state
+                self._update_nonlinear_independent_period_visibility()
 
             # Method 9: Nonlinear Compare (Dependent)
             # Compare conditions using nonlinear model for population data

@@ -1143,8 +1143,14 @@ class ResultsPanel(QWidget):
 
                 # Add nonlinear columns if present
                 if has_nonlinear:
-                    columns.extend(['amplification', 'p_amplification', 'lin_comp', 'p_lin_comp'])
-                    headers.extend(['Amplification', 'p-Amp', 'Lin Component', 'p-Lin'])
+                    columns.extend([
+                        'amplification', 'p_amplification', 'q_amplification', 'amplification_ci',
+                        'lin_comp', 'p_lin_comp', 'q_lin_comp', 'lin_comp_ci'
+                    ])
+                    headers.extend([
+                        'Amplification (C)', 'p(Amplification)', 'q(Amplification)', 'CI(Amplification)',
+                        'Lin. Trend (D)', 'p(Lin. Trend)', 'q(Lin. Trend)', 'CI(Lin. Trend)'
+                    ])
 
                 columns.append('significant')
                 headers.append('Significant')

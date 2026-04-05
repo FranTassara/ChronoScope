@@ -2116,8 +2116,9 @@ class CosinorAnalyzer:
                     plot_on=plot_on
                 )
 
-                # Add period column to results (single-component doesn't include it by default)
+                # Add period and n_components columns (single-component doesn't include them by default)
                 df_result['period'] = per
+                df_result['n_components'] = 1
 
                 print(f"[DEBUG] population_test_cosinor_pairs returned {len(df_result)} rows for period={per}")
                 results_list.append(df_result)
@@ -2393,7 +2394,7 @@ class CosinorAnalyzer:
                 'n_components': 1,
                 'amplitude': result_row.get('amplitude'),
                 'acrophase': result_row.get('acrophase'),
-                'mesor': df_test['y'].mean(),  # Calculate from data
+                'mesor': None,  # MESOR (A) not exposed by fit_generalized_cosinor_group
                 'amplification': result_row.get('amplification'),
                 'lin_comp': result_row.get('lin_comp'),
                 'p_value': result_row.get('p'),
@@ -2474,6 +2475,8 @@ class CosinorAnalyzer:
 
             # Use bootstrap results which have more complete statistics
             result_row = df_bootstrap[df_bootstrap['test'] == test_name].iloc[0]
+            # Get MESOR from the fit result (not bootstrap — bootstrap has no mesor)
+            fit_row = df_results[df_results['test'] == test_name].iloc[0]
 
             # Parse CI strings
             amp_ci = self._parse_ci(result_row.get('CI(amplitude)'))
@@ -2487,7 +2490,7 @@ class CosinorAnalyzer:
                 'n_components': n_components,
                 'amplitude': result_row.get('amplitude'),
                 'acrophase': result_row.get('acrophase'),
-                'mesor': df_test['y'].mean(),
+                'mesor': fit_row.get('mesor'),  # MESOR (A) from fit result
                 'amplification': result_row.get('amplification'),
                 'lin_comp': result_row.get('lin_comp'),
                 'p_value': result_row.get('p'),
@@ -2580,7 +2583,7 @@ class CosinorAnalyzer:
                 'n_components': int(result_row.get('n_components', 1)),
                 'amplitude': result_row.get('amplitude'),
                 'acrophase': result_row.get('acrophase'),
-                'mesor': df_test['y'].mean(),
+                'mesor': best_row.get('mesor'),  # MESOR (A) from fit result
                 'amplification': result_row.get('amplification'),
                 'lin_comp': result_row.get('lin_comp'),
                 'p_value': result_row.get('p'),
@@ -2805,7 +2808,7 @@ class CosinorAnalyzer:
                 'n_components': 1,
                 'amplitude': result_row.get('amplitude'),
                 'acrophase': result_row.get('acrophase'),
-                'mesor': df_test['y'].mean(),
+                'mesor': None,  # MESOR (A) not exposed by population_fit_generalized_cosinor_group
                 'amplification': result_row.get('amplification'),
                 'lin_comp': result_row.get('lin_comp'),
                 'p_value': result_row.get('p'),
@@ -3029,30 +3032,41 @@ class CosinorAnalyzer:
         conditions: List[str],
         period: Union[float, List[float]],
         n_components: List[int] = [1],
-        bootstrap_size: int = 100,
+        bootstrap_size: int = 1000,
         save_folder: Optional[str] = None,
-        save_cosinorpy_plots: bool = False
+        save_cosinorpy_plots: bool = False,
+        period1: Optional[float] = None,
+        period2: Optional[float] = None,
+        use_dependent_model: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Non-linear comparison for independent data.
 
         Iterates over each value in n_components and accumulates results.
         For each n_comp value:
-            - n_comp == 1:
+            - n_comp == 1, use_dependent_model=True:
+                → fit_generalized_cosinor_compare_pairs_dependent(period)
+                → Joint model with group-indicator variable (interaction terms).
+                → Shared period forced. Returns global F-test p + per-parameter stats.
+            - n_comp == 1, use_dependent_model=False:
                 → fit_generalized_cosinor_compare_pairs_independent(period1, period2)
-                → Stats from model fitting, no bootstrap needed
+                → Two independent fits compared via t-test. Allows different periods.
             - n_comp > 1:
                 → compare_pairs_n_comp_bootstrap_group(n_components=n_comp)
-                → Requires bootstrap for stats
+                → Bootstrap for amplitude/acrophase; analytical for amplification/lin_comp.
 
         Args:
             variable: Variable name
             conditions: List of conditions to compare
-            period: Single period or [period1, period2] for different periods
+            period: Primary (shared) period — used for n_comp > 1 and dependent model
             n_components: List of component counts to compare (e.g. [1], [2], [2,3])
             bootstrap_size: Bootstrap samples (for multi-component)
             save_folder: Folder for saving plots
             save_cosinorpy_plots: If True, generate and save CosinorPy plots
+            period1: Explicit period for condition 1 (n_comp=1, independent model, 2 conditions)
+            period2: Explicit period for condition 2 (n_comp=1, independent model, 2 conditions)
+            use_dependent_model: If True and n_comp=1, use joint model (shared period, F-test).
+                                  If False (default), use two separate fits (t-test on differences).
 
         Returns:
             List of comparison result Dicts (one per pair per n_components value)
@@ -3061,8 +3075,8 @@ class CosinorAnalyzer:
             raise ValueError("No data loaded")
 
         print(f"[DEBUG nonlinear_compare_independent] variable={variable}, conditions={conditions}")
-        print(f"[DEBUG nonlinear_compare_independent] period={period}, n_components={n_components}")
-        print(f"[DEBUG nonlinear_compare_independent] save_cosinorpy_plots={save_cosinorpy_plots}")
+        print(f"[DEBUG nonlinear_compare_independent] period={period}, period1={period1}, period2={period2}, n_components={n_components}")
+        print(f"[DEBUG nonlinear_compare_independent] use_dependent_model={use_dependent_model}, save_cosinorpy_plots={save_cosinorpy_plots}")
 
         # Generate pairs
         condition_pairs = self._generate_all_pairs(conditions)
@@ -3074,14 +3088,23 @@ class CosinorAnalyzer:
         should_plot = save_cosinorpy_plots and save_folder is not None
         plot_folder = save_folder if should_plot else None
 
+        # Resolve shared period scalar
+        shared_period = period[0] if isinstance(period, list) else period
+
         try:
             all_results = []
             for n_comp in n_components:
                 print(f"[DEBUG nonlinear_compare_independent] Processing n_components={n_comp}")
                 if n_comp == 1:
-                    results = self._nonlinear_compare_independent_single_comp(
-                        test_pairs, variable, period, plot_folder
-                    )
+                    if use_dependent_model:
+                        results = self._nonlinear_compare_joint_model_single_comp(
+                            test_pairs, variable, shared_period, plot_folder
+                        )
+                    else:
+                        results = self._nonlinear_compare_independent_single_comp(
+                            test_pairs, variable, period, plot_folder,
+                            period1=period1, period2=period2
+                        )
                 else:
                     results = self._nonlinear_compare_independent_fixed_ncomp(
                         test_pairs, variable, period, n_comp, bootstrap_size, plot_folder
@@ -3096,31 +3119,117 @@ class CosinorAnalyzer:
             traceback.print_exc()
             raise
 
+    def _nonlinear_compare_joint_model_single_comp(
+        self,
+        test_pairs: List[Tuple[str, str]],
+        variable: str,
+        period: float,
+        plot_folder: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Joint-model (dependent) single-component comparison for independent data.
+        Uses fit_generalized_cosinor_compare_pairs_dependent(period=P).
+
+        Fits a single combined model with a group-indicator variable H (H=0 for
+        condition 1, H=1 for condition 2). Interaction terms A0, B0, C0, D0,
+        acrophase0 directly represent the between-condition differences. The
+        shared period is enforced. Returns a global F-test p-value plus
+        per-parameter statistics (p, CI) for each difference term.
+        """
+        print(f"[DEBUG] Using fit_generalized_cosinor_compare_pairs_dependent (joint model, period={period})")
+
+        params = {
+            'pairs': test_pairs,
+            'period': period,
+        }
+        if plot_folder:
+            params['folder'] = plot_folder
+
+        df_results = cosinor_nonlin.fit_generalized_cosinor_compare_pairs_dependent(
+            self._data,
+            **params
+        )
+
+        print(f"[DEBUG] fit_generalized_cosinor_compare_pairs_dependent returned {len(df_results)} rows")
+        print(f"[DEBUG] Columns: {df_results.columns.tolist()}")
+
+        results = []
+        for _, row in df_results.iterrows():
+            test_str = row.get('test', '')
+            parts = test_str.split(' vs. ')
+            if len(parts) == 2:
+                cond1 = parts[0].replace(f"{variable}-", "")
+                cond2 = parts[1].replace(f"{variable}-", "")
+            else:
+                cond1, cond2 = "unknown", "unknown"
+
+            result_dict = {
+                'variable': variable,
+                'condition1': cond1,
+                'condition2': cond2,
+                'period1': row.get('period', period),
+                'period2': row.get('period', period),
+                'n_components1': 1,
+                'n_components2': 1,
+                # Global F-test p/q (joint model overall test)
+                'p_global': row.get('p'),
+                'q_global': row.get('q'),
+                # Per-parameter differences
+                'd_amplitude': row.get('d_amplitude'),
+                'd_acrophase': row.get('d_acrophase'),
+                'd_amplification': row.get('d_amplification'),
+                'd_lin_comp': row.get('d_lin_comp'),
+                'p_d_amplitude': row.get('p(d_amplitude)'),
+                'p_d_acrophase': row.get('p(d_acrophase)'),
+                'p_d_amplification': row.get('p(d_amplification)'),
+                'p_d_lin_comp': row.get('p(d_lin_comp)'),
+                'q_d_amplitude': row.get('q(d_amplitude)'),
+                'q_d_acrophase': row.get('q(d_acrophase)'),
+                'q_d_amplification': row.get('q(d_amplification)'),
+                'q_d_lin_comp': row.get('q(d_lin_comp)'),
+                'd_amplitude_ci': self._parse_ci(row.get('CI(d_amplitude)')),
+                'd_acrophase_ci': self._parse_ci(row.get('CI(d_acrophase)')),
+                'd_amplification_ci': self._parse_ci(row.get('CI(d_amplification)')),
+                'd_lin_comp_ci': self._parse_ci(row.get('CI(d_lin_comp)')),
+            }
+            results.append(result_dict)
+
+        return results
+
     def _nonlinear_compare_independent_single_comp(
         self,
         test_pairs: List[Tuple[str, str]],
         variable: str,
         period: Union[float, List[float]],
-        plot_folder: Optional[str]
+        plot_folder: Optional[str],
+        period1: Optional[float] = None,
+        period2: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Single component comparison for independent data.
         Uses fit_generalized_cosinor_compare_pairs_independent().
+
+        period1/period2: explicit per-condition period override (from use_dependent_model=False).
+        When provided, these take precedence over the period parameter.
         """
         print(f"[DEBUG] Using fit_generalized_cosinor_compare_pairs_independent (1 component)")
 
-        # Determine periods
-        if isinstance(period, (int, float)):
-            period1, period2 = period, period
+        # Determine periods — explicit overrides take precedence
+        if period1 is not None and period2 is not None:
+            p1, p2 = period1, period2
+        elif isinstance(period, (int, float)):
+            p1, p2 = period, period
         elif isinstance(period, list) and len(period) >= 2:
-            period1, period2 = period[0], period[1]
+            p1, p2 = period[0], period[1]
         else:
-            period1, period2 = period[0] if isinstance(period, list) else period, period[0] if isinstance(period, list) else period
+            p1 = p2 = period[0] if isinstance(period, list) else period
+
+        print(f"[DEBUG] period1={p1}, period2={p2}")
 
         params = {
             'pairs': test_pairs,
-            'period1': period1,
-            'period2': period2,
+            'period1': p1,
+            'period2': p2,
             'plot': plot_folder is not None
         }
         if plot_folder:
@@ -3150,8 +3259,8 @@ class CosinorAnalyzer:
                 'variable': variable,
                 'condition1': cond1,
                 'condition2': cond2,
-                'period1': row.get('period1', period1),
-                'period2': row.get('period2', period2),
+                'period1': row.get('period1', p1),
+                'period2': row.get('period2', p2),
                 'n_components1': 1,
                 'n_components2': 1,
                 'd_amplitude': row.get('d_amplitude'),
@@ -3373,18 +3482,24 @@ class CosinorAnalyzer:
                     test_pairs, variable, period, n_components, plot_folder, df_best_models
                 )
 
-            # Iterate over each n_components value
+            # Route based on the full n_components list, not per-iteration value.
+            # n_components == [1]: single-comp path allows different periods per condition
+            #   (population_fit_generalized_cosinor_compare_pairs).
+            # Any other list (including [1,2,3], [2], [3]): iterate and use
+            #   population_compare_pairs_n_comp_group for every value so that all
+            #   rows share a consistent output structure with n_components metadata.
+            if n_components == [1]:
+                print(f"[DEBUG nonlinear_compare_dependent] Single-comp path (n_components=[1])")
+                return self._nonlinear_compare_dependent_single_comp(
+                    test_pairs, variable, period, plot_folder
+                )
+
             all_results = []
             for n_comp in n_components:
                 print(f"[DEBUG nonlinear_compare_dependent] Processing n_components={n_comp}")
-                if n_comp == 1:
-                    results = self._nonlinear_compare_dependent_single_comp(
-                        test_pairs, variable, period, plot_folder
-                    )
-                else:
-                    results = self._nonlinear_compare_dependent_multi_comp(
-                        test_pairs, variable, period, [n_comp], plot_folder, None
-                    )
+                results = self._nonlinear_compare_dependent_multi_comp(
+                    test_pairs, variable, period, [n_comp], plot_folder, None
+                )
                 all_results.extend(results)
 
             return all_results

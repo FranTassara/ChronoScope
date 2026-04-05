@@ -5207,6 +5207,9 @@ class AnalysisEngine:
         CosinorPy single-component population comparison only returns differences
         (d_amplitude, d_acrophase) but not individual group parameters. The visualization
         needs raw data and per-group amplitude/acrophase/mesor to render fit curves.
+
+        For nonlinear compare dependent results also populates amplification_g0/g1
+        and lin_comp_g0/g1 via a 1-component nonlinear population fit per condition.
         """
         try:
             from CosinorPy import cosinor1 as cosinor1_mod
@@ -5234,23 +5237,54 @@ class AnalysisEngine:
             df_pop1 = df_cosinorpy[df_cosinorpy.test.str.startswith(f'{cond1_prefix}_rep')]
             df_pop2 = df_cosinorpy[df_cosinorpy.test.str.startswith(f'{cond2_prefix}_rep')]
 
-            # Fit condition 1
+            # Fit condition 1 (linear, for mesor/amplitude/acrophase)
             try:
                 res1 = cosinor1_mod.population_fit_cosinor(df_pop1, period=period_val, plot_on=False)
                 comp_result.mesor_g0 = float(res1['means'][0])
                 comp_result.amplitude_g0 = float(res1['means'][3])
                 comp_result.acrophase_g0 = float(res1['means'][4])
+                # Extract individual rhythmicity p-value (p1) for condition 1
+                p1_val = res1.get('p_value')
+                if p1_val is not None and not (isinstance(p1_val, float) and np.isnan(p1_val)):
+                    comp_result.p1 = float(p1_val)
             except Exception as e:
                 print(f"[DEBUG] Could not fit population for {cond1_name}: {e}")
 
-            # Fit condition 2
+            # Fit condition 2 (linear, for mesor/amplitude/acrophase)
             try:
                 res2 = cosinor1_mod.population_fit_cosinor(df_pop2, period=period_val, plot_on=False)
                 comp_result.mesor_g1 = float(res2['means'][0])
                 comp_result.amplitude_g1 = float(res2['means'][3])
                 comp_result.acrophase_g1 = float(res2['means'][4])
+                # Extract individual rhythmicity p-value (p2) for condition 2
+                p2_val = res2.get('p_value')
+                if p2_val is not None and not (isinstance(p2_val, float) and np.isnan(p2_val)):
+                    comp_result.p2 = float(p2_val)
             except Exception as e:
                 print(f"[DEBUG] Could not fit population for {cond2_name}: {e}")
+
+            # For nonlinear compare: additionally fit generalized cosinor to get
+            # amplification_g0/g1 and lin_comp_g0/g1 per condition.
+            if comp_result.method == 'cosinorpy_nonlinear_compare_dependent':
+                try:
+                    from CosinorPy import cosinor_nonlin as cosinor_nonlin_mod
+                    sp1 = cosinor_nonlin_mod.population_fit_generalized_cosinor(
+                        df_pop1, period=period_val, plot=False
+                    )
+                    comp_result.amplification_g0 = float(sp1['params']['C'])
+                    comp_result.lin_comp_g0 = float(sp1['params']['D'])
+                except Exception as e:
+                    print(f"[DEBUG] Could not fit nonlinear population for {cond1_name}: {e}")
+
+                try:
+                    from CosinorPy import cosinor_nonlin as cosinor_nonlin_mod
+                    sp2 = cosinor_nonlin_mod.population_fit_generalized_cosinor(
+                        df_pop2, period=period_val, plot=False
+                    )
+                    comp_result.amplification_g1 = float(sp2['params']['C'])
+                    comp_result.lin_comp_g1 = float(sp2['params']['D'])
+                except Exception as e:
+                    print(f"[DEBUG] Could not fit nonlinear population for {cond2_name}: {e}")
 
     def _enrich_independent_comparison_results(
         self,
@@ -5705,15 +5739,28 @@ class AnalysisEngine:
 
             # Get parameters
             period_range = parameters.get('period_range', (24.0, 24.0))
-            period = period_range[0]  # Use single period for comparison
+            period = period_range[0]  # Primary period
+
+            use_dependent_model = parameters.get('use_dependent_model', True)
+
+            # Per-condition periods: only valid when use_dependent_model=False and
+            # exactly 2 conditions (CosinorPy's compare function uses global period1/period2)
+            if not use_dependent_model and len(conditions) == 2:
+                period1 = parameters.get('period1', period)
+                period2 = parameters.get('period2', period)
+            else:
+                period1 = period
+                period2 = period
 
             n_components = parameters.get('n_components', [1])
             if not isinstance(n_components, list):
                 n_components = [n_components]
 
-            bootstrap_size = parameters.get('bootstrap_size', 100)
+            bootstrap_size = parameters.get('bootstrap_size', 1000)
             save_cosinorpy_plots = parameters.get('save_cosinorpy_plots', False)
             plot_folder = get_cosinorpy_plot_folder(data_file_path)
+
+            print(f"[DEBUG _run_cosinorpy_nonlinear_compare_independent_new] period={period}, period1={period1}, period2={period2}, use_dependent_model={use_dependent_model}")
 
             # Convert to CosinorPy format for INDEPENDENT data
             df_cosinorpy = self._convert_to_cosinorpy_format_all_conditions(
@@ -5729,10 +5776,13 @@ class AnalysisEngine:
                 variable=variable,
                 conditions=conditions,
                 period=period,
+                period1=period1,
+                period2=period2,
                 n_components=n_components,
                 bootstrap_size=bootstrap_size,
                 save_folder=plot_folder,
-                save_cosinorpy_plots=save_cosinorpy_plots
+                save_cosinorpy_plots=save_cosinorpy_plots,
+                use_dependent_model=use_dependent_model
             )
 
             print(f"[DEBUG] Comparison returned {len(results)} pair results")
@@ -5745,6 +5795,9 @@ class AnalysisEngine:
                     condition1=res_dict.get('condition1', ''),
                     condition2=res_dict.get('condition2', ''),
                     method="cosinorpy_nonlinear_compare_independent",
+                    # Global F-test p/q (joint model only; None for independent model)
+                    p1=res_dict.get('p_global'),
+                    q1=res_dict.get('q_global'),
                     # Differences
                     amplitude_diff=res_dict.get('d_amplitude'),
                     acrophase_diff=res_dict.get('d_acrophase'),
