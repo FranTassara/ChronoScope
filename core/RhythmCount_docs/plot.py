@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-from RhythmCount import helpers as hlp
-from RhythmCount import data_processing as dproc
+from . import helpers as hlp
+from . import data_processing as dproc
 import copy
 import random
 import numpy as np

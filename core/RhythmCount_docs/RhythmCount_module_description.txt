@@ -1,0 +1,539 @@
+================================================================================
+  RhythmCount Module — Method Documentation
+  ChronoScope Software Suite
+================================================================================
+
+Source library : https://github.com/ninavelikajne/RhythmCount
+Reference       : Velikajne, N. et al. (2022). RhythmCount: An R/Python package
+                  for circadian rhythmicity analysis of count data.
+                  DOI: to be confirmed upon publication.
+Wrapper module  : core/rhythmcount_analysis.py
+
+--------------------------------------------------------------------------------
+OVERVIEW
+--------------------------------------------------------------------------------
+
+The RhythmCount module extends ChronoScope's circadian analysis capabilities to
+count-valued time series. Unlike the standard Gaussian cosinor implemented in
+CosinorPy, RhythmCount fits the cosinor model within a generalized linear model
+(GLM) framework using count-data distributions. This is essential when the
+response variable Y represents non-negative discrete quantities — such as
+RNA-seq read counts, locomotor activity event tallies, neuronal spike counts,
+or any other data for which the assumption of normally distributed residuals is
+violated.
+
+The harmonic structure of the cosinor model is preserved: for each time point
+X_i, the expected count mu_i is modeled as a function of sine and cosine
+regressors derived from the specified period T and N harmonic components:
+
+    log(mu_i) = beta_0 + sum_{k=1}^{N} [ beta_{2k-1} * sin(2*pi*k*X_i / T)
+                                        + beta_{2k}   * cos(2*pi*k*X_i / T) ]
+
+The link function (log for Poisson family, logit for the inflation component)
+is handled automatically by statsmodels depending on the selected distribution.
+Rhythm parameters (amplitude, MESOR, acrophase) are extracted from the
+predicted curve after fitting.
+
+Five count distributions are supported, enabling the user to select the most
+appropriate model for their data's variance structure:
+
+    - Poisson (equidispersed counts)
+    - Generalized Poisson (flexible dispersion, sub- or over-dispersed)
+    - Negative Binomial (over-dispersed counts)
+    - Zero-Inflated Poisson (excess structural zeros + Poisson counts)
+    - Zero-Inflated Negative Binomial (excess structural zeros + over-dispersion)
+
+The module provides five analysis methods, described in full below.
+
+================================================================================
+  METHOD 1 — Fit Single Model
+  (RhythmCountAnalyzer.fit_single_model)
+================================================================================
+
+PURPOSE
+-------
+Fits a single, user-specified count distribution with a user-specified number
+of harmonic components to the loaded dataset. This method is intended for
+exploratory use when the investigator has prior knowledge or a theoretical
+rationale for a particular distribution and complexity level, or when comparing
+a specific model against a manually chosen baseline.
+
+LIBRARY FUNCTIONS EXECUTED
+---------------------------
+  dproc.fit_to_model(df, n_components, count_model, period,
+                     maxiter, maxfun, method, disp)
+    - Constructs the harmonic design matrix (sin/cos regressors) via
+      dproc.cosinor_generate_independents().
+    - Fits the selected GLM using the corresponding statsmodels class:
+        Poisson          -> statsmodels.discrete.discrete_model.Poisson
+        Generalized Poi. -> statsmodels.discrete.discrete_model.GeneralizedPoisson
+        Negative Binom.  -> statsmodels.discrete.discrete_model.NegativeBinomialP
+        Zero-Inf. Poi.   -> statsmodels.discrete.count_model.ZeroInflatedPoisson
+        Zero-Inf. NB     -> statsmodels.discrete.count_model.ZeroInflatedNegativeBinomialP
+    - Calls dproc.evaluate_rhythm_params() to extract amplitude, MESOR, and
+      peak times from the fitted curve.
+    - Calls dproc.calculate_statistics() to compute goodness-of-fit metrics.
+
+ANALYSIS PARAMETERS (user-configurable from GUI)
+-------------------------------------------------
+  count_model     : Count distribution to fit.
+                    Options: Poisson | Generalized Poisson | Negative Binomial |
+                             Zero-Inflated Poisson | Zero-Inflated NB
+                    Default: Poisson
+
+  n_components    : Number of harmonic components (N) in the cosinor model.
+                    N=1 fits a single sinusoid (fundamental frequency only).
+                    N=2,3 add higher harmonics for non-sinusoidal waveforms.
+                    Range: 1 – 4.  Default: 1
+
+  period          : Expected rhythm period in the same time units as X.
+                    Default: 24.0 (hours)
+
+  maxiter         : Maximum number of optimizer iterations.
+                    Default: 5000
+
+  maxfun          : Maximum number of function evaluations.
+                    Default: 5000
+
+  clean_data      : If enabled, apply per-timepoint quantile filtering
+                    (15th–85th percentile) to remove outliers before fitting.
+                    Default: disabled
+
+OUTPUT
+------
+  SingleFitResult object containing:
+
+  Rhythm parameters:
+    amplitude       : Half the range of the fitted curve within one period.
+                      Approximates the cosinor amplitude for non-sinusoidal fits.
+    mesor           : Midline-estimating statistic of rhythm — the mean level
+                      of the fitted curve (midpoint between min and max).
+    peaks           : Array of acrophase times (hours) where the fitted curve
+                      exceeds 75% of its maximum value within one period.
+    heights         : Predicted count values at each detected peak.
+
+  Goodness-of-fit statistics:
+    llr_pvalue      : Likelihood ratio test p-value (test of the full model vs.
+                      intercept-only model). Assesses rhythmicity significance.
+    AIC             : Akaike Information Criterion (lower = better fit).
+    BIC             : Bayesian Information Criterion (lower = better fit).
+    RSS             : Residual Sum of Squares between observed and fitted values.
+    log_likelihood  : Log-likelihood of the fitted model.
+    prsquared       : McFadden's pseudo-R² (proportion of log-likelihood
+                      explained relative to null model).
+
+  Residual diagnostics:
+    resid_mean      : Mean of deviance residuals.
+    resid_std       : Standard deviation of deviance residuals.
+
+  Data summary:
+    data_mean       : Observed mean count.
+    data_std        : Observed standard deviation of counts.
+
+  Fitted curve arrays (for plotting):
+    X_test          : Dense time vector over one period (1000 points, 0–100h
+                      range as generated by the library).
+    Y_test          : Predicted count values on X_test.
+
+
+================================================================================
+  METHOD 2 — Fit All Models
+  (RhythmCountAnalyzer.fit_all_models)
+================================================================================
+
+PURPOSE
+-------
+Systematically fits all combinations of the selected count distributions and
+harmonic component numbers. The result is a comprehensive comparison table
+allowing the investigator to inspect how each model captures the data and to
+make an informed selection based on information criteria or residual diagnostics.
+This method does not perform automatic selection; it returns the full results
+matrix for inspection.
+
+LIBRARY FUNCTIONS EXECUTED
+---------------------------
+  dproc.fit_to_models(df, count_models, n_components, maxiter, maxfun,
+                      method, plot_models, period)
+    - Iterates over all (count_model, n_components) combinations.
+    - Calls dproc.fit_to_model() for each combination (see Method 1).
+    - Optionally renders a multi-panel comparison figure with one panel per
+      count distribution, overlaying fits for each N value.
+
+ANALYSIS PARAMETERS (user-configurable from GUI)
+-------------------------------------------------
+  count_models    : List of distributions to include in the grid search.
+                    Any subset of: Poisson | Generalized Poisson |
+                    Negative Binomial | Zero-Inflated Poisson |
+                    Zero-Inflated NB
+                    Default: all five distributions
+
+  n_components    : List of harmonic complexity levels to try.
+                    Example: [1, 2, 3] fits N=1, N=2, and N=3.
+                    Default: [1, 2, 3]
+
+  period          : Expected rhythm period.  Default: 24.0
+
+  maxiter         : Maximum optimizer iterations.  Default: 5000
+
+  maxfun          : Maximum function evaluations.  Default: 5000
+
+  clean_data      : Apply quantile outlier removal before fitting.
+                    Default: disabled
+
+  plot_models     : If enabled, display a grid figure with fitted curves for
+                    all count models and component numbers.
+                    Default: disabled (GUI-controlled)
+
+OUTPUT
+------
+  pandas DataFrame with one row per (count_model, n_components) combination.
+
+  Columns per row (identical to SingleFitResult fields):
+    count_model, n_components, amplitude, mesor, peaks, heights,
+    llr_pvalue, AIC, BIC, RSS, log_likelihood, prsquared,
+    resid_mean, resid_std, data_mean, data_std, X_test, Y_test,
+    est_mean, est_std, Y_est (in-sample fitted values), logs (per-obs log-likelihoods)
+
+  Total rows = len(count_models) × len(n_components).
+  Example: 5 models × 3 component levels = 15 rows.
+
+
+================================================================================
+  METHOD 3 — Fit Best Model (Automatic Model Selection)
+  (RhythmCountAnalyzer.fit_best_model)
+================================================================================
+
+PURPOSE
+-------
+Performs a two-stage model selection procedure to identify the count distribution
+and harmonic complexity that best describe the data according to a user-specified
+criterion. This method automates the workflow of Method 2 by applying formal
+model comparison tests, returning only the winning model with its full
+characterization. It is the recommended entry point for hypothesis-driven
+analysis when the appropriate model is not known a priori.
+
+The selection proceeds in two sequential stages, with the order configurable:
+
+  Default order (eval_order = True):
+    Stage 1 — Select the best n_components across all distributions (nested
+              model comparison via F-test or information criteria).
+    Stage 2 — Given the selected N, choose the best count distribution
+              (non-nested comparison via AIC, BIC, or Vuong test).
+
+  Alternative order (eval_order = False):
+    Stage 1 — Select the best count distribution across all N values.
+    Stage 2 — Given the best distribution, select the best N.
+
+LIBRARY FUNCTIONS EXECUTED
+---------------------------
+  dproc.fit_to_models(...)          (see Method 2)
+  dproc.get_best_n_components(df_results, test, count_model=None)
+    - Iterates over rows sorted by n_components.
+    - For nested comparisons (different N, same model): applies dproc.f_test().
+    - For non-nested comparisons (same N, different model): applies the
+      selected criterion (AIC, BIC, or Vuong test).
+  dproc.get_best_count_model(df_results, test, n_components=None)
+    - Applies AIC, BIC, F-test, or Vuong test across distributions.
+
+  Model comparison tests:
+    dproc.AIC_test(row1, row2)      : Returns the row with lower AIC.
+    dproc.BIC_test(row1, row2)      : Returns the row with lower BIC.
+    dproc.f_test(row1, row2)        : F-test for nested models; returns the more
+                                      complex model if F p-value < 0.05.
+    dproc.vuong_test(row1, row2)    : Vuong (1989) non-nested likelihood ratio
+                                      test; uses per-observation log-likelihoods
+                                      to test whether model 2 fits significantly
+                                      better than model 1 (Z-statistic, p < 0.05).
+
+ANALYSIS PARAMETERS (user-configurable from GUI)
+-------------------------------------------------
+  count_models    : Distributions included in the search.  Default: all five.
+  n_components    : Component levels to search.  Default: [1, 2, 3]
+  selection_test  : Criterion for model comparison.
+                    Options: AIC | BIC | Vuong | F
+                    Default: AIC
+  eval_order      : Order of the two-stage selection.
+                    True (default): components first, then distribution.
+                    False: distribution first, then components.
+  period          : Expected rhythm period.  Default: 24.0
+  maxiter         : Maximum optimizer iterations.  Default: 5000
+  maxfun          : Maximum function evaluations.  Default: 5000
+  clean_data      : Apply quantile outlier removal.  Default: disabled
+
+OUTPUT
+------
+  BestModelResult object containing:
+
+  Selection metadata:
+    count_model     : Name of the winning count distribution.
+    n_components    : Number of harmonic components in the winning model.
+    selection_test  : Criterion used (AIC / BIC / Vuong / F).
+
+  Rhythm parameters (from winning model):
+    amplitude, mesor, peaks, heights   (definitions as in Method 1)
+
+  Goodness-of-fit (from winning model):
+    llr_pvalue, AIC, BIC, RSS, prsquared   (definitions as in Method 1)
+
+  Fitted curve (from winning model):
+    X_test, Y_test
+
+  Full search results:
+    all_results     : Complete DataFrame from Method 2 (all models and N values)
+                      retained for downstream inspection or export.
+
+
+================================================================================
+  METHOD 4 — Parameter Confidence Intervals
+  (RhythmCountAnalyzer.calculate_parameter_cis)
+================================================================================
+
+PURPOSE
+-------
+Computes 95% bootstrap confidence intervals for the rhythm parameters (amplitude,
+MESOR, acrophase) of a specified count model. Because count-data GLMs do not
+provide closed-form analytical confidence intervals for derived rhythm parameters
+(as opposed to raw model coefficients), RhythmCount uses a bootstrap resampling
+strategy: the model is re-fitted on random subsamples of the data a specified
+number of times, and the distribution of estimated parameters across repetitions
+is used to construct CIs as mean ± 1.96 × SD.
+
+Confidence intervals are computed separately for:
+  - Amplitude
+  - MESOR
+  - Each detected peak time (acrophase)
+  - Each detected peak height
+
+Peak matching across bootstrap iterations uses a tolerance window
+(precision_rate) to ensure that repeated peaks from independent bootstrap fits
+are attributed to the same acrophase before averaging.
+
+LIBRARY FUNCTIONS EXECUTED
+---------------------------
+  dproc.calculate_confidence_intervals_parameters(
+      df, n_components, count_model, all_peaks, repetitions,
+      maxiter, maxfun, method, period, precision_rate)
+    - Iterates for 'repetitions' bootstrap rounds.
+    - Each round: samples 2/3 of observations, calls dproc.fit_to_model().
+    - Collects amplitude, mesor, and peak estimates across rounds.
+    - Calls hlp.calculate_mean_std() to compute peak-wise mean and SD
+      with tolerance-based matching.
+    - Returns CIs as [mean - 1.96*SD, mean + 1.96*SD] for each parameter.
+
+ANALYSIS PARAMETERS (user-configurable from GUI)
+-------------------------------------------------
+  count_model     : Distribution to use for bootstrap fits.
+                    Should match the model selected in Method 1 or 3.
+
+  n_components    : Harmonic complexity level to use.
+
+  repetitions     : Number of bootstrap resampling iterations.
+                    Higher values yield more stable CI estimates at the cost
+                    of computation time.  Default: 20  (recommended: ≥ 50
+                    for publication-quality estimates)
+
+  precision_rate  : Tolerance (in time units) for matching peaks across
+                    bootstrap iterations. Peaks within ±precision_rate hours
+                    of the reference peak are considered the same acrophase.
+                    Default: 2.0 hours
+
+  period          : Expected rhythm period.  Default: 24.0
+  maxiter         : Maximum optimizer iterations.  Default: 5000
+  maxfun          : Maximum function evaluations.  Default: 5000
+  clean_data      : Apply quantile outlier removal.  Default: disabled
+
+OUTPUT
+------
+  ParameterCIsResult object containing:
+
+    amplitude_CIs   : Array [lower_bound, upper_bound] for amplitude.
+    mesor_CIs       : Array [lower_bound, upper_bound] for MESOR.
+    peaks_CIs       : Array of shape (n_peaks, 2); each row is
+                      [lower_bound, upper_bound] for one acrophase.
+    heights_CIs     : Array of shape (n_peaks, 2); each row is
+                      [lower_bound, upper_bound] for one peak height.
+    count_model     : Distribution used.
+    n_components    : Harmonic complexity used.
+    repetitions     : Number of bootstrap iterations performed.
+
+  Note: If no peaks are detected across bootstrap iterations (e.g., when
+  the fitted rhythm is very flat), peaks_CIs and heights_CIs will be empty.
+
+
+================================================================================
+  METHOD 5 — Group Comparison
+  (RhythmCountAnalyzer.compare_groups)
+================================================================================
+
+PURPOSE
+-------
+Fits count-based cosinor models independently to each group defined by a
+categorical column in the dataset and compiles a comparative summary table.
+For each group, the method automatically selects the best-fitting model
+(using the same two-stage procedure as Method 3) and computes bootstrap
+confidence intervals for all rhythm parameters (using Method 4). The result
+enables visual and quantitative comparison of circadian rhythm characteristics
+— amplitude, MESOR, and acrophase — across experimental conditions, genotypes,
+treatments, or any other categorical factor.
+
+Unlike CircaCompare, which fits a single joint model to test for differential
+rhythmicity via likelihood ratio testing, this method fits independent models
+per group. It is therefore suited for descriptive comparison and visualization
+of rhythm parameters across groups, particularly when different groups may
+require different count distributions (e.g., one group is zero-inflated while
+another is not).
+
+LIBRARY FUNCTIONS EXECUTED
+---------------------------
+  For each group (when plot_comparison = True):
+    dproc.compare_by_component(df, component, n_components, count_models,
+                                ax_indices, ax_titles, rows, cols, labels,
+                                eval_order, maxiter, maxfun, method, period,
+                                precision_rate, repetitions, test)
+      - Iterates over unique values of 'component' column.
+      - For each group: calls dproc.fit_to_models() then dproc.get_best_n_components()
+        and dproc.get_best_count_model() for model selection.
+      - Calls dproc.calculate_confidence_intervals_parameters() per group.
+      - Calls rplot.subplot_confidence_intervals() and rplot.subplot_model()
+        to render per-group panels with CI bands.
+
+  For each group (when plot_comparison = False):
+    dproc.fit_to_models(...)                   (see Method 2)
+    dproc.get_best_n_components(...)           (see Method 3)
+    dproc.get_best_count_model(...)            (see Method 3)
+    dproc.calculate_confidence_intervals_parameters(...)  (see Method 4)
+
+ANALYSIS PARAMETERS (user-configurable from GUI)
+-------------------------------------------------
+  group_column    : Name of the column in the dataset that identifies groups
+                    (e.g., "condition", "genotype", "treatment").
+                    Must be a categorical variable.  Required.
+
+  count_models    : Distributions to include in per-group model search.
+                    Default: all five distributions.
+
+  n_components    : Harmonic component levels to include in per-group search.
+                    Default: [1, 2, 3]
+
+  selection_test  : Criterion for per-group model selection.
+                    Options: AIC | BIC | Vuong | F.  Default: AIC
+
+  eval_order      : Two-stage selection order (True: components first).
+                    Default: True
+
+  repetitions     : Bootstrap iterations for per-group CI computation.
+                    Default: 20
+
+  precision_rate  : Peak-matching tolerance for CI computation (hours).
+                    Default: 2.0
+
+  period          : Expected rhythm period.  Default: 24.0
+  maxiter         : Maximum optimizer iterations.  Default: 5000
+  maxfun          : Maximum function evaluations.  Default: 5000
+  clean_data      : Apply quantile outlier removal.  Default: disabled
+
+  plot_comparison : If enabled, render a multi-panel figure with one
+                    subplot per group, showing raw data, the best-fit
+                    count-cosinor curve, and CI bands.
+                    Default: disabled (GUI-controlled)
+
+OUTPUT
+------
+  GroupComparisonResult object containing:
+
+    group_column    : Name of the grouping variable.
+    selection_test  : Model selection criterion used.
+    results_table   : pandas DataFrame with one row per group.
+
+  Columns per row of results_table:
+    [group_column]  : Group identifier (value of the grouping variable).
+
+    Best model info:
+      count_model     : Winning count distribution for this group.
+      n_components    : Winning harmonic complexity for this group.
+
+    Rhythm parameters (from best model):
+      amplitude       : Rhythm amplitude.
+      mesor           : MESOR (rhythm-adjusted mean).
+      peaks           : Acrophase time(s) within one period.
+      heights         : Peak count height(s).
+
+    Goodness-of-fit:
+      llr_pvalue      : Likelihood ratio test p-value.
+      AIC, BIC, RSS   : Information criteria and residual SS.
+      prsquared       : McFadden's pseudo-R².
+
+    Bootstrap CIs (from calculate_confidence_intervals_parameters):
+      amplitude_CIs   : [lower, upper] for amplitude.
+      mesor_CIs       : [lower, upper] for MESOR.
+      peaks_CIs       : Per-peak [lower, upper] CI array.
+      heights_CIs     : Per-peak height [lower, upper] CI array.
+
+    Raw curve data:
+      X_test, Y_test  : Dense fitted curve for plotting (per group).
+
+
+================================================================================
+  DATA FORMAT REQUIREMENTS
+================================================================================
+
+All methods expect the loaded DataFrame to contain at minimum:
+
+  Column 'X'  : Time variable. Numeric, in the same units as 'period'
+                (typically hours, range 0 to period-1 or multi-day recordings).
+                Multiple observations per timepoint are supported and expected.
+
+  Column 'Y'  : Count variable. Non-negative integers. Floating-point values
+                are accepted but will be treated as counts by the GLM; values
+                should represent event or read counts, not continuous measurements.
+
+  For Method 5 (Group Comparison):
+  Additional column : Any column name with categorical values identifying groups.
+
+Example minimal CSV:
+    X,Y
+    0,14
+    0,11
+    0,9
+    1,8
+    1,12
+    ...
+
+Example with groups:
+    X,Y,condition
+    0,14,control
+    0,11,control
+    0,9,treatment
+    1,8,treatment
+    ...
+
+
+================================================================================
+  NOTES ON MODEL SELECTION AND APPROPRIATE USE
+================================================================================
+
+Choosing a count distribution:
+  - Use Poisson when the observed variance is approximately equal to the mean
+    (equidispersion). Common in clean sequencing data at low counts.
+  - Use Negative Binomial when variance > mean (overdispersion). Typical in
+    RNA-seq with biological replicates or high-count behavioral recordings.
+  - Use Generalized Poisson for flexible dispersion (sub- or overdispersed).
+  - Use Zero-Inflated variants when the data contain an excess of zeros beyond
+    what a Poisson or NB distribution would predict. This arises in sparse
+    behavioral recordings (e.g., rare events at resting phases) or in
+    transcriptomic data where many genes are not expressed in certain samples.
+
+On the Vuong test:
+  The Vuong (1989) likelihood ratio statistic tests whether two non-nested
+  models fit the data equally well. A significant result (p < 0.05) indicates
+  that the model with higher likelihood fits significantly better. It is
+  particularly appropriate for comparing zero-inflated against standard models.
+
+On bootstrap CI stability:
+  With the default repetitions=20, CIs are approximate. For publication-quality
+  estimates, repetitions >= 50 is recommended. Note that computation time scales
+  linearly with this parameter.
+
+================================================================================
+  END OF DOCUMENT
+================================================================================

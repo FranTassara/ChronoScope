@@ -7,8 +7,8 @@ import statsmodels
 import statsmodels.api as sm
 from matplotlib.lines import Line2D
 
-from RhythmCount import helpers as hlp
-from RhythmCount import plot
+from . import helpers as hlp
+from . import plot
 import math
 
 colors = ['blue', 'green', 'orange', 'red', 'purple', 'olive', 'tomato', 'yellow', 'pink', 'turquoise', 'lightgreen']
@@ -57,7 +57,7 @@ def fit_to_models(df, count_models=count_models, n_components=n_components, maxi
                                        title=title, fit_label='N=' + str(n_component), plot_measurements=False)
                 c = c + 1
 
-            df_results = df_results.append(df_result, ignore_index=True)
+            df_results = pd.concat([df_results, pd.DataFrame([df_result])], ignore_index=True)
 
         i = i + 1
 
@@ -168,9 +168,8 @@ def calculate_confidence_intervals(df, n_components, count_model, repetitions=20
     save['CI1'] = save['mean'] - 1.96 * save['std']
     save['CI2'] = save['mean'] + 1.96 * save['std']
 
-    CIs = pd.DataFrame({0: [], 1: []})
-    for i in range(columns):
-        CIs = CIs.append({0: save['CI1'].iloc[i], 1: save['CI2'].iloc[i]}, ignore_index=True)
+    rows = [{0: save['CI1'].iloc[i], 1: save['CI2'].iloc[i]} for i in range(columns)]
+    CIs = pd.DataFrame(rows)
 
     return CIs
 
@@ -421,7 +420,7 @@ def compare_by_component(df, component, n_components, count_models, ax_indices, 
         best[component] = name
         best.update(CIs_params)
         best.update(CIs)
-        df_results = df_results.append(best, ignore_index=True)
+        df_results = pd.concat([df_results, pd.DataFrame([best])], ignore_index=True)
         i = i + 1
 
     ax_list = fig.axes
