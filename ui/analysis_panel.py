@@ -1198,8 +1198,6 @@ class AnalysisPanel(QWidget):
         )
         # Connect signal to update comparison parameters when components change
         self._components_edit.textChanged.connect(self._on_components_changed)
-        # Connect use_dependent_model toggle to refresh period widget visibility for Method 8
-        self._use_dependent_model_check.toggled.connect(lambda _: self._update_parameter_visibility())
 
         components_label = QLabel("Components:")
         components_label.setToolTip(
@@ -1420,6 +1418,7 @@ class AnalysisPanel(QWidget):
             "- Checked: Dependent model (both groups share the same period)"
         )
         self._params_layout.addRow("", self._use_dependent_model_check)
+        self._use_dependent_model_check.toggled.connect(lambda _: self._update_parameter_visibility())
 
         # Periodogram type (for Periodogram)
         self._per_type_combo = QComboBox()
