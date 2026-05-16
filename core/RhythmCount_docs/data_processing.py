@@ -25,7 +25,7 @@ def clean_data(df):
         # cleaning outliers
         df_hour = df_hour.loc[df_hour.Y >= df_hour.Y.quantile(0.15)].copy()
         df_hour = df_hour.loc[df_hour.Y <= df_hour.Y.quantile(0.85)].copy()
-        df.loc[df['X'] == hour, ['Y']] = df_hour['Y']
+        df.loc[df['X'] == hour, 'Y'] = df_hour['Y']
 
     df = df.dropna(subset=['X', 'Y'])
     return df
