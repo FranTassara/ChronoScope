@@ -1769,17 +1769,17 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("Count Model:", self._rc_single_model_combo)
 
-        # N components (for single model fit)
-        self._rc_single_ncomp_spin = QSpinBox()
-        self._rc_single_ncomp_spin.setRange(1, 4)
-        self._rc_single_ncomp_spin.setValue(1)
-        self._rc_single_ncomp_spin.setToolTip(
-            "Number of harmonic components:\n"
-            "1 = fundamental only (one sinusoidal peak)\n"
-            "2 = fundamental + 2nd harmonic\n"
-            "3-4 = higher harmonics for complex waveforms"
+        # N components (for single model fit) — comma-separated like CosinorPy
+        self._rc_single_ncomp_edit = QLineEdit()
+        self._rc_single_ncomp_edit.setText("1")
+        self._rc_single_ncomp_edit.setPlaceholderText("e.g., 1 or 1,2,3")
+        self._rc_single_ncomp_edit.setToolTip(
+            "Harmonic components to evaluate (comma-separated).\n\n"
+            "• Single: Enter '1'\n"
+            "• Multiple: Enter '1,2,3' to test each component count\n\n"
+            "Results will include one row per (period, N) combination."
         )
-        self._params_layout.addRow("N Components:", self._rc_single_ncomp_spin)
+        self._params_layout.addRow("N Components:", self._rc_single_ncomp_edit)
 
         # Count models (multi-select, for all/best model methods)
         self._rc_models_list = QListWidget()
@@ -2564,8 +2564,6 @@ class AnalysisPanel(QWidget):
             if method_text == "Fit Single Model":
                 self._show_param("Count Model:")
                 self._show_param("N Components:")
-                self._show_param("Bootstrap Reps:")
-                self._show_param("Peak Tolerance:")
                 self._show_checkbox(self._rc_clean_data_check)
 
             elif method_text == "Fit All Models":
@@ -3252,7 +3250,7 @@ class AnalysisPanel(QWidget):
             'random_effect': self._random_effect_combo.currentText(),
             # RhythmCount parameters
             'rc_single_count_model': self._rc_single_model_value(),
-            'rc_single_n_components': self._rc_single_ncomp_spin.value(),
+            'rc_single_n_components_list': self._parse_components(self._rc_single_ncomp_edit.text()),
             'rc_count_models': self._rc_selected_models(),
             'rc_n_components': self._rc_selected_ncomps(),
             'rc_selection_test': self._rc_selection_test_combo.currentText(),

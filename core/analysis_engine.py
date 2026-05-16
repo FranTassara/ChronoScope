@@ -6125,37 +6125,95 @@ class AnalysisEngine:
         parameters: Dict[str, Any],
         params: RhythmCountParameters,
     ) -> AnalysisResult:
-        """Fit a single (count_model, n_components) combination."""
-        # Get specific model and n_components from parameters
+        """
+        Fit one count distribution across all (period, n_components) combinations.
+
+        Returns a full results table serialized in results_table_json, with the
+        best row (lowest AIC) surfaced as the top-level AnalysisResult fields.
+        """
+        from dataclasses import replace as dc_replace
+
         raw_model = parameters.get('rc_single_count_model', 'poisson')
         try:
             count_model = CountModel(raw_model)
         except ValueError:
             count_model = CountModel.POISSON
 
-        n_comp = int(parameters.get('rc_single_n_components', 1))
+        # N components: comma-separated list from GUI text field
+        n_comps = parameters.get('rc_single_n_components_list', [1])
+        if not n_comps:
+            n_comps = [1]
 
-        result = self._rhythmcount.fit_single_model(count_model, n_comp, params)
+        # Period: either a single float or a list generated from the range widget
+        period_param = parameters.get('period', 24.0)
+        periods = period_param if isinstance(period_param, list) else [period_param]
 
+        rows = []
+        for period in periods:
+            per_params = dc_replace(params, period=float(period))
+            for n_comp in n_comps:
+                result = self._rhythmcount.fit_single_model(count_model, n_comp, per_params)
+                peaks_str = ', '.join(f'{p:.2f}h' for p in result.peaks) if len(result.peaks) > 0 else ''
+                rows.append({
+                    'period': period,
+                    'count_model': result.count_model,
+                    'n_components': result.n_components,
+                    'amplitude': result.amplitude,
+                    'mesor': result.mesor,
+                    'peaks': peaks_str,
+                    'llr_pvalue': result.llr_pvalue,
+                    'AIC': result.AIC,
+                    'BIC': result.BIC,
+                    'RSS': result.RSS,
+                    'log_likelihood': result.log_likelihood,
+                    'McFadden_R2': result.prsquared,
+                    'success': result.success,
+                    'error': result.error or '',
+                })
+
+        if not rows:
+            return AnalysisResult(
+                variable=variable, condition=condition,
+                method='rhythmcount_single', success=False,
+                message="No results produced.",
+            )
+
+        df = pd.DataFrame(rows)
+        table_json = df.to_json(orient='records', default_handler=str)
+
+        # Surface the best row (lowest AIC among successful fits)
+        successful = df[df['success']]
+        best = successful.loc[successful['AIC'].idxmin()] if not successful.empty else df.iloc[0]
+
+        def _safe(val):
+            try:
+                return None if np.isnan(float(val)) else float(val)
+            except (TypeError, ValueError):
+                return None
+
+        n_periods = len(periods)
+        n_comps_tested = len(n_comps)
         return AnalysisResult(
             variable=variable,
             condition=condition,
             method='rhythmcount_single',
-            mesor=result.mesor if not np.isnan(result.mesor) else None,
-            amplitude=result.amplitude if not np.isnan(result.amplitude) else None,
-            peak_times=result.peaks.tolist() if len(result.peaks) > 0 else None,
-            p_value=result.llr_pvalue if not np.isnan(result.llr_pvalue) else None,
-            aic=result.AIC if not np.isnan(result.AIC) else None,
-            bic=result.BIC if not np.isnan(result.BIC) else None,
-            rss=result.RSS if not np.isnan(result.RSS) else None,
-            log_likelihood=result.log_likelihood if not np.isnan(result.log_likelihood) else None,
-            r_squared=result.prsquared if not np.isnan(result.prsquared) else None,
-            n_components=result.n_components,
-            period=params.period,
-            times=result.X_test if len(result.X_test) > 0 else None,
-            fitted_values=result.Y_test if len(result.Y_test) > 0 else None,
-            success=result.success,
-            message=f"Model: {result.count_model}, N={result.n_components}" + (f" | Error: {result.error}" if result.error else ""),
+            mesor=_safe(best.get('mesor')),
+            amplitude=_safe(best.get('amplitude')),
+            p_value=_safe(best.get('llr_pvalue')),
+            aic=_safe(best.get('AIC')),
+            bic=_safe(best.get('BIC')),
+            rss=_safe(best.get('RSS')),
+            log_likelihood=_safe(best.get('log_likelihood')),
+            r_squared=_safe(best.get('McFadden_R2')),
+            n_components=int(best.get('n_components', 1)),
+            period=float(best.get('period', periods[0])),
+            results_table_json=table_json,
+            success=True,
+            message=(
+                f"Tested {n_periods} period(s) × {n_comps_tested} N(s) = {len(rows)} fits. "
+                f"Best (AIC): {best.get('count_model')}, N={best.get('n_components')}, "
+                f"period={best.get('period')}h"
+            ),
         )
 
     def _run_rhythmcount_all_models(
@@ -6248,7 +6306,9 @@ class AnalysisEngine:
         except ValueError:
             count_model = CountModel.POISSON
 
-        n_comp = int(parameters.get('rc_single_n_components', 1))
+        # For CIs, use the first (or only) value from the list
+        n_comps_list = parameters.get('rc_single_n_components_list', [1])
+        n_comp = int(n_comps_list[0]) if n_comps_list else 1
 
         # reference_peaks: from a prior best model run stored in parameters,
         # or fall back to [12.0] as a reasonable default for a 24h rhythm
