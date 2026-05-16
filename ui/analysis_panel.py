@@ -65,6 +65,13 @@ class AnalysisMethod(Enum):
     # Visualization methods (primarily for DAM data)
     VISUALIZATION_ACTIVITY_PROFILE = "Visualization: Activity Profile"
 
+    # RhythmCount methods
+    RHYTHMCOUNT_SINGLE = "RhythmCount: Fit Single Model"
+    RHYTHMCOUNT_ALL_MODELS = "RhythmCount: Fit All Models"
+    RHYTHMCOUNT_BEST_MODEL = "RhythmCount: Fit Best Model (Auto Selection)"
+    RHYTHMCOUNT_PARAMETER_CIS = "RhythmCount: Parameter Confidence Intervals"
+    RHYTHMCOUNT_COMPARE_GROUPS = "RhythmCount: Compare Groups"
+
 
 @dataclass
 class AnalysisConfig:
@@ -239,7 +246,8 @@ class AnalysisWorker(QThread):
             elif analysis_type in (AnalysisType.COSINORPY_COMPARE_INDEPENDENT,
                                   AnalysisType.COSINORPY_COMPARE_DEPENDENT,
                                   AnalysisType.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT,
-                                  AnalysisType.COSINORPY_NONLINEAR_COMPARE_DEPENDENT):
+                                  AnalysisType.COSINORPY_NONLINEAR_COMPARE_DEPENDENT,
+                                  AnalysisType.RHYTHMCOUNT_COMPARE_GROUPS):
                 # Compare all conditions - run ONCE per variable (or per variable-cluster for Rosbash)
                 # For Rosbash with clusters: variables * clusters
                 if self.source_type == 'rosbash' and self.config.clusters:
@@ -422,6 +430,12 @@ class AnalysisWorker(QThread):
             AnalysisMethod.RHYTHM_LME: AnalysisType.LME,
             # AI Consensus
             AnalysisMethod.CONSENSUS_AI: AnalysisType.CONSENSUS_AI,
+            # RhythmCount
+            AnalysisMethod.RHYTHMCOUNT_SINGLE: AnalysisType.RHYTHMCOUNT_SINGLE,
+            AnalysisMethod.RHYTHMCOUNT_ALL_MODELS: AnalysisType.RHYTHMCOUNT_ALL_MODELS,
+            AnalysisMethod.RHYTHMCOUNT_BEST_MODEL: AnalysisType.RHYTHMCOUNT_BEST_MODEL,
+            AnalysisMethod.RHYTHMCOUNT_PARAMETER_CIS: AnalysisType.RHYTHMCOUNT_PARAMETER_CIS,
+            AnalysisMethod.RHYTHMCOUNT_COMPARE_GROUPS: AnalysisType.RHYTHMCOUNT_COMPARE_GROUPS,
         }
         return mapping.get(method, AnalysisType.COSINORPY_PERIODOGRAM)
 
@@ -914,6 +928,7 @@ class AnalysisPanel(QWidget):
             "CosinorPy",
             "CircaCompare",
             "Rhythm Analysis",
+            "RhythmCount",
             "AI Consensus"
         ])
         self._module_combo.currentIndexChanged.connect(self._on_module_changed)
@@ -1731,6 +1746,139 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("Random Effect:", self._random_effect_combo)
 
+        # =====================================================================
+        # RHYTHMCOUNT - SPECIFIC PARAMETERS
+        # =====================================================================
+
+        # Count model (for single model fit)
+        self._rc_single_model_combo = QComboBox()
+        self._rc_single_model_combo.addItems([
+            'Poisson (poisson)',
+            'Generalized Poisson (gen_poisson)',
+            'Zero-Inflated Poisson (zero_poisson)',
+            'Negative Binomial (nb)',
+            'Zero-Inflated NB (zero_nb)',
+        ])
+        self._rc_single_model_combo.setToolTip(
+            "Count distribution for fitting:\n"
+            "- Poisson: Standard count model (mean = variance)\n"
+            "- Generalized Poisson: Flexible dispersion\n"
+            "- Zero-Inflated Poisson: Excess zeros\n"
+            "- Negative Binomial: Overdispersed counts\n"
+            "- Zero-Inflated NB: Overdispersed with excess zeros"
+        )
+        self._params_layout.addRow("Count Model:", self._rc_single_model_combo)
+
+        # N components (for single model fit)
+        self._rc_single_ncomp_spin = QSpinBox()
+        self._rc_single_ncomp_spin.setRange(1, 4)
+        self._rc_single_ncomp_spin.setValue(1)
+        self._rc_single_ncomp_spin.setToolTip(
+            "Number of harmonic components:\n"
+            "1 = fundamental only (one sinusoidal peak)\n"
+            "2 = fundamental + 2nd harmonic\n"
+            "3-4 = higher harmonics for complex waveforms"
+        )
+        self._params_layout.addRow("N Components:", self._rc_single_ncomp_spin)
+
+        # Count models (multi-select, for all/best model methods)
+        self._rc_models_list = QListWidget()
+        self._rc_models_list.setSelectionMode(QAbstractItemView.MultiSelection)
+        self._rc_models_list.setMaximumHeight(90)
+        rc_model_items = [
+            ('poisson', 'Poisson'),
+            ('gen_poisson', 'Generalized Poisson'),
+            ('zero_poisson', 'Zero-Inflated Poisson'),
+            ('nb', 'Negative Binomial'),
+            ('zero_nb', 'Zero-Inflated NB'),
+        ]
+        for value, label in rc_model_items:
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, value)
+            item.setSelected(True)
+            self._rc_models_list.addItem(item)
+        self._rc_models_list.setToolTip("Select count distributions to include in model fitting (hold Ctrl to multi-select)")
+        self._params_layout.addRow("Count Models:", self._rc_models_list)
+
+        # N components (multi-select, for all/best model methods)
+        self._rc_ncomp_list = QListWidget()
+        self._rc_ncomp_list.setSelectionMode(QAbstractItemView.MultiSelection)
+        self._rc_ncomp_list.setMaximumHeight(75)
+        for n in [1, 2, 3, 4]:
+            item = QListWidgetItem(str(n))
+            item.setData(Qt.UserRole, n)
+            if n <= 3:
+                item.setSelected(True)
+            self._rc_ncomp_list.addItem(item)
+        self._rc_ncomp_list.setToolTip("Number of harmonic components to test (hold Ctrl to multi-select)")
+        self._params_layout.addRow("N Components (list):", self._rc_ncomp_list)
+
+        # Selection test
+        self._rc_selection_test_combo = QComboBox()
+        self._rc_selection_test_combo.addItems(['AIC', 'BIC', 'Vuong', 'F'])
+        self._rc_selection_test_combo.setToolTip(
+            "Criterion for selecting the best model:\n"
+            "- AIC: Akaike Information Criterion (default)\n"
+            "- BIC: Bayesian Information Criterion (penalizes complexity more)\n"
+            "- Vuong: Vuong test for non-nested models\n"
+            "- F: F-test"
+        )
+        self._params_layout.addRow("Selection Test:", self._rc_selection_test_combo)
+
+        # Eval order
+        self._rc_eval_order_check = QCheckBox("Components first, then distribution")
+        self._rc_eval_order_check.setChecked(True)
+        self._rc_eval_order_check.setToolTip(
+            "Order of model selection:\n"
+            "Checked: First select best N (components), then best distribution\n"
+            "Unchecked: First select best distribution, then best N"
+        )
+        self._params_layout.addRow("", self._rc_eval_order_check)
+
+        # Repetitions (bootstrap)
+        self._rc_repetitions_spin = QSpinBox()
+        self._rc_repetitions_spin.setRange(5, 500)
+        self._rc_repetitions_spin.setValue(20)
+        self._rc_repetitions_spin.setSingleStep(5)
+        self._rc_repetitions_spin.setToolTip("Number of bootstrap repetitions for confidence intervals")
+        self._params_layout.addRow("Bootstrap Reps:", self._rc_repetitions_spin)
+
+        # Precision rate
+        self._rc_precision_spin = QDoubleSpinBox()
+        self._rc_precision_spin.setRange(0.1, 12.0)
+        self._rc_precision_spin.setValue(2.0)
+        self._rc_precision_spin.setSingleStep(0.5)
+        self._rc_precision_spin.setDecimals(1)
+        self._rc_precision_spin.setSuffix(" h")
+        self._rc_precision_spin.setToolTip(
+            "Tolerance window (hours) for matching bootstrap peaks to reference peaks.\n"
+            "Larger values are more permissive when peaks shift between bootstrap samples."
+        )
+        self._params_layout.addRow("Peak Tolerance:", self._rc_precision_spin)
+
+        # Clean data
+        self._rc_clean_data_check = QCheckBox("Remove outliers (quantile filtering)")
+        self._rc_clean_data_check.setChecked(False)
+        self._rc_clean_data_check.setToolTip(
+            "Apply quantile-based outlier removal before fitting.\n"
+            "Removes extreme values that may distort count distribution fitting."
+        )
+        self._params_layout.addRow("", self._rc_clean_data_check)
+
+        # Info label for Parameter CIs
+        self._rc_cis_info_label = QLabel(
+            "ℹ This method requires reference peak times from a prior\n"
+            "Best Model run. Configure the Count Model and N Components\n"
+            "to match the best model found previously."
+        )
+        self._rc_cis_info_label.setWordWrap(True)
+        self._rc_cis_info_label.setStyleSheet(
+            "color: #555; font-style: italic; font-size: 9px; "
+            "background-color: #fff8e1; padding: 6px; border-radius: 3px; "
+            "border: 1px solid #ffe082;"
+        )
+        self._params_layout.addRow("", self._rc_cis_info_label)
+
         # Update visibility based on current method
         self._update_parameter_visibility()
 
@@ -2225,6 +2373,18 @@ class AnalysisPanel(QWidget):
         self._hide_param("Dependent Variable:")
         self._hide_param("Fixed Effects:")
         self._hide_param("Random Effect:")
+        # RhythmCount parameters
+        if hasattr(self, '_rc_single_model_combo'):
+            self._hide_param("Count Model:")
+            self._hide_param("N Components:")
+            self._hide_param("Count Models:")
+            self._hide_param("N Components (list):")
+            self._hide_param("Selection Test:")
+            self._hide_checkbox(self._rc_eval_order_check)
+            self._hide_param("Bootstrap Reps:")
+            self._hide_param("Peak Tolerance:")
+            self._hide_checkbox(self._rc_clean_data_check)
+            self._rc_cis_info_label.setVisible(False)
 
         # Always restore the full period widget (min/to/max/Step/step) so that
         # _update_cosinor_ols_period_visibility is the only thing that can hide
@@ -2396,6 +2556,53 @@ class AnalysisPanel(QWidget):
                 self._show_param("Random Effect:")  # Grouping variable (subject ID, replicate, etc.)
 
         # =====================================================================
+        # RHYTHMCOUNT
+        # =====================================================================
+        elif module_text == "RhythmCount":
+            self._show_param("Period:")
+
+            if method_text == "Fit Single Model":
+                self._show_param("Count Model:")
+                self._show_param("N Components:")
+                self._show_param("Bootstrap Reps:")
+                self._show_param("Peak Tolerance:")
+                self._show_checkbox(self._rc_clean_data_check)
+
+            elif method_text == "Fit All Models":
+                self._show_param("Count Models:")
+                self._show_param("N Components (list):")
+                self._show_checkbox(self._rc_clean_data_check)
+
+            elif method_text == "Fit Best Model (Auto Selection)":
+                self._show_param("Count Models:")
+                self._show_param("N Components (list):")
+                self._show_param("Selection Test:")
+                self._show_checkbox(self._rc_eval_order_check)
+                self._show_checkbox(self._rc_clean_data_check)
+
+            elif method_text == "Parameter Confidence Intervals":
+                self._show_param("Count Model:")
+                self._show_param("N Components:")
+                self._show_param("Bootstrap Reps:")
+                self._show_param("Peak Tolerance:")
+                self._show_checkbox(self._rc_clean_data_check)
+                # Show info about requiring reference peaks
+                for i in range(self._params_layout.rowCount()):
+                    field = self._params_layout.itemAt(i, QFormLayout.FieldRole)
+                    if field and field.widget() == self._rc_cis_info_label:
+                        self._rc_cis_info_label.setVisible(True)
+                        break
+
+            elif method_text == "Compare Groups":
+                self._show_param("Count Models:")
+                self._show_param("N Components (list):")
+                self._show_param("Selection Test:")
+                self._show_checkbox(self._rc_eval_order_check)
+                self._show_param("Bootstrap Reps:")
+                self._show_param("Peak Tolerance:")
+                self._show_checkbox(self._rc_clean_data_check)
+
+        # =====================================================================
         # AI CONSENSUS
         # =====================================================================
         elif module_text == "AI Consensus":
@@ -2416,9 +2623,10 @@ class AnalysisPanel(QWidget):
         # Show comparison frame ONLY for pairwise comparison methods (user selects 2 specific conditions)
         # NOT for "Compare All", "Compare Conditions", or "Nonlinear Compare" (which use all conditions automatically)
         is_nonlinear_compare = "Nonlinear Compare" in method_text
-        is_circacompare_compare = "Compare Groups" in method_text
-        is_pairwise_comparison = "Compare" in method_text and "Compare All" not in method_text and "Compare Conditions" not in method_text and not is_nonlinear_compare and not is_circacompare_compare
-        is_compare_all_or_conditions = "Compare All" in method_text or "Compare Conditions" in method_text or is_nonlinear_compare or is_circacompare_compare
+        is_circacompare_compare = "Compare Groups" in method_text and module_text == "CircaCompare"
+        is_rhythmcount_compare = method_text == "Compare Groups" and module_text == "RhythmCount"
+        is_pairwise_comparison = "Compare" in method_text and "Compare All" not in method_text and "Compare Conditions" not in method_text and not is_nonlinear_compare and not is_circacompare_compare and not is_rhythmcount_compare
+        is_compare_all_or_conditions = "Compare All" in method_text or "Compare Conditions" in method_text or is_nonlinear_compare or is_circacompare_compare or is_rhythmcount_compare
 
         self._compare_frame.setVisible(is_pairwise_comparison)
 
@@ -2666,6 +2874,31 @@ class AnalysisPanel(QWidget):
                  "variability and hierarchical data structure. Uses likelihood ratio test for rhythm significance. "
                  "Suitable for: Dependent data with repeated measures and grouping factors (e.g., individual subjects).")
             ]
+        elif module_name == "RhythmCount":  # RhythmCount
+            methods = [
+                ("Fit Single Model",
+                 "Fit one specific count distribution (Poisson, Negative Binomial, etc.) with a "
+                 "given number of harmonic components. Returns amplitude, MESOR, peak time(s), "
+                 "AIC/BIC, and McFadden pseudo-R². Suitable for discrete count data (RNA-seq, "
+                 "locomotor event counts, spike trains)."),
+                ("Fit All Models",
+                 "Fit all combinations of count distributions and harmonic components. Returns a "
+                 "comparison table with fit statistics for every (model, N) pair. Useful for "
+                 "exploratory model selection."),
+                ("Fit Best Model (Auto Selection)",
+                 "Fit all model combinations and automatically select the best one using AIC, BIC, "
+                 "Vuong, or F criterion. The selection order (components first vs distribution first) "
+                 "is configurable. Returns the winning model with full fit statistics."),
+                ("Parameter Confidence Intervals",
+                 "Compute bootstrap confidence intervals for amplitude, MESOR, and peak time(s). "
+                 "Requires specifying the count model and number of components (typically from a "
+                 "prior Best Model run). Note: this method requires reference peaks from a previous "
+                 "Best Model analysis."),
+                ("Compare Groups",
+                 "Independently fit and compare count-based cosinor models across all groups "
+                 "(conditions). For each group, selects the best model and computes bootstrap CIs "
+                 "for rhythm parameters. Returns a per-group results table."),
+            ]
         elif module_name == "AI Consensus":  # AI Consensus
             methods = [
                 ("Consensus Rhythmicity Score",
@@ -2745,14 +2978,16 @@ class AnalysisPanel(QWidget):
         
         # Get conditions
         method_text = self._method_combo.currentText()
+        module_name = self._module_combo.currentText()
         is_compare_all = "Compare All" in method_text
         is_compare_conditions = "Compare Conditions" in method_text
         is_nonlinear_compare = "Nonlinear Compare" in method_text
-        is_circacompare_compare = "Compare Groups" in method_text
-        # Pairwise uses 2 specific condition dropdowns; Compare All/Conditions/Nonlinear Compare/CircaCompare Compare Groups use ALL conditions
-        is_pairwise_comparison = "Compare" in method_text and not is_compare_all and not is_compare_conditions and not is_nonlinear_compare and not is_circacompare_compare
+        is_circacompare_compare = "Compare Groups" in method_text and module_name == "CircaCompare"
+        is_rhythmcount_compare = method_text == "Compare Groups" and module_name == "RhythmCount"
+        # Pairwise uses 2 specific condition dropdowns; all others use ALL conditions
+        is_pairwise_comparison = "Compare" in method_text and not is_compare_all and not is_compare_conditions and not is_nonlinear_compare and not is_circacompare_compare and not is_rhythmcount_compare
 
-        if is_compare_all or is_compare_conditions or is_nonlinear_compare or is_circacompare_compare:
+        if is_compare_all or is_compare_conditions or is_nonlinear_compare or is_circacompare_compare or is_rhythmcount_compare:
             # For "Compare All" and "Compare Conditions", automatically use ALL available conditions
             selected_conds = [
                 self._cond_list.item(i).text()
@@ -2765,6 +3000,8 @@ class AnalysisPanel(QWidget):
                     comparison_name = "Compare Conditions"
                 elif is_nonlinear_compare:
                     comparison_name = "Nonlinear Compare"
+                elif is_rhythmcount_compare:
+                    comparison_name = "RhythmCount: Compare Groups"
                 else:
                     comparison_name = "Compare All"
                 QMessageBox.warning(self, "Not Enough Conditions",
@@ -2930,6 +3167,12 @@ class AnalysisPanel(QWidget):
             ("AI Consensus", "Consensus Rhythmicity Score"): AnalysisMethod.CONSENSUS_AI,
             # Visualization
             ("Visualization", "Activity Profile"): AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE,
+            # RhythmCount
+            ("RhythmCount", "Fit Single Model"): AnalysisMethod.RHYTHMCOUNT_SINGLE,
+            ("RhythmCount", "Fit All Models"): AnalysisMethod.RHYTHMCOUNT_ALL_MODELS,
+            ("RhythmCount", "Fit Best Model (Auto Selection)"): AnalysisMethod.RHYTHMCOUNT_BEST_MODEL,
+            ("RhythmCount", "Parameter Confidence Intervals"): AnalysisMethod.RHYTHMCOUNT_PARAMETER_CIS,
+            ("RhythmCount", "Compare Groups"): AnalysisMethod.RHYTHMCOUNT_COMPARE_GROUPS,
         }
 
         return mapping.get((module_name, method), AnalysisMethod.COSINORPY_PERIODOGRAM)
@@ -3006,9 +3249,48 @@ class AnalysisPanel(QWidget):
             # LME parameters
             'dependent_variable': self._dependent_var_combo.currentText(),
             'fixed_effects': fixed_effects,
-            'random_effect': self._random_effect_combo.currentText()
+            'random_effect': self._random_effect_combo.currentText(),
+            # RhythmCount parameters
+            'rc_single_count_model': self._rc_single_model_value(),
+            'rc_single_n_components': self._rc_single_ncomp_spin.value(),
+            'rc_count_models': self._rc_selected_models(),
+            'rc_n_components': self._rc_selected_ncomps(),
+            'rc_selection_test': self._rc_selection_test_combo.currentText(),
+            'rc_eval_order': self._rc_eval_order_check.isChecked(),
+            'rc_repetitions': self._rc_repetitions_spin.value(),
+            'rc_precision_rate': self._rc_precision_spin.value(),
+            'rc_clean_data': self._rc_clean_data_check.isChecked(),
         }
         return params
+
+    def _rc_single_model_value(self) -> str:
+        """Return the internal CountModel string value for the single-model combo."""
+        model_map = {
+            'Poisson (poisson)': 'poisson',
+            'Generalized Poisson (gen_poisson)': 'gen_poisson',
+            'Zero-Inflated Poisson (zero_poisson)': 'zero_poisson',
+            'Negative Binomial (nb)': 'nb',
+            'Zero-Inflated NB (zero_nb)': 'zero_nb',
+        }
+        return model_map.get(self._rc_single_model_combo.currentText(), 'poisson')
+
+    def _rc_selected_models(self) -> list:
+        """Return list of selected CountModel string values from the multi-select list."""
+        selected = []
+        for i in range(self._rc_models_list.count()):
+            item = self._rc_models_list.item(i)
+            if item.isSelected():
+                selected.append(item.data(Qt.UserRole))
+        return selected if selected else ['poisson', 'gen_poisson', 'zero_poisson', 'nb', 'zero_nb']
+
+    def _rc_selected_ncomps(self) -> list:
+        """Return list of selected n_components from the multi-select list."""
+        selected = []
+        for i in range(self._rc_ncomp_list.count()):
+            item = self._rc_ncomp_list.item(i)
+            if item.isSelected():
+                selected.append(item.data(Qt.UserRole))
+        return selected if selected else [1, 2, 3]
 
     def _get_selected_parameters_to_compare(self) -> list:
         """Get list of selected parameters to compare."""
