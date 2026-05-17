@@ -996,9 +996,9 @@ class ResultsPanel(QWidget):
 
             if has_circacompare_compare:
                 columns = ['variable', 'condition1', 'condition2', 'method', 'period',
-                           'mesor_g0', 'mesor_g1', 'mesor_diff', 'mesor_diff_ci', 'p_mesor',
-                           'amplitude_g0', 'amplitude_g1', 'amplitude_diff', 'amplitude_diff_ci', 'p_amplitude',
-                           'acrophase_g0_hours', 'acrophase_g1_hours', 'acrophase_diff_hours', 'acrophase_diff_ci', 'p_acrophase']
+                           'mesor_g0', 'mesor_g1', 'mesor_diff', 'mesor_diff_ci', 'sig_mesor',
+                           'amplitude_g0', 'amplitude_g1', 'amplitude_diff', 'amplitude_diff_ci', 'sig_amplitude',
+                           'acrophase_g0_hours', 'acrophase_g1_hours', 'acrophase_diff_hours', 'acrophase_diff_ci', 'sig_acrophase']
                 headers = ['Variable', 'Cond1', 'Cond2', 'Method', 'Period (h)',
                            'MESOR-1', 'MESOR-2', 'MESOR-Diff', 'CI (MESOR-Diff)', 'sig (MESOR)',
                            'Amp-1', 'Amp-2', 'Amp-Diff', 'CI (Amp-Diff)', 'sig (Amp)',
@@ -1226,8 +1226,13 @@ class ResultsPanel(QWidget):
 
                 item = QTableWidgetItem(str(value))
 
+                # Color code CircaCompare CI-based significance
+                if col.startswith('sig_'):
+                    if value == 'Yes':
+                        item.setBackground(Qt.green)
+
                 # Color code p-values and q-values
-                if col.startswith('p_') or col.startswith('q_') or col == 'p_value' or col == 'significant':
+                elif col.startswith('p_') or col.startswith('q_') or col == 'p_value' or col == 'significant':
                     # For comparison, check the specific p-value or q-value column
                     if col.startswith('p_') or col.startswith('q_'):
                         p_val = result.get(col)

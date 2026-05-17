@@ -252,6 +252,11 @@ class ComparisonResult:
     p_amplitude: Optional[float] = None
     p_acrophase: Optional[float] = None
 
+    # CircaCompare CI-based significance ("Yes" / "No")
+    sig_mesor: Optional[str] = None
+    sig_amplitude: Optional[str] = None
+    sig_acrophase: Optional[str] = None
+
     # Comparison q-values (FDR-corrected)
     q_mesor: Optional[float] = None
     q_amplitude: Optional[float] = None
@@ -2071,11 +2076,10 @@ class AnalysisEngine:
         self._circacompare.set_f_scale(f_scale)
         self._circacompare.set_max_iterations(max_iterations)
 
-        # Calculate p-values based on confidence intervals
-        def calc_p_value(diff, ci_key, confidence_intervals):
+        def calc_sig(ci_key, confidence_intervals):
             if ci_key in confidence_intervals:
                 ci_lower, ci_upper = confidence_intervals[ci_key]
-                return 0.01 if (ci_lower > 0 or ci_upper < 0) else 0.5
+                return "Yes" if (ci_lower > 0 or ci_upper < 0) else "No"
             return None
 
         comparison_results = []
@@ -2101,9 +2105,9 @@ class AnalysisEngine:
                     )
                 continue  # skip failed period in range
 
-            p_mesor = calc_p_value(result.d_mesor, 'd_mesor', result.confidence_intervals)
-            p_amplitude = calc_p_value(result.d_amplitude, 'd_amplitude', result.confidence_intervals)
-            p_acrophase = calc_p_value(result.d_acrophase, 'd_acrophase', result.confidence_intervals)
+            sig_mesor = calc_sig('d_mesor', result.confidence_intervals)
+            sig_amplitude = calc_sig('d_amplitude', result.confidence_intervals)
+            sig_acrophase = calc_sig('d_acrophase', result.confidence_intervals)
 
             ci = result.confidence_intervals
             mesor_diff_ci = ci.get('d_mesor') if ci else None
@@ -2123,9 +2127,9 @@ class AnalysisEngine:
                 acrophase_g1=result.acrophase_g1,
                 acrophase_g0_hours=result.acrophase_g0_hours,
                 acrophase_g1_hours=result.acrophase_g1_hours,
-                p_mesor=p_mesor,
-                p_amplitude=p_amplitude,
-                p_acrophase=p_acrophase,
+                sig_mesor=sig_mesor,
+                sig_amplitude=sig_amplitude,
+                sig_acrophase=sig_acrophase,
                 mesor_diff=result.d_mesor,
                 amplitude_diff=result.d_amplitude,
                 acrophase_diff=result.d_acrophase,

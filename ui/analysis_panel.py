@@ -2355,7 +2355,7 @@ class AnalysisPanel(QWidget):
         # =====================================================================
         elif module_text == "CircaCompare":
             self._show_param("Period:")
-            self._set_period_mode('single')
+            self._set_period_mode('range')
             self._show_param("Loss Function:")
             self._show_param("F-Scale:")
             self._show_param("Max Iterations:")
