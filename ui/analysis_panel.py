@@ -903,13 +903,11 @@ class AnalysisPanel(QWidget):
         
         # Parameter configuration (stacked widget for different methods)
         params_group = self._create_parameters_section()
-        layout.addWidget(params_group)
+        layout.addWidget(params_group, 2)
         
         # Run controls
         run_group = self._create_run_controls()
         layout.addWidget(run_group)
-        
-        layout.addStretch()
     
     def _create_method_selection(self) -> QGroupBox:
         """Create method selection group."""
@@ -1017,7 +1015,7 @@ class AnalysisPanel(QWidget):
 
         self._var_list = QListWidget()
         self._var_list.setSelectionMode(QAbstractItemView.MultiSelection)
-        # self._var_list.setMaximumHeight(120)  # Commented to allow dynamic resizing
+        self._var_list.setMaximumHeight(150)
         var_layout.addWidget(self._var_list)
 
         var_btn_layout = QHBoxLayout()
@@ -1043,7 +1041,7 @@ class AnalysisPanel(QWidget):
         cond_layout.addWidget(QLabel("Conditions:"))
         self._cond_list = QListWidget()
         self._cond_list.setSelectionMode(QAbstractItemView.MultiSelection)
-        # self._cond_list.setMaximumHeight(120)  # Commented to allow dynamic resizing
+        self._cond_list.setMaximumHeight(150)
         cond_layout.addWidget(self._cond_list)
 
         cond_btn_layout = QHBoxLayout()
@@ -1063,7 +1061,7 @@ class AnalysisPanel(QWidget):
         cluster_layout.addWidget(QLabel("Clusters:"))
         self._cluster_list = QListWidget()
         self._cluster_list.setSelectionMode(QAbstractItemView.MultiSelection)
-        # self._cluster_list.setMaximumHeight(120)  # Commented to allow dynamic resizing
+        self._cluster_list.setMaximumHeight(150)
         cluster_layout.addWidget(self._cluster_list)
 
         cluster_btn_layout = QHBoxLayout()
@@ -1946,18 +1944,15 @@ class AnalysisPanel(QWidget):
         # - Bootstrap Size: visible only when Analysis Method = Bootstrap AND has_component_gt_one
 
         # Show/hide Criterium (Best Period)
-        self._criterium_label.setVisible(has_multiple_periods)
-        self._criterium_combo.setVisible(has_multiple_periods)
+        self._set_row_visible_for_widget(self._criterium_combo, has_multiple_periods)
 
         # Show/hide Analysis Method
-        self._analysis_method_label.setVisible(has_component_gt_one)
-        self._analysis_method_combo.setVisible(has_component_gt_one)
+        self._set_row_visible_for_widget(self._analysis_method_combo, has_component_gt_one)
 
         # Show/hide Bootstrap Size (only if Analysis Method is Bootstrap AND has_component_gt_one)
         analysis_method = self._analysis_method_combo.currentText()
         show_bootstrap = has_component_gt_one and analysis_method == 'Bootstrap'
-        self._bootstrap_size_label.setVisible(show_bootstrap)
-        self._bootstrap_size_spin.setVisible(show_bootstrap)
+        self._set_row_visible_for_widget(self._bootstrap_size_spin, show_bootstrap)
 
     def _update_cosinor_dependent_params_visibility(self):
         """Update parameter visibility for Cosinor (Dependent Data) based on n_components."""
@@ -1985,20 +1980,17 @@ class AnalysisPanel(QWidget):
         # - Bootstrap Size: visible only when Analysis Method = Bootstrap AND has_component_gt_one
 
         # Show/hide Criterium
-        self._criterium_label.setVisible(has_component_gt_one)
-        self._criterium_combo.setVisible(has_component_gt_one)
+        self._set_row_visible_for_widget(self._criterium_combo, has_component_gt_one)
 
         # Show/hide Analysis Method
-        self._analysis_method_label.setVisible(has_component_gt_one)
-        self._analysis_method_combo.setVisible(has_component_gt_one)
+        self._set_row_visible_for_widget(self._analysis_method_combo, has_component_gt_one)
 
         # Show/hide Bootstrap Size (only if Analysis Method is Bootstrap AND has_component_gt_one)
         analysis_method = self._analysis_method_combo.currentText()
         show_bootstrap = has_component_gt_one and (analysis_method == 'Bootstrap' or analysis_method == 'Sampling')
         # Actually, only show bootstrap size if method is Bootstrap
         show_bootstrap = has_component_gt_one and analysis_method == 'Bootstrap'
-        self._bootstrap_size_label.setVisible(show_bootstrap)
-        self._bootstrap_size_spin.setVisible(show_bootstrap)
+        self._set_row_visible_for_widget(self._bootstrap_size_spin, show_bootstrap)
 
     def _update_nonlinear_independent_params_visibility(self):
         """
@@ -2023,8 +2015,7 @@ class AnalysisPanel(QWidget):
         # Dependent/population nonlinear methods never use bootstrap
         is_dependent = "Dependent" in method_text
         if is_dependent:
-            self._bootstrap_size_label.setVisible(False)
-            self._bootstrap_size_spin.setVisible(False)
+            self._set_row_visible_for_widget(self._bootstrap_size_spin, False)
             return
 
         # Parse n_components
@@ -2041,8 +2032,7 @@ class AnalysisPanel(QWidget):
 
         # Bootstrap Size: only show when n_components > 1
         # For 1-component models, stats are calculated analytically (no bootstrap needed)
-        self._bootstrap_size_label.setVisible(has_component_gt_one)
-        self._bootstrap_size_spin.setVisible(has_component_gt_one)
+        self._set_row_visible_for_widget(self._bootstrap_size_spin, has_component_gt_one)
 
     def _update_nonlinear_independent_period_visibility(self):
         """
@@ -2073,19 +2063,19 @@ class AnalysisPanel(QWidget):
                 self._show_param("Periods:")
                 self._period_cond1_label.setText(f"Period for {conditions[0]}:")
                 self._period_cond2_label.setText(f"Period for {conditions[1]}:")
-                self._period_multi_cond_info.setVisible(False)
+                self._set_row_visible_for_widget(self._period_multi_cond_info, False)
             else:
                 # 3+ conditions or unknown: shared period only
                 self._show_param("Period:")
                 self._set_period_mode('range')
                 self._hide_param("Periods:")
-                self._period_multi_cond_info.setVisible(False)
+                self._set_row_visible_for_widget(self._period_multi_cond_info, False)
         else:
             # Dependent/shared period
             self._show_param("Period:")
             self._set_period_mode('range')
             self._hide_param("Periods:")
-            self._period_multi_cond_info.setVisible(False)
+            self._set_row_visible_for_widget(self._period_multi_cond_info, False)
 
     def _update_compare_conditions_parameters(self):
         """Update parameter visibility based on n_components and comparison method for Compare Conditions."""
@@ -2189,18 +2179,18 @@ class AnalysisPanel(QWidget):
             # Show per-condition periods, hide standard period spinboxes
             self._hide_param("Period:")
             self._show_param("Periods:")
-            self._period_multi_cond_info.setVisible(False)
+            self._set_row_visible_for_widget(self._period_multi_cond_info, False)
         elif show_multi_cond_info:
             # Hide both period widgets, show info message
             self._hide_param("Period:")
             self._hide_param("Periods:")
-            self._period_multi_cond_info.setVisible(True)
+            self._set_row_visible_for_widget(self._period_multi_cond_info, True)
         else:
             # Default case: show standard Period, hide Periods and info
             self._show_param("Period:")
             self._set_period_mode('range')
             self._hide_param("Periods:")
-            self._period_multi_cond_info.setVisible(False)
+            self._set_row_visible_for_widget(self._period_multi_cond_info, False)
 
     def _update_parameter_visibility(self):
         """Show/hide parameters based on selected method."""
@@ -2230,23 +2220,19 @@ class AnalysisPanel(QWidget):
         self._hide_param("Max Period:")
         self._hide_param("Model Type:")
         # Note: Criterium label changed to "Criterium (Best Period):"
-        if hasattr(self, '_criterium_label'):
-            self._criterium_label.setVisible(False)
-            self._criterium_combo.setVisible(False)
-        # Note: Analysis Method and Bootstrap Size have custom labels
-        if hasattr(self, '_analysis_method_label'):
-            self._analysis_method_label.setVisible(False)
-            self._analysis_method_combo.setVisible(False)
-        if hasattr(self, '_bootstrap_size_label'):
-            self._bootstrap_size_label.setVisible(False)
-            self._bootstrap_size_spin.setVisible(False)
+        if hasattr(self, '_criterium_combo'):
+            self._set_row_visible_for_widget(self._criterium_combo, False)
+        if hasattr(self, '_analysis_method_combo'):
+            self._set_row_visible_for_widget(self._analysis_method_combo, False)
+        if hasattr(self, '_bootstrap_size_spin'):
+            self._set_row_visible_for_widget(self._bootstrap_size_spin, False)
         self._hide_param("Comparison Type:")
         self._hide_param("Comparison Method:")
         self._hide_param("Parameters to Compare:")
         self._hide_checkbox(self._prominent_check)
         self._hide_checkbox(self._save_cosinorpy_plots_check)
         self._hide_checkbox(self._include_lin_comp_check)
-        self._period_multi_cond_info.setVisible(False)
+        self._set_row_visible_for_widget(self._period_multi_cond_info, False)
         # Hide Rhythm Analysis specific parameters
         self._hide_param("Asymmetry:")
         self._hide_param("AR Lag:")
@@ -2267,7 +2253,7 @@ class AnalysisPanel(QWidget):
             self._hide_checkbox(self._rc_eval_order_check)
             self._hide_param("Peak Tolerance:")
             self._hide_checkbox(self._rc_clean_data_check)
-            self._rc_cis_info_label.setVisible(False)
+            self._set_row_visible_for_widget(self._rc_cis_info_label, False)
 
         # =====================================================================
         # COSINORPY - NEW REFACTORED METHODS
@@ -2465,8 +2451,7 @@ class AnalysisPanel(QWidget):
             elif method_text == "Fit Best Model (Auto Selection)":
                 self._show_param("Count Models:")
                 self._show_param("Components:")
-                self._criterium_label.setVisible(True)
-                self._criterium_combo.setVisible(True)
+                self._set_row_visible_for_widget(self._criterium_combo, True)
                 self._update_criterium_options("RhythmCount", method_text)
                 self._show_checkbox(self._rc_eval_order_check)
                 self._show_checkbox(self._rc_clean_data_check)
@@ -2474,26 +2459,18 @@ class AnalysisPanel(QWidget):
             elif method_text == "Parameter Confidence Intervals":
                 self._show_param("Count Model:")
                 self._show_param("Components:")
-                self._bootstrap_size_label.setVisible(True)
-                self._bootstrap_size_spin.setVisible(True)
+                self._set_row_visible_for_widget(self._bootstrap_size_spin, True)
                 self._show_param("Peak Tolerance:")
                 self._show_checkbox(self._rc_clean_data_check)
-                # Show info about requiring reference peaks
-                for i in range(self._params_layout.rowCount()):
-                    field = self._params_layout.itemAt(i, QFormLayout.FieldRole)
-                    if field and field.widget() == self._rc_cis_info_label:
-                        self._rc_cis_info_label.setVisible(True)
-                        break
+                self._set_row_visible_for_widget(self._rc_cis_info_label, True)
 
             elif method_text == "Compare Groups":
                 self._show_param("Count Models:")
                 self._show_param("Components:")
-                self._criterium_label.setVisible(True)
-                self._criterium_combo.setVisible(True)
+                self._set_row_visible_for_widget(self._criterium_combo, True)
                 self._update_criterium_options("RhythmCount", method_text)
                 self._show_checkbox(self._rc_eval_order_check)
-                self._bootstrap_size_label.setVisible(True)
-                self._bootstrap_size_spin.setVisible(True)
+                self._set_row_visible_for_widget(self._bootstrap_size_spin, True)
                 self._show_param("Peak Tolerance:")
                 self._show_checkbox(self._rc_clean_data_check)
 
@@ -2590,7 +2567,9 @@ class AnalysisPanel(QWidget):
                 field = self._params_layout.itemAt(i, QFormLayout.FieldRole)
                 if field and field.widget():
                     field.widget().setVisible(True)
-    
+                self._params_layout.setRowVisible(i, True)
+                return
+
     def _hide_param(self, label: str):
         """Hide a parameter row."""
         for i in range(self._params_layout.rowCount()):
@@ -2600,6 +2579,8 @@ class AnalysisPanel(QWidget):
                 field = self._params_layout.itemAt(i, QFormLayout.FieldRole)
                 if field and field.widget():
                     field.widget().setVisible(False)
+                self._params_layout.setRowVisible(i, False)
+                return
 
     def _show_checkbox(self, checkbox: QCheckBox):
         """Show a checkbox widget."""
@@ -2607,7 +2588,8 @@ class AnalysisPanel(QWidget):
             field = self._params_layout.itemAt(i, QFormLayout.FieldRole)
             if field and field.widget() == checkbox:
                 checkbox.setVisible(True)
-                break
+                self._params_layout.setRowVisible(i, True)
+                return
 
     def _hide_checkbox(self, checkbox: QCheckBox):
         """Hide a checkbox widget."""
@@ -2615,7 +2597,21 @@ class AnalysisPanel(QWidget):
             field = self._params_layout.itemAt(i, QFormLayout.FieldRole)
             if field and field.widget() == checkbox:
                 checkbox.setVisible(False)
-                break
+                self._params_layout.setRowVisible(i, False)
+                return
+
+    def _set_row_visible_for_widget(self, widget, visible: bool):
+        """Show or hide the QFormLayout row that contains the given widget.
+
+        Works whether the widget is the row's label or its field.
+        """
+        for i in range(self._params_layout.rowCount()):
+            label_item = self._params_layout.itemAt(i, QFormLayout.LabelRole)
+            field_item = self._params_layout.itemAt(i, QFormLayout.FieldRole)
+            if (label_item and label_item.widget() is widget) or \
+               (field_item and field_item.widget() is widget):
+                self._params_layout.setRowVisible(i, visible)
+                return
 
     # =========================================================================
     # EVENT HANDLERS
