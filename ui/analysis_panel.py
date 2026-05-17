@@ -3,7 +3,7 @@ Analysis Panel
 ==============
 
 Panel for configuring and executing circadian rhythm analyses.
-Supports multiple analysis methods from CosinorPy, CircaCompare, and RhythmAnalysis modules.
+Supports multiple analysis methods from CosinorPy, CircaCompare, RhythmCount and RhythmAnalysis modules.
 """
 
 from typing import Optional, List, Dict, Any, Callable
@@ -1206,20 +1206,20 @@ class AnalysisPanel(QWidget):
         self._components_edit.setText("1")
         self._components_edit.setPlaceholderText("e.g., 1 or 1,2,3")
         self._components_edit.setToolTip(
-            "Components to test (comma-separated).\n\n"
+            "Harmonic components to test (comma-separated).\n\n"
             "• Single component: Enter '1'\n"
             "• Multiple components: Enter '1,2,3' to test models with 1, 2, and 3 components\n"
-            "• CosinorPy will select the best model based on the chosen criterium"
+            "• Methods that require a single value will use the first entry"
         )
         # Connect signal to update comparison parameters when components change
         self._components_edit.textChanged.connect(self._on_components_changed)
 
         components_label = QLabel("Components:")
         components_label.setToolTip(
-            "Components to test (comma-separated).\n\n"
+            "Harmonic components to test (comma-separated).\n\n"
             "• Single component: Enter '1'\n"
             "• Multiple components: Enter '1,2,3' to test models with 1, 2, and 3 components\n"
-            "• CosinorPy will select the best model based on the chosen criterium"
+            "• Methods that require a single value will use the first entry"
         )
         self._params_layout.addRow(components_label, self._components_edit)
 
@@ -1380,12 +1380,6 @@ class AnalysisPanel(QWidget):
             "adjusting the loss function and f-scale parameters.</i>"
         )
         self._params_layout.addRow("Max Iterations:", self._max_iterations_spin)
-
-        # Harmonics
-        self._harmonics_spin = QSpinBox()
-        self._harmonics_spin.setRange(1, 6)
-        self._harmonics_spin.setValue(2)
-        self._params_layout.addRow("Harmonics:", self._harmonics_spin)
         
         # Permutations (for F24)
         self._permutations_spin = QSpinBox()
@@ -1769,18 +1763,6 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("Count Model:", self._rc_single_model_combo)
 
-        # N components (for single model fit) — comma-separated like CosinorPy
-        self._rc_single_ncomp_edit = QLineEdit()
-        self._rc_single_ncomp_edit.setText("1")
-        self._rc_single_ncomp_edit.setPlaceholderText("e.g., 1 or 1,2,3")
-        self._rc_single_ncomp_edit.setToolTip(
-            "Harmonic components to evaluate (comma-separated).\n\n"
-            "• Single: Enter '1'\n"
-            "• Multiple: Enter '1,2,3' to test each component count\n\n"
-            "Results will include one row per (period, N) combination."
-        )
-        self._params_layout.addRow("N Components:", self._rc_single_ncomp_edit)
-
         # Count models (multi-select, for all/best model methods)
         self._rc_models_list = QListWidget()
         self._rc_models_list.setSelectionMode(QAbstractItemView.MultiSelection)
@@ -1799,19 +1781,6 @@ class AnalysisPanel(QWidget):
             self._rc_models_list.addItem(item)
         self._rc_models_list.setToolTip("Select count distributions to include in model fitting (hold Ctrl to multi-select)")
         self._params_layout.addRow("Count Models:", self._rc_models_list)
-
-        # N components (multi-select, for all/best model methods)
-        self._rc_ncomp_list = QListWidget()
-        self._rc_ncomp_list.setSelectionMode(QAbstractItemView.MultiSelection)
-        self._rc_ncomp_list.setMaximumHeight(75)
-        for n in [1, 2, 3, 4]:
-            item = QListWidgetItem(str(n))
-            item.setData(Qt.UserRole, n)
-            if n <= 3:
-                item.setSelected(True)
-            self._rc_ncomp_list.addItem(item)
-        self._rc_ncomp_list.setToolTip("Number of harmonic components to test (hold Ctrl to multi-select)")
-        self._params_layout.addRow("N Components (list):", self._rc_ncomp_list)
 
         # Selection test
         self._rc_selection_test_combo = QComboBox()
@@ -2332,7 +2301,6 @@ class AnalysisPanel(QWidget):
         self._hide_param("Loss Function:")
         self._hide_param("F-Scale:")
         self._hide_param("Max Iterations:")
-        self._hide_param("Harmonics:")
         self._hide_param("Permutations:")
         self._hide_param("Amplification:")
         self._hide_param("Linear Component:")
@@ -2376,9 +2344,7 @@ class AnalysisPanel(QWidget):
         # RhythmCount parameters
         if hasattr(self, '_rc_single_model_combo'):
             self._hide_param("Count Model:")
-            self._hide_param("N Components:")
             self._hide_param("Count Models:")
-            self._hide_param("N Components (list):")
             self._hide_param("Selection Test:")
             self._hide_checkbox(self._rc_eval_order_check)
             self._hide_param("Bootstrap Reps:")
@@ -2520,7 +2486,7 @@ class AnalysisPanel(QWidget):
             # 5. Harmonic Cosinor
             elif method_text == "Harmonic Cosinor":
                 self._show_param("Period:")  # Fixed Period (single value expected)
-                self._show_param("Harmonics:")
+                self._show_param("Components:")
 
             # 6. Fourier F24
             elif method_text == "Fourier F24":
@@ -2563,24 +2529,24 @@ class AnalysisPanel(QWidget):
 
             if method_text == "Fit Single Model":
                 self._show_param("Count Model:")
-                self._show_param("N Components:")
+                self._show_param("Components:")
                 self._show_checkbox(self._rc_clean_data_check)
 
             elif method_text == "Fit All Models":
                 self._show_param("Count Models:")
-                self._show_param("N Components (list):")
+                self._show_param("Components:")
                 self._show_checkbox(self._rc_clean_data_check)
 
             elif method_text == "Fit Best Model (Auto Selection)":
                 self._show_param("Count Models:")
-                self._show_param("N Components (list):")
+                self._show_param("Components:")
                 self._show_param("Selection Test:")
                 self._show_checkbox(self._rc_eval_order_check)
                 self._show_checkbox(self._rc_clean_data_check)
 
             elif method_text == "Parameter Confidence Intervals":
                 self._show_param("Count Model:")
-                self._show_param("N Components:")
+                self._show_param("Components:")
                 self._show_param("Bootstrap Reps:")
                 self._show_param("Peak Tolerance:")
                 self._show_checkbox(self._rc_clean_data_check)
@@ -2593,7 +2559,7 @@ class AnalysisPanel(QWidget):
 
             elif method_text == "Compare Groups":
                 self._show_param("Count Models:")
-                self._show_param("N Components (list):")
+                self._show_param("Components:")
                 self._show_param("Selection Test:")
                 self._show_checkbox(self._rc_eval_order_check)
                 self._show_param("Bootstrap Reps:")
@@ -3208,7 +3174,7 @@ class AnalysisPanel(QWidget):
             'loss': self._loss_combo.currentText(),
             'f_scale': self._fscale_spin.value(),
             'max_iterations': self._max_iterations_spin.value(),
-            'n_harmonics': self._harmonics_spin.value(),
+            'n_harmonics': self._parse_components(self._components_edit.text())[0],
             'n_permutations': self._permutations_spin.value(),
             # Nonlinear cosinor parameters
             'amplification': None if self._amplification_spin.value() == 0.0 else self._amplification_spin.value(),
@@ -3250,9 +3216,9 @@ class AnalysisPanel(QWidget):
             'random_effect': self._random_effect_combo.currentText(),
             # RhythmCount parameters
             'rc_single_count_model': self._rc_single_model_value(),
-            'rc_single_n_components_list': self._parse_components(self._rc_single_ncomp_edit.text()),
+            'rc_single_n_components_list': self._parse_components(self._components_edit.text()),
             'rc_count_models': self._rc_selected_models(),
-            'rc_n_components': self._rc_selected_ncomps(),
+            'rc_n_components': self._parse_components(self._components_edit.text()),
             'rc_selection_test': self._rc_selection_test_combo.currentText(),
             'rc_eval_order': self._rc_eval_order_check.isChecked(),
             'rc_repetitions': self._rc_repetitions_spin.value(),
@@ -3280,15 +3246,6 @@ class AnalysisPanel(QWidget):
             if item.isSelected():
                 selected.append(item.data(Qt.UserRole))
         return selected if selected else ['poisson', 'gen_poisson', 'zero_poisson', 'nb', 'zero_nb']
-
-    def _rc_selected_ncomps(self) -> list:
-        """Return list of selected n_components from the multi-select list."""
-        selected = []
-        for i in range(self._rc_ncomp_list.count()):
-            item = self._rc_ncomp_list.item(i)
-            if item.isSelected():
-                selected.append(item.data(Qt.UserRole))
-        return selected if selected else [1, 2, 3]
 
     def _get_selected_parameters_to_compare(self) -> list:
         """Get list of selected parameters to compare."""
