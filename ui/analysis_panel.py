@@ -1418,17 +1418,6 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("Linear Component:", self._lin_comp_spin)
 
-        # Use dependent model (for Nonlinear Cosinor comparison)
-        self._use_dependent_model_check = QCheckBox("Use dependent (shared period) model")
-        self._use_dependent_model_check.setChecked(False)
-        self._use_dependent_model_check.setToolTip(
-            "For independent data comparison:\n"
-            "- Unchecked: Independent model (each group has its own period)\n"
-            "- Checked: Dependent model (both groups share the same period)"
-        )
-        self._params_layout.addRow("", self._use_dependent_model_check)
-        self._use_dependent_model_check.toggled.connect(lambda _: self._update_parameter_visibility())
-
         # Periodogram type (for Periodogram)
         self._per_type_combo = QComboBox()
         self._per_type_combo.addItems(['per', 'welch', 'lombscargle'])
@@ -1471,23 +1460,16 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("Model Type:", self._model_type_combo)
 
-        # Criterium (for CosinorPy - best period selection)
-        self._criterium_label = QLabel("Criterium (Best Period):")
+        # Criterium / Selection criterion (shared by CosinorPy and RhythmCount)
+        self._criterium_label = QLabel("Selection Criterion:")
         self._criterium_combo = QComboBox()
-        self._criterium_combo.addItems(['RSS', 'AIC', 'BIC', 'Log-Likelihood'])
-        self._criterium_combo.setToolTip(
-            "Criterion for selecting best period:\n"
-            "- RSS: Residual Sum of Squares (default)\n"
-            "- AIC: Akaike Information Criterion\n"
-            "- BIC: Bayesian Information Criterion\n"
-            "- Log-Likelihood: Maximum likelihood"
-        )
         self._params_layout.addRow(self._criterium_label, self._criterium_combo)
 
         # Comparison Type (for single component comparison methods)
         self._comparison_type_combo = QComboBox()
         self._comparison_type_combo.addItems(['Pooled Model', 'Independent Models'])
         self._comparison_type_combo.currentTextChanged.connect(self._update_compare_conditions_parameters)
+        self._comparison_type_combo.currentTextChanged.connect(lambda _: self._update_parameter_visibility())
         self._comparison_type_combo.setToolTip(
             "Statistical approach for comparing conditions:\n\n"
             "• Pooled Model: Single model with group interaction\n"
@@ -1535,9 +1517,9 @@ class AnalysisPanel(QWidget):
         # Bootstrap size (for Bootstrap analysis method)
         self._bootstrap_size_label = QLabel("Bootstrap Size:")
         self._bootstrap_size_spin = QSpinBox()
-        self._bootstrap_size_spin.setRange(50, 10000)
-        self._bootstrap_size_spin.setValue(1000)
-        self._bootstrap_size_spin.setSingleStep(50)
+        self._bootstrap_size_spin.setRange(5, 10000)
+        self._bootstrap_size_spin.setValue(100)
+        self._bootstrap_size_spin.setSingleStep(10)
         self._bootstrap_size_spin.setToolTip(
             "Number of bootstrap iterations (higher = more accurate but slower)"
         )
@@ -1637,27 +1619,6 @@ class AnalysisPanel(QWidget):
             "Default 0.5h."
         )
         self._params_layout.addRow("Resolution:", self._resolution_spin)
-
-        # Search Mode (for Cosinor OLS)
-        self._search_mode_combo = QComboBox()
-        self._search_mode_combo.addItems(['Fixed Period', 'Optimize Period'])
-        self._search_mode_combo.setToolTip(
-            "Period search mode:\n"
-            "- Fixed Period: Use single specified period (e.g., 24h)\n"
-            "- Optimize Period: Search for best period within range"
-        )
-        self._search_mode_combo.currentTextChanged.connect(self._on_search_mode_changed)
-        self._params_layout.addRow("Search Mode:", self._search_mode_combo)
-
-        # Target Period (for Fourier F24)
-        self._target_period_spin = QDoubleSpinBox()
-        self._target_period_spin.setRange(1, 72)
-        self._target_period_spin.setValue(24.0)
-        self._target_period_spin.setSuffix(" h")
-        self._target_period_spin.setToolTip(
-            "Target period to test (typically 24h for circadian rhythms)"
-        )
-        self._params_layout.addRow("Target Period:", self._target_period_spin)
 
         # N Periods (for Lomb-Scargle oversampling)
         self._n_periods_spin = QSpinBox()
@@ -1782,18 +1743,6 @@ class AnalysisPanel(QWidget):
         self._rc_models_list.setToolTip("Select count distributions to include in model fitting (hold Ctrl to multi-select)")
         self._params_layout.addRow("Count Models:", self._rc_models_list)
 
-        # Selection test
-        self._rc_selection_test_combo = QComboBox()
-        self._rc_selection_test_combo.addItems(['AIC', 'BIC', 'Vuong', 'F'])
-        self._rc_selection_test_combo.setToolTip(
-            "Criterion for selecting the best model:\n"
-            "- AIC: Akaike Information Criterion (default)\n"
-            "- BIC: Bayesian Information Criterion (penalizes complexity more)\n"
-            "- Vuong: Vuong test for non-nested models\n"
-            "- F: F-test"
-        )
-        self._params_layout.addRow("Selection Test:", self._rc_selection_test_combo)
-
         # Eval order
         self._rc_eval_order_check = QCheckBox("Components first, then distribution")
         self._rc_eval_order_check.setChecked(True)
@@ -1803,14 +1752,6 @@ class AnalysisPanel(QWidget):
             "Unchecked: First select best distribution, then best N"
         )
         self._params_layout.addRow("", self._rc_eval_order_check)
-
-        # Repetitions (bootstrap)
-        self._rc_repetitions_spin = QSpinBox()
-        self._rc_repetitions_spin.setRange(5, 500)
-        self._rc_repetitions_spin.setValue(20)
-        self._rc_repetitions_spin.setSingleStep(5)
-        self._rc_repetitions_spin.setToolTip("Number of bootstrap repetitions for confidence intervals")
-        self._params_layout.addRow("Bootstrap Reps:", self._rc_repetitions_spin)
 
         # Precision rate
         self._rc_precision_spin = QDoubleSpinBox()
@@ -1883,27 +1824,49 @@ class AnalysisPanel(QWidget):
 
         # Also update criterium options: population_fit_group does not return log-likelihood,
         # so AIC/BIC/Log-Likelihood are only valid for independent data.
-        self._update_criterium_options(method_text)
+        self._update_criterium_options("CosinorPy", method_text)
 
-    def _update_criterium_options(self, method_text: str):
-        """Update Criterium combo to only show options available in the current data type."""
+    def _update_criterium_options(self, module_text: str, method_text: str):
+        """Update Selection Criterion combo to show valid options for current module/method."""
         current_selection = self._criterium_combo.currentText()
-        is_dependent = 'Dependent' in method_text
 
         self._criterium_combo.clear()
 
-        if is_dependent:
-            # population_fit_group does not output log-likelihood, so AIC/BIC/Log-Likelihood
-            # cannot be computed. Only RSS is valid.
-            self._criterium_combo.addItems(['RSS'])
-            self._criterium_combo.setCurrentText('RSS')
-        else:
-            # fit_group outputs log-likelihood, so all criteria are valid.
-            self._criterium_combo.addItems(['RSS', 'AIC', 'BIC', 'Log-Likelihood'])
-            if current_selection in ['RSS', 'AIC', 'BIC', 'Log-Likelihood']:
-                self._criterium_combo.setCurrentText(current_selection)
+        descriptions = {
+            'RSS': "Residual Sum of Squares (lower = better fit)",
+            'AIC': "Akaike Information Criterion (balances fit and complexity)",
+            'BIC': "Bayesian Information Criterion (stronger complexity penalty than AIC)",
+            'Log-Likelihood': "Maximum likelihood (higher = better fit)",
+            'Vuong': "Test for comparing non-nested count models",
+            'F': "F-test for comparing nested models",
+        }
+
+        if module_text == "CosinorPy":
+            is_dependent = 'Dependent' in method_text
+            if is_dependent:
+                options = ['RSS']
+                default = 'RSS'
             else:
-                self._criterium_combo.setCurrentText('RSS')
+                options = ['RSS', 'AIC', 'BIC', 'Log-Likelihood']
+                default = 'RSS'
+        elif module_text == "RhythmCount":
+            options = ['AIC', 'BIC', 'Vuong', 'F']
+            default = 'AIC'
+        else:
+            options = ['RSS', 'AIC', 'BIC', 'Log-Likelihood']
+            default = 'RSS'
+
+        self._criterium_combo.addItems(options)
+        if current_selection in options:
+            self._criterium_combo.setCurrentText(current_selection)
+        else:
+            self._criterium_combo.setCurrentText(default)
+
+        # Build a tooltip listing only the criteria available for this method
+        tooltip_lines = ["Criterion used to select the best-fitting model.\n"]
+        for opt in options:
+            tooltip_lines.append(f"- {opt}: {descriptions[opt]}")
+        self._criterium_combo.setToolTip("\n".join(tooltip_lines))
 
     def _update_limo_analysis_options(self, comparison_method: str):
         """Update Analysis Method options when Comparison Method changes (for Compare Conditions)."""
@@ -1951,50 +1914,6 @@ class AnalysisPanel(QWidget):
         method_text = self._method_combo.currentText()
         if method_text == "Cosinor (Independent Data)":
             self._update_cosinor_independent_params_visibility()
-
-    def _on_search_mode_changed(self):
-        """Handle changes to Cosinor OLS search mode."""
-        method_text = self._method_combo.currentText()
-        if method_text == "Cosinor (OLS)":
-            self._update_cosinor_ols_period_visibility()
-
-    def _update_cosinor_ols_period_visibility(self):
-        """Update period widget visibility based on search mode for Cosinor OLS."""
-        search_mode = self._search_mode_combo.currentText()
-
-        # Get the period widget (it's a composite widget with min, max, step)
-        # We need to find it in the layout
-        for i in range(self._params_layout.rowCount()):
-            label_item = self._params_layout.itemAt(i, QFormLayout.LabelRole)
-            if label_item and label_item.widget():
-                label_widget = label_item.widget()
-                if label_widget.text() == "Period:":
-                    field_item = self._params_layout.itemAt(i, QFormLayout.FieldRole)
-                    if field_item and field_item.widget():
-                        period_widget = field_item.widget()
-                        # The period widget is a QWidget containing HBoxLayout with min, "to", max, "Step:", step
-                        layout = period_widget.layout()
-                        if layout:
-                            if search_mode == "Fixed Period":
-                                # Show only the first spinbox (min), hide the rest
-                                # Items: 0=min, 1="to", 2=max, 3="Step:", 4=step
-                                layout.itemAt(0).widget().setVisible(True)  # min spinbox (used as fixed period)
-                                layout.itemAt(1).widget().setVisible(False) # "to" label
-                                layout.itemAt(2).widget().setVisible(False) # max spinbox
-                                layout.itemAt(3).widget().setVisible(False) # "Step:" label
-                                layout.itemAt(4).widget().setVisible(False) # step spinbox
-                                # Update tooltip for clarity
-                                layout.itemAt(0).widget().setToolTip("Fixed period for cosinor analysis (e.g., 24h)")
-                            else:  # "Optimize Period"
-                                # Show all widgets (min, "to", max, "Step:", step)
-                                layout.itemAt(0).widget().setVisible(True)
-                                layout.itemAt(1).widget().setVisible(True)
-                                layout.itemAt(2).widget().setVisible(True)
-                                layout.itemAt(3).widget().setVisible(True)
-                                layout.itemAt(4).widget().setVisible(True)
-                                # Restore original tooltip
-                                layout.itemAt(0).widget().setToolTip("")
-                    break
 
     def _update_cosinor_independent_params_visibility(self):
         """Update parameter visibility for Cosinor (Independent Data) based on n_components and period."""
@@ -2135,7 +2054,7 @@ class AnalysisPanel(QWidget):
         For 3+ conditions in independent mode: fall back to single shared period
         (CosinorPy compare_pairs uses global period1/period2, not per-pair periods).
         """
-        use_dep = self._use_dependent_model_check.isChecked()
+        use_dep = (self._comparison_type_combo.currentText() == 'Pooled Model')
 
         if not use_dep:
             # Independent: attempt to show per-condition periods
@@ -2158,11 +2077,13 @@ class AnalysisPanel(QWidget):
             else:
                 # 3+ conditions or unknown: shared period only
                 self._show_param("Period:")
+                self._set_period_mode('range')
                 self._hide_param("Periods:")
                 self._period_multi_cond_info.setVisible(False)
         else:
             # Dependent/shared period
             self._show_param("Period:")
+            self._set_period_mode('range')
             self._hide_param("Periods:")
             self._period_multi_cond_info.setVisible(False)
 
@@ -2277,6 +2198,7 @@ class AnalysisPanel(QWidget):
         else:
             # Default case: show standard Period, hide Periods and info
             self._show_param("Period:")
+            self._set_period_mode('range')
             self._hide_param("Periods:")
             self._period_multi_cond_info.setVisible(False)
 
@@ -2322,7 +2244,6 @@ class AnalysisPanel(QWidget):
         self._hide_param("Comparison Method:")
         self._hide_param("Parameters to Compare:")
         self._hide_checkbox(self._prominent_check)
-        self._hide_checkbox(self._use_dependent_model_check)
         self._hide_checkbox(self._save_cosinorpy_plots_check)
         self._hide_checkbox(self._include_lin_comp_check)
         self._period_multi_cond_info.setVisible(False)
@@ -2331,8 +2252,6 @@ class AnalysisPanel(QWidget):
         self._hide_param("AR Lag:")
         self._hide_checkbox(self._prewhiten_check)
         self._hide_param("Resolution:")
-        self._hide_param("Search Mode:")
-        self._hide_param("Target Period:")
         self._hide_param("Oversampling:")
         self._hide_param("Significance Level:")
         self._hide_param("Wavelet Type:")
@@ -2345,17 +2264,10 @@ class AnalysisPanel(QWidget):
         if hasattr(self, '_rc_single_model_combo'):
             self._hide_param("Count Model:")
             self._hide_param("Count Models:")
-            self._hide_param("Selection Test:")
             self._hide_checkbox(self._rc_eval_order_check)
-            self._hide_param("Bootstrap Reps:")
             self._hide_param("Peak Tolerance:")
             self._hide_checkbox(self._rc_clean_data_check)
             self._rc_cis_info_label.setVisible(False)
-
-        # Always restore the full period widget (min/to/max/Step/step) so that
-        # _update_cosinor_ols_period_visibility is the only thing that can hide
-        # sub-items, and only when Cosinor OLS is active.
-        self._restore_period_widget()
 
         # =====================================================================
         # COSINORPY - NEW REFACTORED METHODS
@@ -2370,6 +2282,7 @@ class AnalysisPanel(QWidget):
             # Method 2: Cosinor (Independent Data)
             elif method_text == "Cosinor (Independent Data)":
                 self._show_param("Period:")
+                self._set_period_mode('range')
                 self._show_param("Components:")
                 self._show_param("Model Type:")
                 self._show_checkbox(self._save_cosinorpy_plots_check)
@@ -2379,6 +2292,7 @@ class AnalysisPanel(QWidget):
             # Method 3: Cosinor (Dependent Data)
             elif method_text == "Cosinor (Dependent Data)":
                 self._show_param("Period:")
+                self._set_period_mode('range')
                 self._show_param("Components:")
                 self._show_param("Model Type:")
                 self._show_checkbox(self._save_cosinorpy_plots_check)
@@ -2389,6 +2303,7 @@ class AnalysisPanel(QWidget):
             elif method_text == "Compare Conditions (Independent)":
                 # Always show basic parameters
                 self._show_param("Period:")
+                self._set_period_mode('range')
                 self._show_param("Components:")
                 self._show_checkbox(self._save_cosinorpy_plots_check)
 
@@ -2399,6 +2314,7 @@ class AnalysisPanel(QWidget):
             elif method_text == "Compare Conditions (Dependent)":
                 # Always show basic parameters
                 self._show_param("Period:")
+                self._set_period_mode('range')
                 self._show_param("Components:")
                 self._show_checkbox(self._save_cosinorpy_plots_check)
 
@@ -2411,6 +2327,7 @@ class AnalysisPanel(QWidget):
             # Bootstrap is only needed for n_components > 1
             elif method_text == "Nonlinear (Independent Data)":
                 self._show_param("Period:")
+                self._set_period_mode('range')
                 self._show_param("Components:")
                 self._show_checkbox(self._save_cosinorpy_plots_check)
                 # Show bootstrap size only if n_components might be > 1
@@ -2420,6 +2337,7 @@ class AnalysisPanel(QWidget):
             # Same model as Independent, but for population/longitudinal data
             elif method_text == "Nonlinear (Dependent Data)":
                 self._show_param("Period:")
+                self._set_period_mode('range')
                 self._show_param("Components:")
                 self._show_checkbox(self._save_cosinorpy_plots_check)
                 # Show bootstrap size only if n_components might be > 1
@@ -2429,7 +2347,7 @@ class AnalysisPanel(QWidget):
             # Compare conditions using nonlinear model
             elif method_text == "Nonlinear Compare (Independent)":
                 self._show_param("Components:")
-                self._show_checkbox(self._use_dependent_model_check)
+                self._show_param("Comparison Type:")
                 self._show_checkbox(self._save_cosinorpy_plots_check)
                 # Show bootstrap size only if n_components might be > 1
                 self._update_nonlinear_independent_params_visibility()
@@ -2440,6 +2358,7 @@ class AnalysisPanel(QWidget):
             # Compare conditions using nonlinear model for population data
             elif method_text == "Nonlinear Compare (Dependent)":
                 self._show_param("Period:")
+                self._set_period_mode('range')
                 self._show_param("Components:")
                 self._show_checkbox(self._save_cosinorpy_plots_check)
                 # Show bootstrap size only if n_components might be > 1
@@ -2450,6 +2369,7 @@ class AnalysisPanel(QWidget):
         # =====================================================================
         elif module_text == "CircaCompare":
             self._show_param("Period:")
+            self._set_period_mode('single')
             self._show_param("Loss Function:")
             self._show_param("F-Scale:")
             self._show_param("Max Iterations:")
@@ -2461,53 +2381,56 @@ class AnalysisPanel(QWidget):
 
             # 1. JTK Cycle (Python-JTK)
             if method_text == "JTK Cycle":
-                self._show_param("Period:")  # Period Range (Min-Max-Step)
+                self._show_param("Period:")
+                self._set_period_mode('range')
                 self._show_param("Asymmetry:")
 
             # 2. AR-JTK
             elif method_text == "AR-JTK":
-                self._show_param("Period:")  # Period Range (Min-Max-Step)
+                self._show_param("Period:")
+                self._set_period_mode('range')
                 self._show_param("Asymmetry:")
                 self._show_param("AR Lag:")
                 self._show_checkbox(self._prewhiten_check)
 
             # 3. Cosine-Kendall
             elif method_text == "Cosine-Kendall":
-                self._show_param("Period:")  # Period Range (Min-Max-Step)
+                self._show_param("Period:")
+                self._set_period_mode('range')
                 self._show_param("Resolution:")
 
             # 4. Cosinor (OLS)
             elif method_text == "Cosinor (OLS)":
-                self._show_param("Search Mode:")
-                self._show_param("Period:")  # Period Range (for optimization mode)
-                # Update period widget visibility based on search mode
-                self._update_cosinor_ols_period_visibility()
+                self._show_param("Period:")
+                self._set_period_mode('range')
 
             # 5. Harmonic Cosinor
             elif method_text == "Harmonic Cosinor":
-                self._show_param("Period:")  # Fixed Period (single value expected)
+                self._show_param("Period:")
+                self._set_period_mode('single')
                 self._show_param("Components:")
 
             # 6. Fourier F24
             elif method_text == "Fourier F24":
-                self._show_param("Target Period:")
+                self._show_param("Period:")
+                self._set_period_mode('single')
                 self._show_param("Permutations:")
 
             # 7. Lomb-Scargle
             elif method_text == "Lomb-Scargle":
-                self._show_param("Period:")  # Period Range (Min-Max), Step hidden
+                self._show_param("Period:")
                 self._show_param("Oversampling:")
                 self._show_param("Significance Level:")
                 self._period_min_spin.setValue(18.0)
                 self._period_max_spin.setValue(32.0)
-                self._hide_period_step()
+                self._set_period_mode('range_no_step')
 
             # 8. Wavelet (CWT)
             elif method_text == "Wavelet (CWT)":
-                self._show_param("Period:")  # Period Range (Min-Max), Step hidden
+                self._show_param("Period:")
                 self._show_param("Wavelet Type:")
                 self._show_param("Sampling Interval:")
-                self._hide_period_step()
+                self._set_period_mode('range_no_step')
 
             # 9. Spectral Analysis (Periodogram)
             elif method_text == "Spectral Analysis (Periodogram)":
@@ -2518,14 +2441,16 @@ class AnalysisPanel(QWidget):
 
             # 10. Linear Mixed Effects (Cosinor-based)
             elif method_text == "Linear Mixed Effects":
-                self._show_param("Period:")  # Target period for cosinor transformation
-                self._show_param("Random Effect:")  # Grouping variable (subject ID, replicate, etc.)
+                self._show_param("Period:")
+                self._set_period_mode('single')
+                self._show_param("Random Effect:")
 
         # =====================================================================
         # RHYTHMCOUNT
         # =====================================================================
         elif module_text == "RhythmCount":
             self._show_param("Period:")
+            self._set_period_mode('range')
 
             if method_text == "Fit Single Model":
                 self._show_param("Count Model:")
@@ -2540,14 +2465,17 @@ class AnalysisPanel(QWidget):
             elif method_text == "Fit Best Model (Auto Selection)":
                 self._show_param("Count Models:")
                 self._show_param("Components:")
-                self._show_param("Selection Test:")
+                self._criterium_label.setVisible(True)
+                self._criterium_combo.setVisible(True)
+                self._update_criterium_options("RhythmCount", method_text)
                 self._show_checkbox(self._rc_eval_order_check)
                 self._show_checkbox(self._rc_clean_data_check)
 
             elif method_text == "Parameter Confidence Intervals":
                 self._show_param("Count Model:")
                 self._show_param("Components:")
-                self._show_param("Bootstrap Reps:")
+                self._bootstrap_size_label.setVisible(True)
+                self._bootstrap_size_spin.setVisible(True)
                 self._show_param("Peak Tolerance:")
                 self._show_checkbox(self._rc_clean_data_check)
                 # Show info about requiring reference peaks
@@ -2560,9 +2488,12 @@ class AnalysisPanel(QWidget):
             elif method_text == "Compare Groups":
                 self._show_param("Count Models:")
                 self._show_param("Components:")
-                self._show_param("Selection Test:")
+                self._criterium_label.setVisible(True)
+                self._criterium_combo.setVisible(True)
+                self._update_criterium_options("RhythmCount", method_text)
                 self._show_checkbox(self._rc_eval_order_check)
-                self._show_param("Bootstrap Reps:")
+                self._bootstrap_size_label.setVisible(True)
+                self._bootstrap_size_spin.setVisible(True)
                 self._show_param("Peak Tolerance:")
                 self._show_checkbox(self._rc_clean_data_check)
 
@@ -2616,39 +2547,39 @@ class AnalysisPanel(QWidget):
 
         self._rosbash_compare_type_frame.setVisible(is_rosbash and is_comparison_method)
 
-    def _restore_period_widget(self):
-        """Restore all sub-items of the Period: widget to visible.
+    def _set_period_mode(self, mode: str):
+        """Configure the 'Period:' composite widget for the current method.
 
-        _update_cosinor_ols_period_visibility hides sub-items (to / max / Step / step)
-        when in Fixed Period mode.  Those items stay hidden when the user switches to
-        another method.  Call this at the start of _update_parameter_visibility so
-        every method that shows the Period: row gets the full range widget.
+        mode:
+            'single'        - only the first spinbox visible (single period value)
+            'range'         - all sub-widgets visible (min / "to" / max / "Step:" / step)
+            'range_no_step' - min, "to", max visible; step hidden (e.g., Lomb-Scargle)
         """
+        self._period_mode = mode  # stored for use in _get_current_parameters
         for i in range(self._params_layout.rowCount()):
             label_item = self._params_layout.itemAt(i, QFormLayout.LabelRole)
-            if label_item and label_item.widget() and label_item.widget().text() == "Period:":
-                field_item = self._params_layout.itemAt(i, QFormLayout.FieldRole)
-                if field_item and field_item.widget():
-                    layout = field_item.widget().layout()
-                    if layout:
-                        for j in range(layout.count()):
-                            child = layout.itemAt(j)
-                            if child and child.widget():
-                                child.widget().setVisible(True)
-                break
-
-    def _hide_period_step(self):
-        """Hide the Step sub-widgets from the Period row (irrelevant for Lomb-Scargle)."""
-        for i in range(self._params_layout.rowCount()):
-            label_item = self._params_layout.itemAt(i, QFormLayout.LabelRole)
-            if label_item and label_item.widget() and label_item.widget().text() == "Period:":
-                field_item = self._params_layout.itemAt(i, QFormLayout.FieldRole)
-                if field_item and field_item.widget():
-                    layout = field_item.widget().layout()
-                    if layout and layout.count() >= 5:
-                        layout.itemAt(3).widget().setVisible(False)  # "Step:" label
-                        layout.itemAt(4).widget().setVisible(False)  # step spinbox
-                break
+            if not (label_item and label_item.widget() and label_item.widget().text() == "Period:"):
+                continue
+            field_item = self._params_layout.itemAt(i, QFormLayout.FieldRole)
+            if not (field_item and field_item.widget()):
+                return
+            layout = field_item.widget().layout()
+            if not layout or layout.count() < 5:
+                return
+            # Items: 0=min spinbox, 1="to" label, 2=max spinbox, 3="Step:" label, 4=step spinbox
+            if mode == 'single':
+                layout.itemAt(0).widget().setVisible(True)
+                for j in range(1, 5):
+                    layout.itemAt(j).widget().setVisible(False)
+            elif mode == 'range_no_step':
+                for j in range(0, 3):
+                    layout.itemAt(j).widget().setVisible(True)
+                layout.itemAt(3).widget().setVisible(False)
+                layout.itemAt(4).widget().setVisible(False)
+            else:  # 'range'
+                for j in range(5):
+                    layout.itemAt(j).widget().setVisible(True)
+            return
 
     def _show_param(self, label: str):
         """Show a parameter row."""
@@ -3143,16 +3074,16 @@ class AnalysisPanel(QWidget):
     
     def _get_current_parameters(self) -> Dict[str, Any]:
         """Get current parameter values."""
-        # Build period from spinboxes
+        period_mode = getattr(self, '_period_mode', 'range')
         period_min = self._period_min_spin.value()
         period_max = self._period_max_spin.value()
         period_step = self._period_step_spin.value()
 
-        # If min == max, single period; otherwise generate range
-        if period_min == period_max:
+        if period_mode == 'single':
+            period = period_min
+        elif period_min == period_max:
             period = period_min
         else:
-            # Generate list of periods from min to max with step
             period = []
             current = period_min
             while current <= period_max:
@@ -3179,7 +3110,7 @@ class AnalysisPanel(QWidget):
             # Nonlinear cosinor parameters
             'amplification': None if self._amplification_spin.value() == 0.0 else self._amplification_spin.value(),
             'lin_comp': None if self._lin_comp_spin.value() == 0.0 else self._lin_comp_spin.value(),
-            'use_dependent_model': self._use_dependent_model_check.isChecked(),
+            'use_dependent_model': (self._comparison_type_combo.currentText() == 'Pooled Model'),
             # Periodogram parameters
             'per_type': self._per_type_combo.currentText(),
             'max_per': self._max_per_spin.value(),
@@ -3203,8 +3134,8 @@ class AnalysisPanel(QWidget):
             'ar_lag': self._ar_lag_spin.value(),
             'prewhiten': self._prewhiten_check.isChecked(),
             'resolution': self._resolution_spin.value(),
-            'search_mode': self._search_mode_combo.currentText(),
-            'target_period': self._target_period_spin.value(),
+            'search_mode': 'Fixed Period' if period_mode == 'single' or period_min == period_max else 'Optimize Period',
+            'target_period': self._period_min_spin.value(),
             'n_periods': self._n_periods_spin.value(),
             'alpha': float(self._alpha_combo.currentText()),
             'wavelet': 'cmor1.5-1.0' if 'Morlet' in self._wavelet_combo.currentText() else 'mexh',
@@ -3219,9 +3150,9 @@ class AnalysisPanel(QWidget):
             'rc_single_n_components_list': self._parse_components(self._components_edit.text()),
             'rc_count_models': self._rc_selected_models(),
             'rc_n_components': self._parse_components(self._components_edit.text()),
-            'rc_selection_test': self._rc_selection_test_combo.currentText(),
+            'rc_selection_test': self._criterium_combo.currentText(),
             'rc_eval_order': self._rc_eval_order_check.isChecked(),
-            'rc_repetitions': self._rc_repetitions_spin.value(),
+            'rc_repetitions': self._bootstrap_size_spin.value(),
             'rc_precision_rate': self._rc_precision_spin.value(),
             'rc_clean_data': self._rc_clean_data_check.isChecked(),
         }
