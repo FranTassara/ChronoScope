@@ -280,12 +280,28 @@ def main():
         print(f"    {name:30s} {imp:.4f}")
 
     # ------------------------------------------------------------------
+    # Step 4b: Persist holdout set for downstream evaluation (ROC, figures)
+    # ------------------------------------------------------------------
+    print("\n[4b/6] Saving holdout predictions and test arrays...")
+
+    model_dir = Path(__file__).parent
+    model_dir.mkdir(exist_ok=True)
+
+    # y_true + y_proba CSV — used for ROC curve and figures
+    holdout_df = pd.DataFrame({'y_true': y_test, 'y_proba': y_proba})
+    holdout_path = model_dir / 'holdout_predictions.csv'
+    holdout_df.to_csv(holdout_path, index=False)
+    print(f"  Holdout predictions saved: {holdout_path}  ({len(holdout_df)} rows)")
+
+    # Raw arrays — useful for computing other metrics without re-running extraction
+    np.save(str(model_dir / 'X_test.npy'), X_test)
+    np.save(str(model_dir / 'y_test.npy'), y_test)
+    print(f"  X_test.npy / y_test.npy saved ({X_test.shape})")
+
+    # ------------------------------------------------------------------
     # Step 5: Save model
     # ------------------------------------------------------------------
     print("\n[5/6] Saving model...")
-
-    model_dir = project_root / 'core' / 'models'
-    model_dir.mkdir(exist_ok=True)
 
     model_path = model_dir / 'consensus_rf_model.pkl'
     features_path = model_dir / 'feature_names.json'
@@ -338,7 +354,7 @@ def main():
     with open(report_path, 'w', encoding='utf-8') as f:
         W = 80  # line width
         f.write("=" * W + "\n")
-        f.write("CIRCASCOPE - CONSENSUS RHYTHMICITY SCORE (CRS-AI)\n")
+        f.write("ChronoScope - CONSENSUS RHYTHMICITY SCORE (CRS-AI)\n")
         f.write("MODEL TRAINING REPORT\n")
         f.write("=" * W + "\n\n")
         f.write(f"  Training date: {training_date}\n\n")
@@ -545,7 +561,7 @@ def main():
     print(f"  Training data: {n_synth} synthetic + {n_real} real = {n_total} total")
     print(f"  CV ROC-AUC: {cv_scores.mean():.4f}")
     print(f"  Test ROC-AUC: {roc_auc_score(y_test, y_proba):.4f}")
-    print(f"\n  The model is ready to use in CircaScope!")
+    print(f"\n  The model is ready to use in ChronoScope!")
     print(f"  Select 'AI Consensus' -> 'Consensus Rhythmicity Score' in the GUI.")
 
 
