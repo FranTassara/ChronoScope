@@ -1,5 +1,5 @@
 """
-CircaScope UI Components
+ChronoScope UI Components
 ========================
 
 PySide6-based user interface components.

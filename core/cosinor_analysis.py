@@ -508,7 +508,7 @@ class CosinorAnalyzer:
         #
         # RESULT: The results table will ONLY show models for the BEST PERIOD.
         #         It will NOT show all combinations of periods × n_components.
-        #         This is the correct CosinorPy workflow, not a limitation of CircaScope.
+        #         This is the correct CosinorPy workflow, not a limitation of ChronoScope.
         #
         # If you need to see results for all periods, run separate analyses with single periods.
         # =====================================================================

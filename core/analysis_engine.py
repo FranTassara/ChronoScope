@@ -318,7 +318,7 @@ class ComparisonResult:
 
 class AnalysisEngine:
     """
-    Central analysis engine for CircaScope.
+    Central analysis engine for ChronoScope.
     
     Provides a unified interface to all analysis methods and handles
     data preparation, execution, and result formatting.

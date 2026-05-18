@@ -1,10 +1,11 @@
 """
-CircaScope Core Analysis Modules
+ChronoScope Core Analysis Modules
 ================================
 
 This package contains the analysis engines for circadian rhythm analysis:
 - cosinor_analysis: CosinorPy wrapper for cosinor-based rhythmometry
 - circacompare_analysis: CircaCompare implementation for differential rhythmicity
+- rhythmcount_analysis: RhythmCount implementation for circadian rhythmicity analysis of count data
 - rhythm_analysis: Additional methods (JTK, Lomb-Scargle, CWT, etc.)
 - analysis_engine: Unified interface for all analysis methods
 """

@@ -10,6 +10,7 @@ and locomotor activity data.
 Features:
 - CosinorPy integration for cosinor-based rhythmometry
 - CircaCompare for differential rhythmicity analysis
+- RhythmCount for circadian rhythmicity analysis of count data
 - Multiple rhythm detection methods (JTKs, Lomb-Scargle, Wavelet, etc.)
 - Support for Rosbash scRNA-seq circadian neuron dataset
 - Interactive visualizations and export capabilities

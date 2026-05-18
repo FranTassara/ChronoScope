@@ -253,6 +253,7 @@ class MainWindow(QMainWindow):
             <ul>
                 <li>CosinorPy integration for cosinor analysis</li>
                 <li>CircaCompare for differential rhythmicity</li>
+                <li>RhythmCount for circadian rhythmicity analysis of count data</li>
                 <li>JTK Cycle, Lomb-Scargle, and more</li>
                 <li>Support for Rosbash scRNA-seq dataset</li>
             </ul>
@@ -276,7 +277,8 @@ Data Input:
 Analysis Methods:
 1. CosinorPy: Single/Multi-component cosinor, population mean
 2. CircaCompare: Robust cosinor fitting, group comparison
-3. Rhythm Analysis: JTK, Lomb-Scargle, Wavelet, etc.
+3. RhythmCount for circadian rhythmicity analysis of count data
+4. Rhythm Analysis: JTK, Lomb-Scargle, Wavelet, etc.
 
 For detailed documentation, visit:
 https://github.com/FranTassara/chronoscope

@@ -240,7 +240,7 @@ def generate_training_instances(seed: int = 42) -> Tuple[List[Dict], pd.DataFram
         - List of metadata dicts (one per instance) with keys:
           'instance_id', 'signal_type', 'is_rhythmic', 'n_timepoints',
           'n_replicates', 'sampling_hours', 'snr', 'has_outliers'
-        - DataFrame with all instances in CircaScope format
+        - DataFrame with all instances in ChronoScope format
           (columns: time, condition, replicate, value)
     """
     np.random.seed(seed)

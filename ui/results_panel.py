@@ -2316,12 +2316,12 @@ class ResultsPanel(QWidget):
         # File dialog
         if format == 'csv':
             filepath, _ = QFileDialog.getSaveFileName(
-                self, "Save Results", "circascope_results.csv",
+                self, "Save Results", "ChronoScope_results.csv",
                 "CSV Files (*.csv)"
             )
         else:
             filepath, _ = QFileDialog.getSaveFileName(
-                self, "Save Results", "circascope_results.xlsx",
+                self, "Save Results", "ChronoScope_results.xlsx",
                 "Excel Files (*.xlsx)"
             )
         
@@ -2347,7 +2347,7 @@ class ResultsPanel(QWidget):
         canvas = canvases[tab_idx]
         
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "Save Plot", f"circascope_plot.{format}",
+            self, "Save Plot", f"ChronoScope_plot.{format}",
             f"{format.upper()} Files (*.{format})"
         )
         

@@ -14,7 +14,7 @@ DAM File Format:
     - Status code (e.g., "Ct")
     - 32 activity channels (counts per minute)
 
-Output Format (CircaScope compatible):
+Output Format (ChronoScope compatible):
     time,condition,replicate,activity
     0.0,Monitor51,ch01,45
     0.5,Monitor51,ch01,52
@@ -87,7 +87,7 @@ class DAMDataLoader:
     """
     Loader for TriKinetics DAM (Drosophila Activity Monitor) files.
 
-    Parses the proprietary DAM format and converts it to a CircaScope-compatible
+    Parses the proprietary DAM format and converts it to a ChronoScope-compatible
     DataFrame for circadian rhythm analysis.
     """
 
@@ -110,7 +110,7 @@ class DAMDataLoader:
         self._summary: Optional[DAMSummary] = None
         self._channel_alive: Dict[int, bool] = {}
 
-        # For CircaScope compatibility
+        # For ChronoScope compatibility
         # DAM data is DEPENDENT: same fly (subject) measured repeatedly over time
         self._time_col: str = "time"
         self._condition_col: str = "condition"
@@ -369,7 +369,7 @@ class DAMDataLoader:
 
     def process(self) -> pd.DataFrame:
         """
-        Process raw DAM data into CircaScope-compatible format.
+        Process raw DAM data into ChronoScope-compatible format.
 
         Returns:
             DataFrame with columns: time, condition, replicate, activity
@@ -462,18 +462,18 @@ class DAMDataLoader:
         return round(zt, 4)
 
     # =========================================================================
-    # CircaScope Compatibility Interface
+    # ChronoScope Compatibility Interface
     # =========================================================================
 
     def get_data(self) -> Optional[pd.DataFrame]:
-        """Get the processed data (CircaScope compatible)."""
+        """Get the processed data (ChronoScope compatible)."""
         if self._processed_data is None:
             if self._raw_data is not None:
                 self.process()
         return self._processed_data.copy() if self._processed_data is not None else None
 
     def get_dataset_info(self) -> Optional[DatasetInfo]:
-        """Get dataset info in CircaScope format."""
+        """Get dataset info in ChronoScope format."""
         if self._processed_data is None:
             return None
 
@@ -650,7 +650,7 @@ class MultiDAMDataLoader:
         self._shared_config: DAMConfig = DAMConfig()
         self._combined_data: Optional[pd.DataFrame] = None
 
-        # For CircaScope compatibility
+        # For ChronoScope compatibility
         self._time_col: str = "time"
         self._condition_col: str = "condition"
         self._subject_col: str = "subject"
@@ -805,7 +805,7 @@ class MultiDAMDataLoader:
         return path.stem[:8]  # Use first 8 chars of filename
 
     # =========================================================================
-    # CircaScope Compatibility Interface
+    # ChronoScope Compatibility Interface
     # =========================================================================
 
     def get_data(self) -> Optional[pd.DataFrame]:
@@ -819,7 +819,7 @@ class MultiDAMDataLoader:
         return self._combined_data.copy() if self._combined_data is not None else None
 
     def get_dataset_info(self) -> Optional[DatasetInfo]:
-        """Get dataset info in CircaScope format."""
+        """Get dataset info in ChronoScope format."""
         if self._combined_data is None:
             try:
                 self.process()

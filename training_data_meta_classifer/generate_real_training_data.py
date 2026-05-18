@@ -1,5 +1,5 @@
 """
-Generate Real Biological Training Data for CircaScope Consensus Model
+Generate Real Biological Training Data for ChronoScope Consensus Model
 =====================================================================
 
 Downloads and processes real gene expression time series from public
@@ -478,7 +478,7 @@ def generate_real_training_instances(
     subsample_intervals: Optional[List[float]] = None,
 ) -> Tuple[List[Dict], List[pd.DataFrame]]:
     """
-    Generate CircaScope-compatible training instances from real expression data.
+    Generate ChronoScope-compatible training instances from real expression data.
 
     Args:
         expression_df: Gene-level expression (genes x samples)
@@ -563,7 +563,7 @@ def generate_real_training_instances(
             if len(times) < 6:
                 continue
 
-            # Build DataFrame in CircaScope format
+            # Build DataFrame in ChronoScope format
             var_name = f'var_{instance_id}'
             rows = []
             for i, t in enumerate(times):
@@ -747,7 +747,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='Generate real biological training data for CircaScope'
+        description='Generate real biological training data for ChronoScope'
     )
     parser.add_argument(
         '--geo', default='GSE11923',

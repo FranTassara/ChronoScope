@@ -275,7 +275,7 @@ class ResultExporter:
         results_df: pd.DataFrame,
         figures: Optional[Dict[str, 'Figure']] = None,
         output_dir: str = '.',
-        base_name: str = 'circascope_results',
+        base_name: str = 'ChronoScope_results',
         table_format: str = 'xlsx',
         figure_format: str = 'png',
         dpi: int = 300
