@@ -3,7 +3,6 @@ Rhythm Analysis Module
 ======================
 
 A comprehensive module for circadian rhythm analysis using multiple methods.
-Designed to be compatible with the CosinorPy and CircaCompare modules for GUI integration.
 
 This module provides:
 - Python-JTK Cycle Analysis (nonparametric, triangle templates)
@@ -1700,11 +1699,15 @@ def _compute_lomb_scargle(
     dominant_period = periods[max_idx]
     dominant_power = pgram[max_idx]
     
-    # Estimate false alarm probability (simplified)
-    # Using the approximation: FAP ≈ 1 - (1 - exp(-power))^M
-    # where M is the effective number of independent frequencies
-    M = len(t)  # Simplified approximation
-    fap = 1 - (1 - np.exp(-dominant_power))**M
+    # Estimate false alarm probability using the Zechmeister & Kürster (2009)
+    # formula for normalized power W ∈ [0,1] (which is what scipy normalize=True
+    # returns — power = 1.0 for a perfect sinusoid, 0.0 for no signal).
+    # P_single(W > W0) ≈ (1 - W0)^{(N-3)/2}
+    # FAP = 1 - (1 - P_single)^M  where M ≈ N (Horne & Baliunas 1986 approx.)
+    N = len(t)
+    M = N
+    p_single = float((1.0 - dominant_power) ** ((N - 3) / 2.0))
+    fap = 1.0 - (1.0 - p_single) ** M
     fap = min(1.0, max(0.0, fap))
     
     return LombScargleResult(
