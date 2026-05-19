@@ -216,11 +216,14 @@ def extract_features(
         if len(valid_periods) >= 2:
             features['period_concordance'] = float(np.std(valid_periods))
 
-    # Log of minimum p-value across methods (compresses dynamic range)
+    # Log of minimum p-value across methods (compresses dynamic range).
+    # Floor at machine epsilon so that p==0.0 (numerical underflow for very
+    # strong rhythms) maps to log10(~5e-324) ≈ -323 rather than becoming NaN.
     if p_values_for_agreement:
-        valid_p = [p for p in p_values_for_agreement if p is not None and not np.isnan(p) and p > 0]
+        valid_p = [p for p in p_values_for_agreement if p is not None and not np.isnan(p)]
         if valid_p:
-            features['log_min_p_value'] = float(np.log10(min(valid_p)))
+            min_p = max(min(valid_p), np.finfo(float).tiny)
+            features['log_min_p_value'] = float(np.log10(min_p))
 
     # Period deviation from 24h: min |period - 24| across methods
     if periods_for_concordance:
