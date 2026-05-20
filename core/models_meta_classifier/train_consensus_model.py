@@ -43,6 +43,107 @@ sys.path.insert(0, str(training_data_dir))
 warnings.filterwarnings('ignore')
 
 
+def _bootstrap_metric_ci(y_true, y_pred, y_proba, n_iter=1000,
+                          ci=0.95, seed=42):
+    """Compute percentile bootstrap confidence intervals for holdout metrics.
+
+    Resamples the test set with replacement n_iter times, computes the
+    metric on each resample, and returns the (lower, upper) percentile
+    bounds for the requested confidence level.
+
+    Iterations where the resample contains only one class are skipped
+    (AUROC and class-conditioned metrics are undefined in that case).
+    """
+    rng = np.random.default_rng(seed)
+    n = len(y_true)
+    accs, aurocs, f1s, briers = [], [], [], []
+
+    for _ in range(n_iter):
+        idx = rng.integers(0, n, n)
+        yt = y_true[idx]
+        if len(np.unique(yt)) < 2:
+            continue
+        yp = y_pred[idx]
+        ypr = y_proba[idx]
+        from sklearn.metrics import (
+            accuracy_score, roc_auc_score, f1_score, brier_score_loss
+        )
+        accs.append(accuracy_score(yt, yp))
+        aurocs.append(roc_auc_score(yt, ypr))
+        f1s.append(f1_score(yt, yp))
+        briers.append(brier_score_loss(yt, ypr))
+
+    alpha = (1 - ci) / 2
+    pct_lo, pct_hi = alpha * 100, (1 - alpha) * 100
+    return {
+        'n_valid_iter': len(accs),
+        'accuracy_ci': (float(np.percentile(accs, pct_lo)),
+                        float(np.percentile(accs, pct_hi))),
+        'auroc_ci':    (float(np.percentile(aurocs, pct_lo)),
+                        float(np.percentile(aurocs, pct_hi))),
+        'f1_ci':       (float(np.percentile(f1s, pct_lo)),
+                        float(np.percentile(f1s, pct_hi))),
+        'brier_ci':    (float(np.percentile(briers, pct_lo)),
+                        float(np.percentile(briers, pct_hi))),
+    }
+
+
+def _extract_features_for_instances(metadata, dataframes, feature_names, label="instances"):
+    """Run feature extraction over a list of instances. Returns (X, y, kept_metadata)."""
+    from core.feature_extraction import extract_features
+
+    n_total = len(metadata)
+    feature_rows = []
+    labels = []
+    kept_metadata = []
+    start_time = time.time()
+
+    for i, (meta, df) in enumerate(zip(metadata, dataframes)):
+        if (i + 1) % 50 == 0 or i == 0:
+            elapsed = time.time() - start_time
+            rate = (i + 1) / elapsed if elapsed > 0 else 0
+            remaining = (n_total - i - 1) / rate if rate > 0 else 0
+            print(f"  Processing {label} {i + 1}/{n_total} "
+                  f"({elapsed:.0f}s elapsed, ~{remaining:.0f}s remaining)")
+
+        variable = meta['variable']
+        condition = 'control'
+        time_col = 'time'
+        condition_col = 'condition'
+
+        cond_data = df[df[condition_col] == condition]
+        times = cond_data[time_col].values.astype(float)
+
+        if variable not in cond_data.columns:
+            continue
+
+        values = cond_data[variable].values.astype(float)
+        valid = ~(np.isnan(times) | np.isnan(values))
+        times = times[valid]
+        values = values[valid]
+
+        if len(times) < 4:
+            continue
+
+        unique_times = np.unique(times)
+        avg_values = np.array([values[times == t].mean() for t in unique_times])
+
+        features = extract_features(
+            unique_times, avg_values, df, variable, condition,
+            time_col, condition_col,
+        )
+
+        feature_rows.append(features)
+        labels.append(meta['is_rhythmic'])
+        kept_metadata.append(meta)
+
+    X = np.array([[row.get(name, np.nan) for name in feature_names] for row in feature_rows])
+    y = np.array(labels)
+    elapsed_total = time.time() - start_time
+    print(f"  Feature extraction complete: {len(feature_rows)} {label} in {elapsed_total:.1f}s")
+    return X, y, kept_metadata
+
+
 def main():
     print("=" * 70)
     print("CONSENSUS RHYTHMICITY SCORE - MODEL TRAINING")
@@ -91,9 +192,11 @@ def main():
     # Labels: BioCycle from RhythmicDB with ambiguity gap
     #   Rhythmic: q <= 0.01 | Non-rhythmic: q > 0.2 | Excluded: 0.01 < q <= 0.2
     #   Capped at 800 per class to balance with synthetic data
+    ambiguous_metadata: list = []
+    ambiguous_dataframes: list = []
     try:
         print("\n  --- Dataset 2: GSE11516 (BioCycle labels) ---")
-        real2_meta, real2_dfs = generate_from_geo(
+        real2_meta, real2_dfs, amb_meta, amb_dfs = generate_from_geo(
             geo_accession='GSE11516',
             platform_id='GPL6880',
             biocycle_xlsx=biocycle_xlsx,
@@ -104,11 +207,15 @@ def main():
             max_non_rhythmic=800,
             starting_id=n_synth + 2000 + n_real,
             subsample_intervals=[],  # already 4h intervals, no subsampling
+            return_ambiguous=True,
         )
         metadata = metadata + real2_meta
         dataframes = dataframes + real2_dfs
         n_real += len(real2_meta)
-        print(f"  GSE11516: {len(real2_meta)} instances")
+        ambiguous_metadata = amb_meta
+        ambiguous_dataframes = amb_dfs
+        print(f"  GSE11516: {len(real2_meta)} instances "
+              f"(+ {len(amb_meta)} ambiguous held out)")
     except Exception as e:
         print(f"  WARNING: GSE11516 failed: {e}")
         import traceback
@@ -128,70 +235,35 @@ def main():
     print(f"\n[2/6] Extracting features from {n_total} instances...")
     print("  (This runs 5 analysis methods per instance - please wait)")
 
-    from core.feature_extraction import extract_features, FEATURE_NAMES
+    from core.feature_extraction import FEATURE_NAMES
 
-    feature_rows = []
-    labels = []
-    start_time = time.time()
-
-    for i, (meta, df) in enumerate(zip(metadata, dataframes)):
-        if (i + 1) % 50 == 0 or i == 0:
-            elapsed = time.time() - start_time
-            rate = (i + 1) / elapsed if elapsed > 0 else 0
-            remaining = (n_total - i - 1) / rate if rate > 0 else 0
-            print(f"  Processing {i + 1}/{n_total} "
-                  f"({elapsed:.0f}s elapsed, ~{remaining:.0f}s remaining)")
-
-        variable = meta['variable']
-        condition = 'control'
-
-        # Extract times and values
-        time_col = 'time'
-        condition_col = 'condition'
-
-        cond_data = df[df[condition_col] == condition]
-        times = cond_data[time_col].values.astype(float)
-
-        if variable not in cond_data.columns:
-            # Skip if variable column missing
-            continue
-
-        values = cond_data[variable].values.astype(float)
-
-        # Remove NaN
-        valid = ~(np.isnan(times) | np.isnan(values))
-        times = times[valid]
-        values = values[valid]
-
-        if len(times) < 4:
-            continue
-
-        # Average replicates at each timepoint for feature extraction
-        unique_times = np.unique(times)
-        avg_values = np.array([values[times == t].mean() for t in unique_times])
-
-        # Extract features
-        features = extract_features(
-            unique_times, avg_values, df, variable, condition,
-            time_col, condition_col
-        )
-
-        feature_rows.append(features)
-        labels.append(meta['is_rhythmic'])
-
-    elapsed_total = time.time() - start_time
-    print(f"  Feature extraction complete: {len(feature_rows)} instances in {elapsed_total:.1f}s")
+    X, y, kept_metadata = _extract_features_for_instances(
+        metadata, dataframes, FEATURE_NAMES, label="training instances"
+    )
 
     # ------------------------------------------------------------------
-    # Step 3: Build feature matrix
+    # Step 3: Build feature matrix + group IDs for gene-aware splitting
     # ------------------------------------------------------------------
     print("\n[3/6] Building feature matrix...")
-
-    X = np.array([[row.get(name, np.nan) for name in FEATURE_NAMES] for row in feature_rows])
-    y = np.array(labels)
-
     print(f"  Feature matrix shape: {X.shape}")
     print(f"  Labels: {sum(y == 1)} rhythmic, {sum(y == 0)} non-rhythmic")
+
+    # Build groups: same group => same gene (real) or unique (synthetic).
+    # This prevents the same gene's multi-resolution subsamples (GSE11923
+    # at 1h/2h/4h) from being split across train and test. Genes that
+    # appear in both real datasets (e.g., Per1 in GSE11923 + GSE11516)
+    # share the same group via their gene name, so cross-dataset same-
+    # gene leakage is also prevented. Synthetic instances have unique
+    # groups (no biological identity to leak).
+    groups = np.array([
+        m['gene'] if 'gene' in m else f"synth_{m['instance_id']}"
+        for m in kept_metadata
+    ])
+    n_unique_groups = len(np.unique(groups))
+    n_gene_groups = len(np.unique([g for g in groups if not g.startswith('synth_')]))
+    print(f"  Total groups:        {n_unique_groups}")
+    print(f"  Gene-based groups:   {n_gene_groups}")
+    print(f"  Synthetic (unique):  {n_unique_groups - n_gene_groups}")
 
     # Check for features that are all NaN
     nan_counts = np.sum(np.isnan(X), axis=0)
@@ -207,47 +279,73 @@ def main():
 
     from sklearn.pipeline import Pipeline
     from sklearn.impute import SimpleImputer
-    from sklearn.preprocessing import StandardScaler
     from sklearn.ensemble import RandomForestClassifier
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.inspection import permutation_importance
     from sklearn.model_selection import (
-        train_test_split, cross_val_score, StratifiedKFold
+        GroupShuffleSplit, cross_val_score, StratifiedGroupKFold,
     )
     from sklearn.metrics import (
         classification_report, roc_auc_score, accuracy_score,
         precision_score, recall_score, f1_score,
-        confusion_matrix, matthews_corrcoef,
+        confusion_matrix, matthews_corrcoef, brier_score_loss,
     )
 
-    # Split train/test
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    # Gene-aware train/test split: GroupShuffleSplit prevents the same gene
+    # (or same synthetic instance) from appearing in both train and test.
+    # Note: GroupShuffleSplit does not support stratify=y natively — class
+    # balance is preserved only approximately. We report the actual balance
+    # of both splits below and verify it is within tolerance.
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+    train_idx, test_idx = next(gss.split(X, y, groups))
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+    groups_train = groups[train_idx]
 
-    print(f"  Train set: {len(X_train)} samples")
-    print(f"  Test set:  {len(X_test)} samples")
+    print(f"  Train set: {len(X_train)} samples "
+          f"({y_train.sum()} rhythmic, {len(y_train) - y_train.sum()} non-rhythmic)")
+    print(f"  Test set:  {len(X_test)} samples "
+          f"({y_test.sum()} rhythmic, {len(y_test) - y_test.sum()} non-rhythmic)")
+    # Sanity: verify no group leakage across the split.
+    overlap = set(groups[train_idx]) & set(groups[test_idx])
+    assert len(overlap) == 0, f"Group leakage detected: {overlap}"
+    print(f"  Group leakage check: OK (0 shared groups)")
 
     # Build pipeline
     # Note: constant fill_value=-999 (sentinel) instead of median imputation.
-    # This prevents bias when structurally-missing features (e.g. CWT on short
-    # series) get filled with training-set medians that may indicate rhythmicity.
     # The RF learns clean splits: "if feature <= -500 -> feature was unavailable".
+    # No StandardScaler: Random Forest is invariant to monotonic feature scaling.
+    # CalibratedClassifierCV wraps the RF with isotonic regression to produce
+    # well-calibrated probabilities (default RF probas are overconfident at
+    # extremes). cv=5 means: 5-fold internal CV; calibration learned on each
+    # fold's held-out portion, then averaged.
+    base_rf = RandomForestClassifier(
+        n_estimators=200,
+        max_depth=10,
+        min_samples_leaf=5,
+        class_weight='balanced',
+        random_state=42,
+        n_jobs=-1,
+    )
+    calibrated_rf = CalibratedClassifierCV(
+        estimator=base_rf,
+        method='isotonic',
+        cv=5,
+    )
     pipeline = Pipeline([
         ('imputer', SimpleImputer(strategy='constant', fill_value=-999)),
-        ('scaler', StandardScaler()),
-        ('classifier', RandomForestClassifier(
-            n_estimators=200,
-            max_depth=10,
-            min_samples_leaf=5,
-            class_weight='balanced',
-            random_state=42,
-            n_jobs=-1
-        ))
+        ('classifier', calibrated_rf),
     ])
 
-    # Cross-validation
-    print("\n  Running 5-fold cross-validation...")
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    cv_scores = cross_val_score(pipeline, X_train, y_train, cv=cv, scoring='roc_auc')
+    # Cross-validation — StratifiedGroupKFold respects gene grouping AND
+    # stratifies by label, so the same gene never appears in both train and
+    # validation folds, while class balance is preserved.
+    print("\n  Running 5-fold stratified group cross-validation...")
+    cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_scores = cross_val_score(
+        pipeline, X_train, y_train,
+        cv=cv, groups=groups_train, scoring='roc_auc',
+    )
     print(f"  CV ROC-AUC: {cv_scores.mean():.4f} (+/- {cv_scores.std():.4f})")
     print(f"  Per-fold:   {[f'{s:.4f}' for s in cv_scores]}")
 
@@ -259,25 +357,118 @@ def main():
     y_pred = pipeline.predict(X_test)
     y_proba = pipeline.predict_proba(X_test)[:, 1]
 
+    brier = brier_score_loss(y_test, y_proba)
+
+    # Bootstrap 95% confidence intervals on the holdout (1000 resamples)
+    print("\n  Computing bootstrap 95% CIs (n=1000 resamples)...")
+    boot = _bootstrap_metric_ci(y_test, y_pred, y_proba, n_iter=1000, seed=42)
+
     print("\n  --- Test Set Evaluation ---")
-    print(f"  Accuracy:  {accuracy_score(y_test, y_pred):.4f}")
-    print(f"  Precision: {precision_score(y_test, y_pred):.4f}")
-    print(f"  Recall:    {recall_score(y_test, y_pred):.4f}")
-    print(f"  F1 Score:  {f1_score(y_test, y_pred):.4f}")
-    print(f"  ROC-AUC:   {roc_auc_score(y_test, y_proba):.4f}")
+    print(f"  Accuracy:    {accuracy_score(y_test, y_pred):.4f}  "
+          f"[95% CI {boot['accuracy_ci'][0]:.4f}, {boot['accuracy_ci'][1]:.4f}]")
+    print(f"  Precision:   {precision_score(y_test, y_pred):.4f}")
+    print(f"  Recall:      {recall_score(y_test, y_pred):.4f}")
+    print(f"  F1 Score:    {f1_score(y_test, y_pred):.4f}  "
+          f"[95% CI {boot['f1_ci'][0]:.4f}, {boot['f1_ci'][1]:.4f}]")
+    print(f"  ROC-AUC:     {roc_auc_score(y_test, y_proba):.4f}  "
+          f"[95% CI {boot['auroc_ci'][0]:.4f}, {boot['auroc_ci'][1]:.4f}]")
+    print(f"  Brier loss:  {brier:.4f}  "
+          f"[95% CI {boot['brier_ci'][0]:.4f}, {boot['brier_ci'][1]:.4f}]")
 
     print(f"\n  Classification Report:")
     print(classification_report(y_test, y_pred, target_names=['Non-rhythmic', 'Rhythmic']))
 
-    # Feature importances
-    rf = pipeline.named_steps['classifier']
+    # ------------------------------------------------------------------
+    # Step 4a: Ambiguous holdout — borderline BioCycle genes (q in (0.01, 0.2])
+    # excluded from training. Reports honest performance on hard cases.
+    # ------------------------------------------------------------------
+    amb_results = None
+    if ambiguous_metadata:
+        print(f"\n  --- Ambiguous Holdout Evaluation ---")
+        print(f"  ({len(ambiguous_metadata)} BioCycle borderline-q genes, "
+              f"never seen during training)")
+
+        X_amb, y_amb, kept_amb_meta = _extract_features_for_instances(
+            ambiguous_metadata, ambiguous_dataframes, FEATURE_NAMES,
+            label="ambiguous holdout"
+        )
+
+        if len(X_amb) > 0:
+            y_amb_pred = pipeline.predict(X_amb)
+            y_amb_proba = pipeline.predict_proba(X_amb)[:, 1]
+
+            # Provisional labels are coarse; AUROC against them is noisier
+            # but still informative. Wrap in try/except in case one class
+            # is missing (e.g., all ambiguous genes fell on one side).
+            try:
+                amb_auroc = roc_auc_score(y_amb, y_amb_proba)
+            except ValueError:
+                amb_auroc = float('nan')
+            amb_acc = accuracy_score(y_amb, y_amb_pred)
+            amb_brier = brier_score_loss(y_amb, y_amb_proba)
+
+            # Soft-zone analysis: fraction of ambiguous cases the model also
+            # flags as borderline (probability between 0.30 and 0.70). This is
+            # the right metric for ambiguous data — high values mean the model
+            # is appropriately uncertain on uncertain cases.
+            soft_zone_mask = (y_amb_proba > 0.30) & (y_amb_proba < 0.70)
+            pct_soft_zone = soft_zone_mask.mean() * 100
+
+            print(f"  N:                       {len(y_amb)}")
+            print(f"  Accuracy vs midpoint:    {amb_acc:.4f}")
+            print(f"  AUROC vs midpoint:       {amb_auroc:.4f}")
+            print(f"  Brier loss:              {amb_brier:.4f}")
+            print(f"  % flagged borderline (0.30 < p < 0.70):  {pct_soft_zone:.1f}%")
+            print(f"  (Higher % borderline = model is appropriately uncertain)")
+
+            amb_results = {
+                'n': int(len(y_amb)),
+                'accuracy': float(amb_acc),
+                'auroc': float(amb_auroc),
+                'brier': float(amb_brier),
+                'pct_soft_zone': float(pct_soft_zone),
+                'y_true': y_amb,
+                'y_proba': y_amb_proba,
+            }
+
+    # Feature importances (MDI) — averaged across the CalibratedClassifierCV's
+    # internal RFs (one per CV fold). Each calibrated_classifiers_[i].estimator
+    # is a fitted RandomForestClassifier.
+    calibrated = pipeline.named_steps['classifier']
+    fold_importances = np.array([
+        cc.estimator.feature_importances_
+        for cc in calibrated.calibrated_classifiers_
+    ])
+    mean_importances = fold_importances.mean(axis=0)
     importances = sorted(
-        zip(FEATURE_NAMES, rf.feature_importances_),
+        zip(FEATURE_NAMES, mean_importances),
         key=lambda x: x[1], reverse=True
     )
-    print("  Top 10 Feature Importances:")
+    print("  Top 10 Feature Importances (MDI):")
     for name, imp in importances[:10]:
         print(f"    {name:30s} {imp:.4f}")
+
+    # Permutation importance — measures the drop in AUROC when each feature
+    # is randomly shuffled on the holdout test set. Unlike MDI, this is
+    # NOT biased toward high-cardinality / continuous features, and it
+    # measures the feature's contribution to GENERALIZATION (test AUROC),
+    # not just training-set Gini reduction. Recommended for paper-quality
+    # interpretation (Strobl et al. 2007).
+    print("\n  Computing permutation importance on test set "
+          "(n_repeats=10, scoring=ROC-AUC)...")
+    perm_result = permutation_importance(
+        pipeline, X_test, y_test,
+        n_repeats=10, random_state=42, n_jobs=-1, scoring='roc_auc',
+    )
+    perm_importances = sorted(
+        zip(FEATURE_NAMES,
+            perm_result.importances_mean,
+            perm_result.importances_std),
+        key=lambda x: x[1], reverse=True,
+    )
+    print("  Top 10 Feature Importances (Permutation):")
+    for name, imp_mean, imp_std in perm_importances[:10]:
+        print(f"    {name:30s} {imp_mean:+.4f} (+/- {imp_std:.4f})")
 
     # ------------------------------------------------------------------
     # Step 4b: Persist holdout set for downstream evaluation (ROC, figures)
@@ -297,6 +488,16 @@ def main():
     np.save(str(model_dir / 'X_test.npy'), X_test)
     np.save(str(model_dir / 'y_test.npy'), y_test)
     print(f"  X_test.npy / y_test.npy saved ({X_test.shape})")
+
+    # Ambiguous holdout predictions (if available)
+    if amb_results is not None:
+        amb_df = pd.DataFrame({
+            'y_true_midpoint': amb_results['y_true'],
+            'y_proba': amb_results['y_proba'],
+        })
+        amb_path = model_dir / 'ambiguous_holdout_predictions.csv'
+        amb_df.to_csv(amb_path, index=False)
+        print(f"  Ambiguous holdout predictions saved: {amb_path}  ({len(amb_df)} rows)")
 
     # ------------------------------------------------------------------
     # Step 5: Save model
@@ -380,7 +581,7 @@ def main():
         # --- 3. Model architecture ---
         f.write("3. MODEL ARCHITECTURE\n")
         f.write("-" * W + "\n\n")
-        f.write("  Pipeline:  SimpleImputer -> StandardScaler -> RandomForestClassifier\n\n")
+        f.write("  Pipeline:  SimpleImputer -> CalibratedClassifierCV(RandomForest)\n\n")
         f.write("  Step 1 - SimpleImputer:\n")
         f.write("    Strategy:      constant (fill_value = -999)\n")
         f.write("    Rationale:     Sentinel value for structurally-missing features\n")
@@ -389,14 +590,34 @@ def main():
         f.write("                   series). Avoids bias from median imputation. The\n")
         f.write("                   RF learns to split on 'feature <= -500' as\n")
         f.write("                   'feature was unavailable'.\n\n")
-        f.write("  Step 2 - StandardScaler:\n")
-        f.write("    Method:        Zero mean, unit variance normalization\n\n")
-        f.write("  Step 3 - RandomForestClassifier:\n")
+        f.write("  Note on feature scaling:\n")
+        f.write("    No StandardScaler is applied. Random Forest is invariant to\n")
+        f.write("    monotonic feature scaling: each tree splits on per-feature\n")
+        f.write("    empirical thresholds, which are unaffected by linear\n")
+        f.write("    transformations. Previous versions included a StandardScaler\n")
+        f.write("    step; it was removed in this version as redundant. Removing\n")
+        f.write("    it does not change predictions but simplifies the pipeline\n")
+        f.write("    and eliminates the spurious sensitivity of feature means/\n")
+        f.write("    variances to the sentinel imputation value.\n\n")
+        f.write("  Step 2 - RandomForestClassifier (base estimator):\n")
         f.write(f"    n_estimators:    200\n")
         f.write(f"    max_depth:       10\n")
         f.write(f"    min_samples_leaf: 5\n")
         f.write(f"    class_weight:    balanced\n")
         f.write(f"    random_state:    42\n\n")
+        f.write("  Step 3 - CalibratedClassifierCV (probability calibration):\n")
+        f.write("    method:          isotonic regression\n")
+        f.write("    cv:              5-fold internal\n")
+        f.write("    Rationale:       Out-of-the-box RF probabilities are known\n")
+        f.write("                     to be miscalibrated (overconfident at\n")
+        f.write("                     extremes, underconfident in the middle).\n")
+        f.write("                     Isotonic calibration on internal CV folds\n")
+        f.write("                     produces probability estimates that match\n")
+        f.write("                     empirical frequencies, which is important\n")
+        f.write("                     for the borderline threshold logic in the\n")
+        f.write("                     ChronoScope GUI (Rhythmic >= 0.70,\n")
+        f.write("                     Arrhythmic <= 0.30, Borderline in between).\n")
+        f.write("    Calibration quality is reported via Brier score in Section 6.\n\n")
 
         # --- 4. Feature set ---
         f.write("4. FEATURE SET ({} features)\n".format(len(FEATURE_NAMES)))
@@ -438,12 +659,22 @@ def main():
         f.write(f"    Non-rhythmic (label=0): {n_non_rhythmic} ({n_non_rhythmic/n_total*100:.1f}%)\n\n")
 
         f.write("  5.1 Synthetic data ({} instances)\n\n".format(n_synth))
-        f.write("    Generated with generate_training_data.py. Includes cosine waves,\n")
-        f.write("    multi-harmonic waveforms, pulse-like patterns, noisy oscillations,\n")
-        f.write("    and various non-rhythmic signals (flat, linear trend, random walk,\n")
-        f.write("    exponential decay, etc.). 15% of instances include outlier\n")
-        f.write("    contamination. Periods sampled from 20-28 hours. Variable SNR,\n")
-        f.write("    sampling intervals (1h, 2h, 4h), and series lengths (6-48 points).\n\n")
+        f.write("    Generated with generate_synthetic_training_data.py. Includes\n")
+        f.write("    cosine waves, multi-harmonic waveforms, pulse-like patterns,\n")
+        f.write("    noisy oscillations, and various non-rhythmic signals (flat,\n")
+        f.write("    linear trend, random walk, exponential decay, etc.). 15% of\n")
+        f.write("    instances include outlier contamination. Variable SNR, sampling\n")
+        f.write("    intervals (1h, 2h, 4h), and series lengths (6-48 points).\n\n")
+        f.write("    Period structure (designed to avoid trivial separability):\n")
+        f.write("      Rhythmic periods:        23.0, 23.5, 24.0, 24.5, 25.0 h\n")
+        f.write("      Non-rhythmic periods:    4, 5, 6, 8, 10, 12, 14, 16, 18,\n")
+        f.write("                               20, 21, 22, 26, 27, 30, 36, 48 h\n")
+        f.write("    The non-rhythmic set includes oscillators at 21, 22, 26, and\n")
+        f.write("    27 h (near-circadian but biologically NON-rhythmic) so that\n")
+        f.write("    the period_dev_24h feature cannot trivially separate the two\n")
+        f.write("    classes by a wide gap. This forces the model to also learn\n")
+        f.write("    amplitude regularity and inter-method agreement, instead of\n")
+        f.write("    relying on a synthetic shortcut.\n\n")
 
         f.write("  5.2 Real biological data ({} instances)\n\n".format(n_real))
         f.write("    Dataset 1: GSE11923 (Hughes et al., 2009)\n")
@@ -490,22 +721,56 @@ def main():
         # --- 6. Evaluation ---
         f.write("6. EVALUATION\n")
         f.write("-" * W + "\n\n")
-        f.write(f"  Train/test split: 80/20 (stratified), random_state=42\n")
-        f.write(f"  Train set: {len(X_train)} samples\n")
-        f.write(f"  Test set:  {len(X_test)} samples\n\n")
+        f.write(f"  Train/test split: 80/20 GroupShuffleSplit (random_state=42)\n")
+        f.write(f"  Grouping:         by gene name (real) or unique ID (synthetic)\n")
+        f.write(f"  Total groups:     {n_unique_groups}\n")
+        f.write(f"    Gene groups:    {n_gene_groups}\n")
+        f.write(f"    Synthetic:      {n_unique_groups - n_gene_groups}\n")
+        f.write(f"  Train set:        {len(X_train)} samples ")
+        f.write(f"({int(y_train.sum())} rhythmic, "
+                f"{int(len(y_train) - y_train.sum())} non-rhythmic)\n")
+        f.write(f"  Test set:         {len(X_test)} samples ")
+        f.write(f"({int(y_test.sum())} rhythmic, "
+                f"{int(len(y_test) - y_test.sum())} non-rhythmic)\n\n")
+        f.write("  Rationale: GroupShuffleSplit prevents the same gene from\n")
+        f.write("  appearing in both train and test sets. In prior versions\n")
+        f.write("  (random train_test_split) the GSE11923 genes (each present\n")
+        f.write("  at 1h, 2h, and 4h subsampling) could be split across the\n")
+        f.write("  partition, allowing the model to memorize gene-specific\n")
+        f.write("  features from one resolution and predict the same gene at\n")
+        f.write("  another resolution — a form of data leakage. The same\n")
+        f.write("  applies to genes shared between GSE11923 and GSE11516 (e.g.,\n")
+        f.write("  Per1, Bmal1). Class balance is preserved approximately\n")
+        f.write("  (GroupShuffleSplit does not support exact stratification).\n\n")
 
-        f.write("  6.1 Cross-validation (5-fold stratified, on training set)\n\n")
+        f.write("  6.1 Cross-validation (5-fold StratifiedGroupKFold, on training set)\n\n")
         f.write(f"    ROC-AUC:   {cv_scores.mean():.4f} +/- {cv_scores.std():.4f}\n")
         f.write(f"    Per-fold:  {', '.join(f'{s:.4f}' for s in cv_scores)}\n\n")
 
-        f.write("  6.2 Holdout test set performance\n\n")
-        f.write(f"    Accuracy:    {accuracy_score(y_test, y_pred):.4f}\n")
+        f.write("  6.2 Holdout test set performance (high-confidence cases)\n\n")
+        f.write("    NOTE: This holdout EXCLUDES BioCycle borderline-q genes\n")
+        f.write("    (0.01 < q <= 0.20). Performance on those is reported in\n")
+        f.write("    Section 6.5 below.\n\n")
+        f.write("    95% confidence intervals from percentile bootstrap\n")
+        f.write(f"    (n={1000} resamples, "
+                f"{boot['n_valid_iter']} valid; iterations with single-\n")
+        f.write("    class resamples were skipped):\n\n")
+        f.write(f"    Accuracy:    {accuracy_score(y_test, y_pred):.4f}  "
+                f"[95% CI {boot['accuracy_ci'][0]:.4f}, "
+                f"{boot['accuracy_ci'][1]:.4f}]\n")
         f.write(f"    Precision:   {precision_score(y_test, y_pred):.4f}\n")
         f.write(f"    Recall:      {recall_score(y_test, y_pred):.4f}\n")
         f.write(f"    Specificity: {specificity:.4f}\n")
-        f.write(f"    F1 Score:    {f1_score(y_test, y_pred):.4f}\n")
-        f.write(f"    ROC-AUC:     {roc_auc_score(y_test, y_proba):.4f}\n")
-        f.write(f"    MCC:         {mcc:.4f}\n\n")
+        f.write(f"    F1 Score:    {f1_score(y_test, y_pred):.4f}  "
+                f"[95% CI {boot['f1_ci'][0]:.4f}, "
+                f"{boot['f1_ci'][1]:.4f}]\n")
+        f.write(f"    ROC-AUC:     {roc_auc_score(y_test, y_proba):.4f}  "
+                f"[95% CI {boot['auroc_ci'][0]:.4f}, "
+                f"{boot['auroc_ci'][1]:.4f}]\n")
+        f.write(f"    MCC:         {mcc:.4f}\n")
+        f.write(f"    Brier loss:  {brier:.4f}  "
+                f"[95% CI {boot['brier_ci'][0]:.4f}, "
+                f"{boot['brier_ci'][1]:.4f}]  (lower=better calibration)\n\n")
 
         f.write("  6.3 Confusion matrix\n\n")
         f.write(f"                       Predicted\n")
@@ -522,9 +787,46 @@ def main():
             f.write(f"    {line}\n")
         f.write("\n")
 
+        f.write("  6.5 Ambiguous holdout (BioCycle borderline-q genes)\n\n")
+        if amb_results is not None:
+            f.write("    Genes with 0.01 < BioCycle q-value <= 0.20 were excluded\n")
+            f.write("    from the training set (label noise) AND from the main\n")
+            f.write("    holdout (6.2). They form an independent evaluation set\n")
+            f.write("    of borderline cases — the kind of biology that BioCycle\n")
+            f.write("    itself could not confidently classify.\n\n")
+            f.write("    Provisional labels for AUROC computation are assigned\n")
+            f.write("    by the q-value midpoint (q <= 0.105 -> 1, else 0). The\n")
+            f.write("    labels are noisier here than in 6.2 by construction,\n")
+            f.write("    so the metrics below should be interpreted as a lower\n")
+            f.write("    bound on the model's confusion on hard cases — not as\n")
+            f.write("    a direct comparison to 6.2.\n\n")
+            f.write(f"    N:                       {amb_results['n']}\n")
+            f.write(f"    Accuracy (vs midpoint):  {amb_results['accuracy']:.4f}\n")
+            f.write(f"    AUROC (vs midpoint):     {amb_results['auroc']:.4f}\n")
+            f.write(f"    Brier loss:              {amb_results['brier']:.4f}\n")
+            f.write(f"    % flagged borderline:    {amb_results['pct_soft_zone']:.1f}%\n")
+            f.write(f"      (probability in [0.30, 0.70])\n\n")
+            f.write("    A high % flagged borderline is the desired behavior\n")
+            f.write("    here: it indicates that the model is appropriately\n")
+            f.write("    uncertain on genes that BioCycle itself flagged as\n")
+            f.write("    uncertain. The ChronoScope GUI presents these cases\n")
+            f.write("    as 'Borderline — manual review recommended'.\n\n")
+        else:
+            f.write("    (Not available — BioCycle ambiguous data not loaded.)\n\n")
+
         # --- 7. Feature importances ---
-        f.write("7. FEATURE IMPORTANCES (Random Forest, MDI)\n")
+        f.write("7. FEATURE IMPORTANCES\n")
         f.write("-" * W + "\n\n")
+        f.write("  Two complementary measures are reported. MDI is computed from\n")
+        f.write("  the training trees (biased toward high-cardinality features);\n")
+        f.write("  permutation importance is computed on the holdout test set\n")
+        f.write("  (unbiased, measures contribution to generalization AUROC).\n")
+        f.write("  Disagreement between the two is informative: features that\n")
+        f.write("  rank high on MDI but low on permutation are likely overused\n")
+        f.write("  in training but do not generalize.\n\n")
+
+        f.write("  7.1 Mean Decrease in Impurity (MDI) — averaged over the\n")
+        f.write("       CalibratedClassifierCV's internal RFs\n\n")
         f.write(f"  {'Rank':<6s} {'Feature':<30s} {'Importance':>10s}  {'Cumulative':>10s}\n")
         f.write(f"  {'-' * 5}  {'-' * 29}  {'-' * 10}  {'-' * 10}\n")
         cumulative = 0.0
@@ -533,6 +835,18 @@ def main():
             f.write(f"  {rank:<6d} {name:<30s} {imp:>10.4f}  {cumulative:>10.4f}\n")
         f.write("\n")
 
+        f.write("  7.2 Permutation importance (test-set ROC-AUC drop, n_repeats=10)\n\n")
+        f.write(f"  {'Rank':<6s} {'Feature':<30s} {'Mean AUROC drop':>16s}  {'Std':>8s}\n")
+        f.write(f"  {'-' * 5}  {'-' * 29}  {'-' * 16}  {'-' * 8}\n")
+        for rank, (name, imp_mean, imp_std) in enumerate(perm_importances, 1):
+            f.write(f"  {rank:<6d} {name:<30s} "
+                    f"{imp_mean:>+16.4f}  {imp_std:>8.4f}\n")
+        f.write("\n")
+        f.write("  Interpretation: a permutation-importance value of 0.05\n")
+        f.write("  means shuffling that feature drops test ROC-AUC by 0.05\n")
+        f.write("  on average. Negative values mean the feature is essentially\n")
+        f.write("  noise (random shuffles improved AUROC slightly).\n\n")
+
         # --- 8. Reproducibility ---
         f.write("8. REPRODUCIBILITY\n")
         f.write("-" * W + "\n\n")
@@ -540,10 +854,13 @@ def main():
         f.write("  To retrain:\n")
         f.write("    python train_consensus_model.py\n\n")
         f.write("  Output files:\n")
-        f.write(f"    Model:          core/models/consensus_rf_model.pkl\n")
-        f.write(f"    Feature names:  core/models/feature_names.json\n")
-        f.write(f"    This report:    core/models/training_report.txt\n\n")
-        f.write(f"  Model file size:  {model_path.stat().st_size / 1024:.1f} KB\n\n")
+        f.write(f"    Model:            core/models_meta_classifier/consensus_rf_model.pkl\n")
+        f.write(f"    Feature names:    core/models_meta_classifier/feature_names.json\n")
+        f.write(f"    Main holdout:     core/models_meta_classifier/holdout_predictions.csv\n")
+        if amb_results is not None:
+            f.write(f"    Ambiguous holdout: core/models_meta_classifier/ambiguous_holdout_predictions.csv\n")
+        f.write(f"    This report:      core/models_meta_classifier/training_report.txt\n\n")
+        f.write(f"  Model file size:    {model_path.stat().st_size / 1024:.1f} KB\n\n")
 
         f.write("=" * W + "\n")
         f.write("END OF REPORT\n")

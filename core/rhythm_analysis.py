@@ -1463,7 +1463,8 @@ def _compute_fourier_f24(
     times: np.ndarray,
     values: np.ndarray,
     target_period: float = 24.0,
-    n_permutations: int = 1000
+    n_permutations: int = 1000,
+    seed: int = 42,
 ) -> FourierF24Result:
     """
     Compute F24 score using Fourier analysis (Wijnen et al., 2006 method).
@@ -1475,11 +1476,19 @@ def _compute_fourier_f24(
     NOTE: FFT requires uniformly sampled data. If data is irregularly sampled,
     it will be automatically resampled using linear interpolation.
 
+    Determinism: the permutation RNG is seeded by default (seed=42) so that
+    the F24 score is reproducible. This is required for: (a) the meta-
+    classifier's training to be deterministic, (b) per-call reproducibility
+    in the GUI (a biologist re-running the same gene must see the same
+    score), and (c) feature-vector consistency between training and
+    inference. Pass seed=None for stochastic behavior (not recommended).
+
     Args:
         times: Time values (evenly or unevenly spaced)
         values: Measurement values
         target_period: Target period to evaluate (default: 24h)
         n_permutations: Number of random permutations for baseline
+        seed: RNG seed for permutations (default 42; None = non-deterministic)
 
     Returns:
         FourierF24Result object
@@ -1527,20 +1536,20 @@ def _compute_fourier_f24(
         dominant_period = np.nan
         dominant_power = np.nan
     
-    # Compute mean power from random permutations
-    rng = np.random.default_rng()
+    # Compute mean power from random permutations (seeded for reproducibility)
+    rng = np.random.default_rng(seed)
     perm_powers = []
     for _ in range(n_permutations):
         perm_values = rng.permutation(y_centered)
         perm_fft = np.fft.fft(perm_values)
         perm_power = np.abs(perm_fft[:n//2])**2 / n
         perm_powers.append(perm_power[freq_idx])
-    
+
     mean_perm_power = np.mean(perm_powers)
-    
+
     # F24 score
     f24_score = target_power / (mean_perm_power + 1e-10)
-    
+
     return FourierF24Result(
         f24_score=round(f24_score, 4),
         power_spectrum=power_spectrum,
@@ -1560,7 +1569,8 @@ def _compute_fourier_f24_with_replicates(
     times_rep2: np.ndarray,
     values_rep2: np.ndarray,
     target_period: float = 24.0,
-    n_permutations: int = 1000
+    n_permutations: int = 1000,
+    seed: int = 42,
 ) -> FourierF24Result:
     """
     Compute F24 score using two replicates (Wijnen et al., 2006 method).
@@ -1628,8 +1638,8 @@ def _compute_fourier_f24_with_replicates(
         dominant_period = np.nan
         dominant_power = np.nan
     
-    # Compute F24 using permutations
-    rng = np.random.default_rng()
+    # Compute F24 using permutations (seeded for reproducibility)
+    rng = np.random.default_rng(seed)
     perm_powers = []
     for _ in range(n_permutations):
         perm1 = rng.permutation(y1)
@@ -2488,7 +2498,8 @@ class RhythmAnalyzer:
             times2, values2 = replicate_data[1]
         else:
             # More than 2 replicates - randomly split into 2 groups and average
-            rng = np.random.default_rng()
+            # (seeded so feature extraction is deterministic across runs)
+            rng = np.random.default_rng(42)
             indices = np.arange(len(replicate_data))
             rng.shuffle(indices)
             

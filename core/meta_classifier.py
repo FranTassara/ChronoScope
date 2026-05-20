@@ -181,17 +181,41 @@ class ConsensusClassifier:
         }
 
     def _get_feature_importances(self) -> Dict[str, float]:
-        """Extract feature importances from the trained model."""
+        """Extract feature importances from the trained model.
+
+        Handles three model layouts:
+          1. Bare RandomForestClassifier (legacy).
+          2. Pipeline(...).named_steps['classifier'] -> RandomForestClassifier.
+          3. Pipeline(...).named_steps['classifier'] -> CalibratedClassifierCV
+             wrapping a RandomForestClassifier (current). In this case
+             importances are averaged across the per-fold base RFs.
+        """
         if self._model is None or self._feature_names is None:
             return {}
 
-        # The model might be a Pipeline or a bare classifier
+        # Unwrap Pipeline
         classifier = self._model
         if hasattr(classifier, 'named_steps'):
             classifier = classifier.named_steps.get('classifier', classifier)
 
+        # Direct feature_importances_ (bare RF case)
         if hasattr(classifier, 'feature_importances_'):
             return dict(zip(self._feature_names, classifier.feature_importances_))
+
+        # CalibratedClassifierCV case: average over internal base estimators
+        if hasattr(classifier, 'calibrated_classifiers_'):
+            try:
+                fold_importances = np.array([
+                    cc.estimator.feature_importances_
+                    for cc in classifier.calibrated_classifiers_
+                    if hasattr(cc.estimator, 'feature_importances_')
+                ])
+                if len(fold_importances) > 0:
+                    mean_importances = fold_importances.mean(axis=0)
+                    return dict(zip(self._feature_names, mean_importances))
+            except (AttributeError, TypeError):
+                pass
+
         return {}
 
     def _build_method_scores(self, features: Dict[str, float]) -> Dict[str, float]:

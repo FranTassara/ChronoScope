@@ -398,7 +398,7 @@ def load_biocycle_labels_xlsx(
     dataset_id: str,
     q_threshold: float = 0.01,
     q_non_rhythmic_threshold: float = 0.2,
-) -> Tuple[Set[str], Set[str], Set[str]]:
+) -> Tuple[Set[str], Set[str], Set[str], Dict[str, float]]:
     """
     Load BioCycle classification results from the RhythmicDB Excel export.
 
@@ -414,10 +414,13 @@ def load_biocycle_labels_xlsx(
             this value are excluded as ambiguous.
 
     Returns:
-        (circadian_genes, non_rhythmic_genes, ambiguous_genes)
+        (circadian_genes, non_rhythmic_genes, ambiguous_genes, gene_q_values)
         - circadian_genes: genes with q <= q_threshold
         - non_rhythmic_genes: genes with q > q_non_rhythmic_threshold
         - ambiguous_genes: genes in the gap (excluded from training)
+        - gene_q_values: {gene: best (lowest) q-value} for ALL genes; used
+            downstream to assign provisional labels to ambiguous genes for
+            holdout evaluation (label = 1 if q < midpoint, else 0).
     """
     df = pd.read_excel(xlsx_path)
 
@@ -442,7 +445,8 @@ def load_biocycle_labels_xlsx(
     print(f"    Non-rhythmic (q > {q_non_rhythmic_threshold}): {len(non_rhythmic)}")
     print(f"    Ambiguous (excluded): {len(ambiguous)}")
 
-    return circadian, non_rhythmic, ambiguous
+    gene_q_values = gene_best_q.to_dict()
+    return circadian, non_rhythmic, ambiguous, gene_q_values
 
 
 # =============================================================================
@@ -611,7 +615,8 @@ def generate_from_geo(
     max_non_rhythmic: Optional[int] = None,
     starting_id: int = 2000,
     subsample_intervals: Optional[List[float]] = None,
-) -> Tuple[List[Dict], List[pd.DataFrame]]:
+    return_ambiguous: bool = False,
+):
     """
     Complete pipeline: download GEO data -> parse -> label -> generate instances.
 
@@ -626,9 +631,19 @@ def generate_from_geo(
         max_non_rhythmic: Cap on non-rhythmic instances (None = no cap)
         starting_id: Starting instance ID
         subsample_intervals: Intervals for subsampling (e.g. [2.0, 4.0])
+        return_ambiguous: If True, also returns a separate set of instances
+            for genes in the BioCycle ambiguity gap (q in (q_threshold,
+            q_non_rhythmic]). Used for holdout evaluation on borderline
+            cases. These instances are labeled provisionally based on the
+            q-value midpoint: q <= midpoint => label 1, else 0.
 
     Returns:
-        (metadata_list, dataframes_list) compatible with train_consensus_model.py
+        If return_ambiguous=False (default):
+            (metadata_list, dataframes_list)
+        If return_ambiguous=True:
+            (metadata_list, dataframes_list,
+             ambiguous_metadata, ambiguous_dataframes)
+        — all compatible with train_consensus_model.py
     """
     print("=" * 70)
     print("REAL BIOLOGICAL TRAINING DATA GENERATOR")
@@ -685,14 +700,18 @@ def generate_from_geo(
     print(f"    {sorted(known_non_found)}")
 
     # Load BioCycle labels if provided
+    bc_ambiguous_genes: Set[str] = set()
+    bc_gene_q_values: Dict[str, float] = {}
     if biocycle_xlsx and biocycle_dataset_id and os.path.exists(biocycle_xlsx):
-        bc_circadian, bc_non_rhythmic, _ = load_biocycle_labels_xlsx(
-            biocycle_xlsx, biocycle_dataset_id,
-            biocycle_q_threshold, biocycle_q_non_rhythmic
+        bc_circadian, bc_non_rhythmic, bc_ambiguous_genes, bc_gene_q_values = (
+            load_biocycle_labels_xlsx(
+                biocycle_xlsx, biocycle_dataset_id,
+                biocycle_q_threshold, biocycle_q_non_rhythmic,
+            )
         )
         circadian_genes |= bc_circadian
         non_rhythmic_genes |= bc_non_rhythmic
-        # Ambiguous genes are excluded from both sets
+        # Ambiguous genes are excluded from both training sets
 
     # ------------------------------------------------------------------
     # Step 5: Generate training instances
@@ -735,6 +754,48 @@ def generate_from_geo(
     if metadata:
         genes_used = set(m['gene'] for m in metadata)
         print(f"    Unique genes: {len(genes_used)}")
+
+    # ------------------------------------------------------------------
+    # Optional: build ambiguous-gene holdout for borderline-case evaluation
+    # ------------------------------------------------------------------
+    if return_ambiguous:
+        if not bc_ambiguous_genes:
+            print("\n  No ambiguous genes available (BioCycle data not loaded);"
+                  " returning empty ambiguous holdout.")
+            return metadata, dataframes, [], []
+
+        # Provisional labeling: midpoint of the q-value gap.
+        # Genes closer to q_threshold get label 1 (closer to "rhythmic");
+        # genes closer to q_non_rhythmic get label 0.
+        midpoint = (biocycle_q_threshold + biocycle_q_non_rhythmic) / 2.0
+        amb_rhythmic = {
+            g for g in bc_ambiguous_genes
+            if bc_gene_q_values.get(g, 1.0) <= midpoint
+        }
+        amb_non_rhythmic = bc_ambiguous_genes - amb_rhythmic
+
+        print(f"\n  Generating ambiguous holdout (midpoint q = {midpoint}):")
+        print(f"    Provisional rhythmic (q <= midpoint):     {len(amb_rhythmic)}")
+        print(f"    Provisional non-rhythmic (q > midpoint):  {len(amb_non_rhythmic)}")
+
+        # Use a distinct starting_id to avoid collisions with training data
+        amb_start_id = starting_id + 50000
+        amb_metadata, amb_dataframes = generate_real_training_instances(
+            gene_expression,
+            sample_times,
+            amb_rhythmic,
+            amb_non_rhythmic,
+            starting_id=amb_start_id,
+            subsample_intervals=subsample_intervals,
+        )
+
+        # Tag with q-value for downstream inspection
+        for m in amb_metadata:
+            m['biocycle_q_value'] = bc_gene_q_values.get(m['gene'])
+            m['source'] = 'biological_ambiguous'
+
+        print(f"  Ambiguous holdout instances: {len(amb_metadata)}")
+        return metadata, dataframes, amb_metadata, amb_dataframes
 
     return metadata, dataframes
 

@@ -10,9 +10,10 @@ labels (rhythmic / non-rhythmic) for training the meta-classifier.
 Signal types:
   Rhythmic (10 types): clean cosine, medium/low SNR, damped, square, sawtooth,
     amplitude-modulated, multi-harmonic (2,3), borderline
-  Non-rhythmic (32 types): white/pink/brown/bimodal noise, autocorrelated (7 rho),
+  Non-rhythmic (36 types): white/pink/brown/bimodal noise, autocorrelated (7 rho),
     trends (linear+/-, quadratic), step, piecewise constant, exponential decay,
-    non-circadian periods (13), fast-damped (2)
+    non-circadian periods (17, including near-circadian 21/22/26/27h),
+    fast-damped (2)
 
 Outlier contamination: 15% of all instances receive 1-2 random spike outliers
 to teach the model robustness to data artifacts (e.g. sensor errors, pipette
@@ -453,9 +454,21 @@ def generate_training_instances(seed: int = 42) -> Tuple[List[Dict], pd.DataFram
     # Oscillatory but at wrong periods (not 22-26h circadian window)
     # =========================================================================
 
+    # NOTE: periods close to 24h (21, 22, 26, 27) are deliberately included as
+    # NON-rhythmic. Rationale: prevents the model from learning a trivial gap
+    # via period_dev_24h. In the synthetic v1.x set, rhythmic instances had
+    # periods in [23, 25] while non-rhythmic oscillators were all >=4h away
+    # from 24h. That made period_dev_24h a near-perfect discriminator on
+    # synthetic data, which inflates CV and biases the model away from
+    # learning the harder features (amplitude regularity, phase coherence).
+    # In real biology, ~21h and ~27h oscillations are NOT circadian (e.g.,
+    # tidal, infradian, or non-biological artifacts); the model should
+    # learn that period proximity to 24h is necessary but not sufficient.
     non_circadian_periods = [
         4.0, 5.0, 6.0, 8.0, 10.0, 12.0,   # ultradian
         14.0, 16.0, 18.0, 20.0,             # sub-circadian
+        21.0, 22.0,                          # near-circadian (NOT rhythmic)
+        26.0, 27.0,                          # near-circadian (NOT rhythmic)
         30.0, 36.0, 48.0,                    # infradian
     ]
     non_circadian_noise_stds = [0.3, 0.6, 1.0]
