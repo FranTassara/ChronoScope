@@ -334,6 +334,95 @@ plus derived consensus metrics:
 
   Model file size:    15482.1 KB
 
+9. RUNTIME PARAMETER OVERRIDE POLICY
+--------------------------------------------------------------------------------
+
+The Random Forest classifier was trained with the sub-method search
+windows fixed at the values listed above: JTK 20-28h, Lomb-Scargle 18-32h,
+Cosinor and Harmonic Cosinor on a half-step circadian grid spanning
+20-28h, F24 target_period=24h, JTK asymmetry=0.5, harmonic order=2.
+Because the calibrated probability outputs depend on the feature
+distribution induced by those settings, changing them at inference time
+can produce miscalibrated predictions. The runtime path
+(`core/feature_extraction.py::_resolve_params`) therefore applies a
+typed filter to user-supplied parameters.
+
+  9.1 Parameters affecting model features (bounded)
+
+      period_range:  Honored if and only if it intersects the training
+                     window [18, 32]h. Clipped to that window if it
+                     spills out; falls back to training defaults (with
+                     a warning) if it lies entirely outside. The
+                     resolved range is applied uniformly to JTK_CYCLE,
+                     Cosinor OLS, Lomb-Scargle, and Harmonic Cosinor.
+
+      f24 target_period:   Locked at 24h. f24_score is a model feature
+                           and was trained at a single target period.
+
+      JTK asymmetries:     Locked at [0.5]. jtk_p_value is a model
+                           feature and was trained with the symmetric-
+                           waveform assumption.
+
+  9.2 Parameters not affecting model features (free override)
+
+      n_harmonics:   User-controlled (default 2). Affects only
+                     harmonic_p_value and harmonic_r_squared, which
+                     were dropped from the feature vector in v2
+                     (Section 4). The override drives the UI's per-
+                     method panel and cannot alter classifier output.
+
+  9.3 Validation of the bounded override
+
+      The holdout test set of 683 instances (Section 6.2) was re-
+      evaluated under two regimes: (i) default training-window
+      settings, and (ii) period_range = (22, 26)h, fully inside the
+      training window. Both regimes used the same v5 model. The
+      re-extracted DEFAULT features reproduced the cached X_test.npy
+      bit-for-bit, confirming the test partition is deterministic.
+
+                                Default       Narrowed (22-26h)   Delta
+      ----------------------    -----------   -----------------   --------
+      Accuracy                  0.8419        0.8228              -0.0191
+      Precision                 0.8421        0.8078              -0.0343
+      Recall                    0.8421        0.8480              +0.0059
+      F1                        0.8421        0.8274              -0.0147
+      ROC-AUC                   0.9152        0.9060              -0.0092
+      Brier loss                0.1143        0.1218              +0.0075
+      Specificity               0.842         0.798               -0.0440
+      Confusion (TN/FP/FN/TP)   287/54/54/288 272/69/52/290       +15 FP
+
+      Prediction agreement between regimes:
+        Binary (p >= 0.5):                              658/683  (96.3%)
+        Three-class (Rhythmic/Borderline/Arrhythmic):   626/683  (91.7%)
+        Mean |delta-probability|:                       0.0352
+        Median |delta-probability|:                     0.0096
+        Max |delta-probability|:                        0.5917
+        Cases with |delta-p| > 0.10:                    58/683   (8.5%)
+        Cases with |delta-p| > 0.20:                    24/683   (3.5%)
+        Binary disagreements among true rhythmic:        8/342   (2.3%)
+        Binary disagreements among true non-rhythmic:   17/341   (5.0%)
+
+      Interpretation. Discrimination is preserved: the 0.009 drop in
+      ROC-AUC lies within the 95% bootstrap CI of the default holdout
+      AUROC ([0.8930, 0.9353], Section 6.2), and is therefore
+      indistinguishable from sampling noise. The cost concentrates on
+      specificity (-4.4 percentage points, 15 additional false
+      positives), consistent with the expected mechanism: narrowing
+      prevents Lomb-Scargle and Cosinor from reporting peaks at the
+      edges of the training window, so non-rhythmic genes with a weak
+      spectral peak at ~20h or ~28h are forced to report their best
+      period inside 22-26h — closer to 24h on average — which
+      elevates f24_score and amplitude_relative. The median absolute
+      probability shift is below 1 percentage point; only 25 of 683
+      cases flip their binary decision.
+
+      Conclusion. The bounded period_range override is empirically
+      safe within the training window. Users opting for narrower
+      ranges trade a small amount of global specificity for tighter
+      local agreement with the biology of their species or condition.
+      Full numerical detail in
+      `core/models_meta_classifier/parameter_override_validation.txt`.
+
 ================================================================================
 END OF REPORT
 ================================================================================

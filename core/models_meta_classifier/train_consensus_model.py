@@ -881,6 +881,55 @@ def main():
         f.write(f"    This report:      core/models_meta_classifier/training_report.txt\n\n")
         f.write(f"  Model file size:    {model_path.stat().st_size / 1024:.1f} KB\n\n")
 
+        # --- 9. Runtime parameter override policy ---
+        # Permanent description of the inference-time policy applied by
+        # core/feature_extraction.py::_resolve_params. The validation
+        # numbers (Section 9.3) are model-version-specific and produced
+        # by validate_period_range_override.py; the report only
+        # references that file because retraining invalidates them.
+        f.write("9. RUNTIME PARAMETER OVERRIDE POLICY\n")
+        f.write("-" * W + "\n\n")
+        f.write("The classifier was trained with the sub-method search windows\n")
+        f.write("fixed at the values listed in Section 4 (JTK 20-28h,\n")
+        f.write("Lomb-Scargle 18-32h, Cosinor and Harmonic on a half-step\n")
+        f.write("circadian grid 20-28h, F24 target_period=24h, JTK asymmetry=0.5,\n")
+        f.write("harmonic order=2). Because the calibrated probability outputs\n")
+        f.write("depend on the feature distribution induced by those settings,\n")
+        f.write("user-supplied parameters are filtered at inference time by\n")
+        f.write("core/feature_extraction.py::_resolve_params.\n\n")
+
+        f.write("  9.1 Parameters affecting model features (bounded)\n\n")
+        f.write("      period_range:  Honored if and only if it intersects the\n")
+        f.write("                     training window [18, 32]h. Clipped to that\n")
+        f.write("                     window if it spills out; falls back to\n")
+        f.write("                     training defaults (with a warning) if it\n")
+        f.write("                     lies entirely outside. Applied uniformly\n")
+        f.write("                     to JTK, Cosinor OLS, Lomb-Scargle, and\n")
+        f.write("                     Harmonic Cosinor.\n\n")
+        f.write("      F24 target:    Locked at 24h. f24_score is a model\n")
+        f.write("                     feature trained at a single target.\n\n")
+        f.write("      JTK asymmetries: Locked at [0.5]. jtk_p_value was\n")
+        f.write("                       trained with the symmetric-waveform\n")
+        f.write("                       assumption.\n\n")
+
+        f.write("  9.2 Parameters not affecting model features (free override)\n\n")
+        f.write("      n_harmonics:   User-controlled (default 2). Affects only\n")
+        f.write("                     harmonic_p_value and harmonic_r_squared,\n")
+        f.write("                     which were dropped from the feature vector\n")
+        f.write("                     in v2 (Section 4). The override drives\n")
+        f.write("                     the UI's per-method panel and cannot\n")
+        f.write("                     alter classifier output.\n\n")
+
+        f.write("  9.3 Empirical validation of the bounded override\n\n")
+        f.write("      A holdout re-evaluation comparing default settings\n")
+        f.write("      against period_range=(22, 26)h is maintained as a\n")
+        f.write("      standalone report:\n\n")
+        f.write("        core/models_meta_classifier/parameter_override_validation.txt\n\n")
+        f.write("      The numbers there are model-version-specific. After\n")
+        f.write("      retraining, re-run\n")
+        f.write("        python validate_period_range_override.py\n")
+        f.write("      to refresh them.\n\n")
+
         f.write("=" * W + "\n")
         f.write("END OF REPORT\n")
         f.write("=" * W + "\n")

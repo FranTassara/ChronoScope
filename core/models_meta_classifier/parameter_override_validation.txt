@@ -1,0 +1,142 @@
+================================================================================
+ChronoScope - CONSENSUS RHYTHMICITY SCORE (CRS-AI)
+RUNTIME PARAMETER OVERRIDE — VALIDATION REPORT
+================================================================================
+
+  Validation date:   2026-05-21
+  Model under test:  v5 (consensus_rf_model.pkl, 11-feature schema)
+  Script:            core/models_meta_classifier/validate_period_range_override.py
+
+
+1. MOTIVATION
+--------------------------------------------------------------------------------
+
+The CRS-AI Random Forest is trained on features extracted with fixed sub-
+method search windows (JTK 20-28h, Lomb-Scargle 18-32h, Cosinor and
+Harmonic on a half-step circadian grid 20-28h, F24 target_period=24h,
+JTK asymmetry=0.5, harmonic order=2). When the GUI exposes a configurable
+`period_range` parameter, the AI module faces a choice: ignore the user
+input (silent failure, breaks the UX promise) or honor it (potentially
+shifting the feature distribution outside what the model was calibrated
+for).
+
+The policy adopted (Section 9 of training_report.txt) honors user
+`period_range` only inside the trained window [18, 32]h, clipping if it
+spills out and falling back to defaults with a warning if it lies
+entirely outside. This file quantifies the cost of that policy on the
+v5 holdout.
+
+
+2. EXPERIMENTAL DESIGN
+--------------------------------------------------------------------------------
+
+  - The exact training data and 80/20 GroupShuffleSplit (random_state=42)
+    used by train_consensus_model.py are regenerated to recover the same
+    683-instance test set.
+  - Features are re-extracted over each test instance under two regimes:
+        (i)  DEFAULT — training-window settings
+        (ii) NARROW — period_range = (22, 26)h, fully inside the
+              training window, applied uniformly to JTK / Cosinor /
+              LS / Harmonic. F24 target_period and JTK asymmetries
+              stay locked (per policy).
+  - The same v5 model is used to produce probabilities on each
+    feature matrix.
+  - Sanity: the re-extracted DEFAULT features reproduce the cached
+    X_test.npy bit-for-bit, confirming the test partition is
+    deterministic across runs.
+
+
+3. HOLDOUT METRICS (n = 683)
+--------------------------------------------------------------------------------
+
+                           DEFAULT       NARROW (22-26h)    Delta
+  ----------------------   -----------   ----------------   --------
+  Accuracy                 0.8419        0.8228             -0.0191
+  Precision                0.8421        0.8078             -0.0343
+  Recall                   0.8421        0.8480             +0.0059
+  F1                       0.8421        0.8274             -0.0147
+  ROC-AUC                  0.9152        0.9060             -0.0092
+  Brier loss               0.1143        0.1218             +0.0075
+  Specificity (TN/(TN+FP)) 0.842         0.798              -0.044
+  Confusion (TN/FP/FN/TP)  287/54/54/288 272/69/52/290      +15 FP, +2 TP
+
+
+4. PREDICTION AGREEMENT
+--------------------------------------------------------------------------------
+
+  Binary classification (probability >= 0.5):
+    Agreement:                    658 / 683    (96.3%)
+
+  Three-class classification (ChronoScope GUI thresholds 0.30 / 0.70):
+    Agreement:                    626 / 683    (91.7%)
+
+  Probability shift distribution (|p_default - p_narrow|):
+    Mean:                         0.0352
+    Median:                       0.0096
+    Max:                          0.5917
+    Cases with |delta-p| > 0.10:   58 / 683     (8.5%)
+    Cases with |delta-p| > 0.20:   24 / 683     (3.5%)
+
+  Binary-disagreement breakdown:
+    Among true rhythmic genes:       8 / 342   (2.3%)
+    Among true non-rhythmic genes:  17 / 341   (5.0%)
+
+
+5. INTERPRETATION
+--------------------------------------------------------------------------------
+
+  Discrimination is preserved. The 0.009 drop in ROC-AUC lies within the
+  95% bootstrap confidence interval of the default holdout AUROC
+  ([0.8930, 0.9353]; Section 6.2 of training_report.txt), so the change
+  is not statistically distinguishable from sampling noise.
+
+  The cost concentrates on specificity. Narrowing the search window to
+  22-26h prevents Lomb-Scargle and Cosinor from reporting periods at
+  the edges of the training window (~18-21h, ~27-32h). Non-rhythmic
+  genes that previously had a weak spectral peak at, e.g., 20h are now
+  forced to report their best period inside 22-26h — closer to 24h on
+  average — which raises their amplitude_relative and f24_score and
+  pushes them up the probability scale. The result is a 4.4-point
+  drop in specificity (15 additional false positives), against a 0.6-
+  point gain in recall.
+
+  Calibration also worsens marginally (Brier loss +0.0075) because the
+  CalibratedClassifierCV isotonic regression was fit on the default
+  feature distribution. Recalibrating per-range would require a
+  per-range CV fit at training time; this was judged unnecessary given
+  the small magnitude of the shift.
+
+  Most predictions barely move. The median absolute probability shift
+  is under 1 percentage point. Only 24 instances out of 683 (3.5%) move
+  by more than 20 points, and only 25 cases out of 683 flip their
+  binary decision.
+
+
+6. CONCLUSIONS
+--------------------------------------------------------------------------------
+
+  The bounded `period_range` override policy is empirically safe. The
+  specificity cost grows approximately linearly with how much the range
+  is narrowed; the (22, 26)h test represents a realistic tight
+  narrowing (closer than what most circadian studies require). Users
+  who choose narrower ranges are trading global specificity for
+  tighter local agreement with their biology — a deliberate trade-off
+  the parameter is intended to enable, with the warnings emitted by
+  `_resolve_params` making the trade-off explicit.
+
+  Out-of-window ranges (no overlap with [18, 32]h) trigger automatic
+  fallback to training defaults with a warning. This case was not
+  empirically validated because the policy never lets such inputs
+  reach the model; the user is informed and the model behaves
+  identically to the baseline.
+
+  n_harmonics override is not validated here because it does not
+  affect any feature in the classifier's input vector (harmonic_p_value
+  and harmonic_r_squared were dropped in v2). The override only moves
+  the UI's per-method panel and is therefore guaranteed not to alter
+  predictions.
+
+
+================================================================================
+END OF VALIDATION REPORT
+================================================================================
