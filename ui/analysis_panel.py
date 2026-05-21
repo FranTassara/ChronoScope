@@ -1243,7 +1243,8 @@ class AnalysisPanel(QWidget):
         self._period_max_spin.valueChanged.connect(self._on_period_changed)
         pr_layout.addWidget(self._period_max_spin)
 
-        pr_layout.addWidget(QLabel("Step:"))
+        self._period_step_label = QLabel("Step:")
+        pr_layout.addWidget(self._period_step_label)
 
         self._period_step_spin = QDoubleSpinBox()
         self._period_step_spin.setRange(0.1, 10.0)
@@ -1787,6 +1788,30 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("", self._rc_cis_info_label)
 
+        # AI Consensus parameter-contract info label (hidden by default).
+        # Shown only when "AI Consensus" module is selected. Spells out
+        # which parameters move the model and which are display-only,
+        # so the user understands what their slider actually does.
+        self._ai_consensus_info_label = QLabel(
+            "ℹ Period applies to JTK, Cosinor, Lomb-Scargle and Harmonic searches. "
+            "Values outside [18, 32]h are automatically clipped to the model's "
+            "training window. Components controls only the Harmonic Cosinor "
+            "sub-method display — it does not affect the consensus probability."
+        )
+        self._ai_consensus_info_label.setWordWrap(True)
+        self._ai_consensus_info_label.setStyleSheet(
+            "color: #555; font-style: italic; padding: 6px 8px; "
+            "background-color: #f3f6fb; border: 1px solid #c5d3e8; "
+            "border-radius: 4px;"
+        )
+        self._ai_consensus_info_label.setVisible(False)
+        self._params_layout.addRow("", self._ai_consensus_info_label)
+
+        # One-time flag: set sensible AI defaults the first time the user
+        # switches to the AI Consensus module in a session. After that,
+        # whatever the user picks persists across module switches.
+        self._ai_defaults_initialized = False
+
         # Update visibility based on current method
         self._update_parameter_visibility()
 
@@ -2255,6 +2280,16 @@ class AnalysisPanel(QWidget):
             self._hide_checkbox(self._rc_clean_data_check)
             self._set_row_visible_for_widget(self._rc_cis_info_label, False)
 
+        # Reset AI Consensus-specific overrides: re-show period step (it
+        # was potentially hidden for AI) and hide the AI info label.
+        # Methods that show "Period:" elsewhere expect the step to be
+        # visible; the AI Consensus branch is the only one that hides it.
+        if hasattr(self, '_period_step_label'):
+            self._period_step_label.setVisible(True)
+            self._period_step_spin.setVisible(True)
+        if hasattr(self, '_ai_consensus_info_label'):
+            self._set_row_visible_for_widget(self._ai_consensus_info_label, False)
+
         # =====================================================================
         # COSINORPY - NEW REFACTORED METHODS
         # =====================================================================
@@ -2478,8 +2513,23 @@ class AnalysisPanel(QWidget):
         # AI CONSENSUS
         # =====================================================================
         elif module_text == "AI Consensus":
-            # No parameters needed - the meta-classifier uses defaults for all sub-methods
-            pass
+            # AI Consensus exposes only the two parameters that
+            # _resolve_params() actually honors:
+            #   - Period (min, max): bounded override, clipped to [18, 32]h
+            #   - Components: free override, drives only the Harmonic
+            #                 sub-method display panel (not the model)
+            # Everything else is locked at training defaults.
+            self._show_param("Period:")
+            self._set_period_mode('range')
+            # Hide the step controls — the AI uses fixed internal grids
+            # per sub-method (JTK integer step, Cosinor/Harmonic 0.5h,
+            # LS log-spaced 1000 points), so the step value is ignored.
+            self._period_step_label.setVisible(False)
+            self._period_step_spin.setVisible(False)
+            self._show_param("Components:")
+            self._set_row_visible_for_widget(
+                self._ai_consensus_info_label, True
+            )
 
         # =====================================================================
         # VISUALIZATION (DAM data)
@@ -2795,9 +2845,9 @@ class AnalysisPanel(QWidget):
                 ("Consensus Rhythmicity Score",
                  "AI-powered meta-classifier that combines evidence from JTK_CYCLE, Cosinor, "
                  "Lomb-Scargle, Fourier F24, and Harmonic Cosinor into a single rhythmicity "
-                 "probability score (0-1). Uses a pre-trained Random Forest model trained "
-                 "on 3,299 instances (1,600 synthetic + 1,699 real biological) with "
-                 "known ground truth.")
+                 "probability score (0-1). Uses a pre-trained, calibrated Random Forest "
+                 "(11-feature schema) trained on 3,395 instances (1,696 synthetic + 1,699 "
+                 "real biological) with known ground truth.")
             ]
         elif module_name == "Visualization":  # Visualization (available for DAM data)
             methods = [
@@ -2809,8 +2859,19 @@ class AnalysisPanel(QWidget):
         for name, desc in methods:
             self._method_combo.addItem(name, desc)
 
+        # First-time AI Consensus selection: seed sensible defaults
+        # (period 20-28h matches training-window center; n_harmonics=2
+        # matches training). Done once per session so the user's later
+        # tweaks persist across module switches.
+        if (module_name == "AI Consensus"
+                and not getattr(self, '_ai_defaults_initialized', True)):
+            self._period_min_spin.setValue(20.0)
+            self._period_max_spin.setValue(28.0)
+            self._components_edit.setText("2")
+            self._ai_defaults_initialized = True
+
         self._on_method_changed(0)
-    
+
     def _on_method_changed(self, index: int):
         """Handle method selection change."""
         desc = self._method_combo.currentData()
