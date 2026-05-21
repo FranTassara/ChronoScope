@@ -283,7 +283,7 @@ def main():
     from sklearn.calibration import CalibratedClassifierCV
     from sklearn.inspection import permutation_importance
     from sklearn.model_selection import (
-        GroupShuffleSplit, cross_val_score, StratifiedGroupKFold,
+        GroupShuffleSplit, StratifiedGroupKFold,
     )
     from sklearn.metrics import (
         classification_report, roc_auc_score, accuracy_score,
@@ -311,46 +311,65 @@ def main():
     assert len(overlap) == 0, f"Group leakage detected: {overlap}"
     print(f"  Group leakage check: OK (0 shared groups)")
 
-    # Build pipeline
+    # Build pipeline factory.
     # Note: constant fill_value=-999 (sentinel) instead of median imputation.
     # The RF learns clean splits: "if feature <= -500 -> feature was unavailable".
     # No StandardScaler: Random Forest is invariant to monotonic feature scaling.
     # CalibratedClassifierCV wraps the RF with isotonic regression to produce
     # well-calibrated probabilities (default RF probas are overconfident at
-    # extremes). cv=5 means: 5-fold internal CV; calibration learned on each
-    # fold's held-out portion, then averaged.
-    base_rf = RandomForestClassifier(
-        n_estimators=200,
-        max_depth=10,
-        min_samples_leaf=5,
-        class_weight='balanced',
-        random_state=42,
-        n_jobs=-1,
-    )
-    calibrated_rf = CalibratedClassifierCV(
-        estimator=base_rf,
-        method='isotonic',
-        cv=5,
-    )
-    pipeline = Pipeline([
-        ('imputer', SimpleImputer(strategy='constant', fill_value=-999)),
-        ('classifier', calibrated_rf),
-    ])
+    # extremes). Its internal CV is fed PRECOMPUTED StratifiedGroupKFold splits
+    # tied to the groups of whatever subset is being fitted, so the same gene
+    # never appears in both calibration-train and calibration-val folds —
+    # matching the outer GroupShuffleSplit no-leakage guarantee. We can't pass
+    # `groups` natively because CalibratedClassifierCV.fit() doesn't accept it.
+    def _build_pipeline(X_fit, y_fit, groups_fit):
+        base_rf = RandomForestClassifier(
+            n_estimators=200,
+            max_depth=10,
+            min_samples_leaf=5,
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=-1,
+        )
+        calibration_splits = list(
+            StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+            .split(X_fit, y_fit, groups=groups_fit)
+        )
+        calibrated_rf = CalibratedClassifierCV(
+            estimator=base_rf,
+            method='isotonic',
+            cv=calibration_splits,
+        )
+        return Pipeline([
+            ('imputer', SimpleImputer(strategy='constant', fill_value=-999)),
+            ('classifier', calibrated_rf),
+        ])
 
-    # Cross-validation — StratifiedGroupKFold respects gene grouping AND
-    # stratifies by label, so the same gene never appears in both train and
-    # validation folds, while class balance is preserved.
+    # Cross-validation — manual outer loop because we need each outer fold to
+    # build its own group-aware inner calibration splits over its sub-training
+    # set. cross_val_score can't do this (CalibratedClassifierCV.fit doesn't
+    # forward `groups` through the pipeline).
     print("\n  Running 5-fold stratified group cross-validation...")
-    cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
-    cv_scores = cross_val_score(
-        pipeline, X_train, y_train,
-        cv=cv, groups=groups_train, scoring='roc_auc',
-    )
+    outer_cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_scores = []
+    for fold_idx, (tr_idx, val_idx) in enumerate(
+        outer_cv.split(X_train, y_train, groups_train)
+    ):
+        fold_pipeline = _build_pipeline(
+            X_train[tr_idx], y_train[tr_idx], groups_train[tr_idx]
+        )
+        fold_pipeline.fit(X_train[tr_idx], y_train[tr_idx])
+        y_proba_fold = fold_pipeline.predict_proba(X_train[val_idx])[:, 1]
+        fold_auc = roc_auc_score(y_train[val_idx], y_proba_fold)
+        cv_scores.append(fold_auc)
+        print(f"    Fold {fold_idx + 1}/5: ROC-AUC = {fold_auc:.4f}")
+    cv_scores = np.array(cv_scores)
     print(f"  CV ROC-AUC: {cv_scores.mean():.4f} (+/- {cv_scores.std():.4f})")
     print(f"  Per-fold:   {[f'{s:.4f}' for s in cv_scores]}")
 
-    # Fit on full training set
+    # Fit final pipeline on full training set (group-aware calibration splits).
     print("\n  Fitting on full training set...")
+    pipeline = _build_pipeline(X_train, y_train, groups_train)
     pipeline.fit(X_train, y_train)
 
     # Evaluate on test set

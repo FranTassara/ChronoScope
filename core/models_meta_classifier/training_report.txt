@@ -3,7 +3,7 @@ ChronoScope - CONSENSUS RHYTHMICITY SCORE (CRS-AI)
 MODEL TRAINING REPORT
 ================================================================================
 
-  Training date: 2026-05-20
+  Training date: 2026-05-21
 
 1. MODEL OVERVIEW
 --------------------------------------------------------------------------------
@@ -68,7 +68,7 @@ multiple independent algorithms.
                      Arrhythmic <= 0.30, Borderline in between).
     Calibration quality is reported via Brier score in Section 6.
 
-4. FEATURE SET (18 features)
+4. FEATURE SET (11 features)
 --------------------------------------------------------------------------------
 
 Features are extracted from five circadian detection sub-methods
@@ -83,24 +83,17 @@ plus derived consensus metrics:
 
   Feature                        Importance   Description
   -----------------------------  ----------   ------------------------------------
-  f24_score                          0.1709   Fourier F24 test score (24h periodicity statistic)
-  cosinor_r_squared                  0.1050   Cosinor OLS goodness-of-fit (R-squared)
-  cosinor_p_value                    0.1021   Cosinor OLS regression adjusted p-value
-  ls_p_value                         0.0977   Lomb-Scargle false alarm probability
-  ls_power                           0.0694   Lomb-Scargle dominant spectral power
-  jtk_p_value                        0.0675   JTK_CYCLE adjusted p-value (non-parametric rhythmicity test)
-  cosinor_amplitude                  0.0672   Cosinor fitted amplitude (expression units)
-  amplitude_relative                 0.0521   Amplitude relative to mesor (amplitude / |mean|)
-  period_dev_24h                     0.0485   Min |period - 24h| across methods (circadian proximity)
-  ls_dominant_period                 0.0402   Lomb-Scargle dominant period (hours)
-  harmonic_r_squared                 0.0285   Harmonic cosinor goodness-of-fit (R-squared)
-  method_agreement                   0.0285   Fraction of methods with p < 0.05 (consensus score)
-  log_min_p_value                    0.0265   log10(min p-value) across all methods (compresses range)
-  cosinor_period                     0.0261   Cosinor detected period (hours)
-  harmonic_p_value                   0.0252   Harmonic cosinor adjusted p-value (2 harmonics)
-  period_concordance                 0.0181   Std. deviation of periods across methods (lower=better)
-  jtk_tau                            0.0161   JTK_CYCLE tau statistic (cyclic pattern strength)
-  jtk_period                         0.0101   JTK_CYCLE detected period (hours)
+  f24_score                          0.2071   Fourier F24 test score (24h periodicity statistic)
+  cosinor_r_squared                  0.1314   Cosinor OLS goodness-of-fit (R-squared)
+  cosinor_p_value                    0.1260   Cosinor OLS regression adjusted p-value
+  ls_p_value                         0.1159   Lomb-Scargle false alarm probability
+  cosinor_amplitude                  0.0810   Cosinor fitted amplitude (expression units)
+  ls_power                           0.0755   Lomb-Scargle dominant spectral power
+  period_dev_24h                     0.0645   Min |period - 24h| across methods (circadian proximity)
+  amplitude_relative                 0.0610   Amplitude relative to mesor (amplitude / |mean|)
+  jtk_p_value                        0.0584   JTK_CYCLE adjusted p-value (non-parametric rhythmicity test)
+  ls_dominant_period                 0.0477   Lomb-Scargle dominant period (hours)
+  cosinor_period                     0.0314   Cosinor detected period (hours)
 
   Feature completeness (NaN analysis):
     All features complete (0% NaN)
@@ -205,8 +198,8 @@ plus derived consensus metrics:
 
   6.1 Cross-validation (5-fold StratifiedGroupKFold, on training set)
 
-    ROC-AUC:   0.9307 +/- 0.0095
-    Per-fold:  0.9225, 0.9210, 0.9290, 0.9339, 0.9473
+    ROC-AUC:   0.9330 +/- 0.0081
+    Per-fold:  0.9252, 0.9250, 0.9303, 0.9388, 0.9458
 
   6.2 Holdout test set performance (high-confidence cases)
 
@@ -218,30 +211,30 @@ plus derived consensus metrics:
     (n=1000 resamples, 1000 valid; iterations with single-
     class resamples were skipped):
 
-    Accuracy:    0.8360  [95% CI 0.8082, 0.8624]
-    Precision:   0.8343
-    Recall:      0.8392
-    Specificity: 0.8328
-    F1 Score:    0.8367  [95% CI 0.8064, 0.8656]
-    ROC-AUC:     0.9116  [95% CI 0.8886, 0.9322]
-    MCC:         0.6720
-    Brier loss:  0.1164  [95% CI 0.1015, 0.1334]  (lower=better calibration)
+    Accuracy:    0.8419  [95% CI 0.8155, 0.8682]
+    Precision:   0.8421
+    Recall:      0.8421
+    Specificity: 0.8416
+    F1 Score:    0.8421  [95% CI 0.8119, 0.8696]
+    ROC-AUC:     0.9152  [95% CI 0.8930, 0.9353]
+    MCC:         0.6837
+    Brier loss:  0.1143  [95% CI 0.0979, 0.1310]  (lower=better calibration)
 
   6.3 Confusion matrix
 
                        Predicted
                    Non-rhythmic  Rhythmic
-    Actual NR          284           57
-    Actual R            55          287
+    Actual NR          287           54
+    Actual R            54          288
 
-    TP=287, FP=57, TN=284, FN=55
+    TP=288, FP=54, TN=287, FN=54
 
   6.4 Classification report
 
                   precision    recall  f1-score   support
     
-    Non-rhythmic       0.84      0.83      0.84       341
-        Rhythmic       0.83      0.84      0.84       342
+    Non-rhythmic       0.84      0.84      0.84       341
+        Rhythmic       0.84      0.84      0.84       342
     
         accuracy                           0.84       683
        macro avg       0.84      0.84      0.84       683
@@ -264,10 +257,10 @@ plus derived consensus metrics:
     a direct comparison to 6.2.
 
     N:                       2335
-    Accuracy (vs midpoint):  0.6141
-    AUROC (vs midpoint):     0.6987
-    Brier loss:              0.2955
-    % flagged borderline:    24.8%
+    Accuracy (vs midpoint):  0.6064
+    AUROC (vs midpoint):     0.7015
+    Brier loss:              0.3110
+    % flagged borderline:    23.9%
       (probability in [0.30, 0.70])
 
     A high % flagged borderline is the desired behavior
@@ -292,47 +285,33 @@ plus derived consensus metrics:
 
   Rank   Feature                        Importance  Cumulative
   -----  -----------------------------  ----------  ----------
-  1      f24_score                          0.1709      0.1709
-  2      cosinor_r_squared                  0.1050      0.2759
-  3      cosinor_p_value                    0.1021      0.3780
-  4      ls_p_value                         0.0977      0.4757
-  5      ls_power                           0.0694      0.5451
-  6      jtk_p_value                        0.0675      0.6126
-  7      cosinor_amplitude                  0.0672      0.6798
-  8      amplitude_relative                 0.0521      0.7319
-  9      period_dev_24h                     0.0485      0.7804
-  10     ls_dominant_period                 0.0402      0.8207
-  11     harmonic_r_squared                 0.0285      0.8492
-  12     method_agreement                   0.0285      0.8777
-  13     log_min_p_value                    0.0265      0.9043
-  14     cosinor_period                     0.0261      0.9304
-  15     harmonic_p_value                   0.0252      0.9556
-  16     period_concordance                 0.0181      0.9737
-  17     jtk_tau                            0.0161      0.9899
-  18     jtk_period                         0.0101      1.0000
+  1      f24_score                          0.2071      0.2071
+  2      cosinor_r_squared                  0.1314      0.3385
+  3      cosinor_p_value                    0.1260      0.4645
+  4      ls_p_value                         0.1159      0.5804
+  5      cosinor_amplitude                  0.0810      0.6614
+  6      ls_power                           0.0755      0.7370
+  7      period_dev_24h                     0.0645      0.8015
+  8      amplitude_relative                 0.0610      0.8625
+  9      jtk_p_value                        0.0584      0.9210
+  10     ls_dominant_period                 0.0477      0.9686
+  11     cosinor_period                     0.0314      1.0000
 
   7.2 Permutation importance (test-set ROC-AUC drop, n_repeats=10)
 
   Rank   Feature                         Mean AUROC drop       Std
   -----  -----------------------------  ----------------  --------
-  1      f24_score                               +0.0243    0.0056
-  2      cosinor_amplitude                       +0.0201    0.0049
-  3      period_dev_24h                          +0.0148    0.0021
-  4      amplitude_relative                      +0.0083    0.0030
-  5      ls_dominant_period                      +0.0073    0.0023
-  6      cosinor_r_squared                       +0.0056    0.0026
-  7      ls_power                                +0.0044    0.0017
-  8      cosinor_p_value                         +0.0041    0.0028
-  9      cosinor_period                          +0.0041    0.0016
-  10     ls_p_value                              +0.0039    0.0030
-  11     jtk_p_value                             +0.0017    0.0011
-  12     period_concordance                      +0.0017    0.0007
-  13     jtk_period                              +0.0014    0.0007
-  14     jtk_tau                                 +0.0012    0.0010
-  15     method_agreement                        +0.0011    0.0015
-  16     harmonic_r_squared                      +0.0010    0.0009
-  17     harmonic_p_value                        +0.0005    0.0013
-  18     log_min_p_value                         +0.0001    0.0013
+  1      f24_score                               +0.0350    0.0066
+  2      cosinor_amplitude                       +0.0274    0.0046
+  3      period_dev_24h                          +0.0222    0.0032
+  4      ls_dominant_period                      +0.0108    0.0024
+  5      amplitude_relative                      +0.0103    0.0031
+  6      cosinor_p_value                         +0.0090    0.0043
+  7      cosinor_r_squared                       +0.0089    0.0033
+  8      ls_p_value                              +0.0086    0.0042
+  9      cosinor_period                          +0.0062    0.0021
+  10     ls_power                                +0.0055    0.0022
+  11     jtk_p_value                             +0.0030    0.0015
 
   Interpretation: a permutation-importance value of 0.05
   means shuffling that feature drops test ROC-AUC by 0.05
@@ -353,7 +332,7 @@ plus derived consensus metrics:
     Ambiguous holdout: core/models_meta_classifier/ambiguous_holdout_predictions.csv
     This report:      core/models_meta_classifier/training_report.txt
 
-  Model file size:    14993.0 KB
+  Model file size:    15482.1 KB
 
 ================================================================================
 END OF REPORT

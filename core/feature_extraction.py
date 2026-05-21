@@ -16,11 +16,21 @@ import numpy as np
 import pandas as pd
 
 
-# Ordered list of feature names - this defines the model's expected input
+# Ordered list of feature names — defines the model's input vector.
+#
+# v2: trimmed from 18 → 11 features. Removed jtk_tau, jtk_period,
+# harmonic_p_value, harmonic_r_squared, method_agreement,
+# period_concordance, log_min_p_value — all had permutation importance
+# ≤ 0.002 on the v1 holdout (essentially noise for generalization),
+# while their MDI was inflated by training-set correlations.
+#
+# extract_features() still computes harmonic_p_value, method_agreement,
+# period_concordance, jtk_tau, jtk_period etc. and returns them in the
+# features dict — they are consumed by the UI (radar chart, sub-method
+# details panel) and by analysis_engine result objects. They are simply
+# not fed to the Random Forest.
 FEATURE_NAMES: List[str] = [
     'jtk_p_value',
-    'jtk_tau',
-    'jtk_period',
     'cosinor_p_value',
     'cosinor_r_squared',
     'cosinor_amplitude',
@@ -29,12 +39,7 @@ FEATURE_NAMES: List[str] = [
     'ls_power',
     'ls_dominant_period',
     'f24_score',
-    'harmonic_p_value',
-    'harmonic_r_squared',
-    'method_agreement',
-    'period_concordance',
     'amplitude_relative',
-    'log_min_p_value',
     'period_dev_24h',
 ]
 
@@ -49,6 +54,83 @@ def _compute_r_squared(times: np.ndarray, values: np.ndarray,
     if ss_tot == 0:
         return 0.0
     return 1.0 - ss_res / ss_tot
+
+
+# Window the model was trained on. Used by _resolve_params to decide whether
+# a user-supplied period_range can be honored.
+_TRAINED_PERIOD_LOW = 18.0
+_TRAINED_PERIOD_HIGH = 32.0
+
+
+def _resolve_params(parameters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Filter user parameters for the AI consensus path.
+
+    Policy:
+      - period_range: honored iff it intersects the training window
+        [18, 32]h. Clipped to that window if it spills out, falls back
+        to training defaults if it's entirely outside. Affects features
+        that are fed to the model (JTK, Cosinor, LS).
+      - n_harmonics: honored freely. Only affects harmonic_p_value /
+        harmonic_r_squared, which are NO LONGER fed to the model — they
+        only drive the UI's harmonic sub-method panel. Safe to expose.
+      - f24 target_period and jtk asymmetries: locked. Changing them
+        silently shifts feature semantics the model relies on.
+
+    Returns a dict with keys: jtk_periods (list[int]),
+    cosinor_periods (list[float]), ls_range (tuple), harmonic_periods
+    (list[float]), n_harmonics (int).
+    """
+    from .rhythm_analysis import DefaultPeriodRanges
+
+    parameters = parameters or {}
+    n_harmonics = int(parameters.get('n_harmonics', 2))
+
+    defaults = {
+        'jtk_periods':      DefaultPeriodRanges.CIRCADIAN_INT,
+        'cosinor_periods':  DefaultPeriodRanges.CIRCADIAN,
+        'ls_range':         (18.0, 32.0),
+        'harmonic_periods': DefaultPeriodRanges.CIRCADIAN,
+        'n_harmonics':      n_harmonics,
+    }
+
+    user_range = parameters.get('period_range')
+    if user_range is None:
+        return defaults
+
+    lo, hi = float(user_range[0]), float(user_range[1])
+    safe_lo = max(_TRAINED_PERIOD_LOW, lo)
+    safe_hi = min(_TRAINED_PERIOD_HIGH, hi)
+
+    if safe_lo >= safe_hi - 1.0:
+        warnings.warn(
+            f"AI consensus model was trained on period range "
+            f"[{_TRAINED_PERIOD_LOW}, {_TRAINED_PERIOD_HIGH}]h; "
+            f"requested [{lo}, {hi}]h falls outside. Using training "
+            f"defaults — predictions for this range are not supported.",
+            stacklevel=2,
+        )
+        return defaults
+
+    if (lo, hi) != (safe_lo, safe_hi):
+        warnings.warn(
+            f"AI consensus: clipping requested period range "
+            f"[{lo}, {hi}]h to [{safe_lo}, {safe_hi}]h "
+            f"(model's training window).",
+            stacklevel=2,
+        )
+
+    jtk_periods = list(range(int(np.ceil(safe_lo)),
+                              int(np.floor(safe_hi)) + 1))
+    cosinor_periods = list(np.arange(safe_lo, safe_hi + 1e-9, 0.5))
+
+    return {
+        'jtk_periods':      jtk_periods,
+        'cosinor_periods':  cosinor_periods,
+        'ls_range':         (safe_lo, safe_hi),
+        'harmonic_periods': cosinor_periods,
+        'n_harmonics':      n_harmonics,
+    }
 
 
 def extract_features(
@@ -82,25 +164,21 @@ def extract_features(
     """
     features: Dict[str, float] = {name: np.nan for name in FEATURE_NAMES}
 
-    parameters = parameters or {}
-    default_params = {
-        'period': None,
-        'period_range': (18.0, 32.0),
-    }
-    for k, v in default_params.items():
-        if k not in parameters:
-            parameters[k] = v
+    p = _resolve_params(parameters)
 
     p_values_for_agreement = []
     periods_for_concordance = []
 
     # --- JTK Cycle ---
+    # asymmetries locked at [0.5]: the model was trained with the symmetric
+    # waveform assumption; varying asymmetries shifts jtk_p_value semantics.
     try:
         from .rhythm_analysis import _run_discrete_jtk
 
         series = pd.Series(values, index=times)
-        period_range = list(range(20, 29))
-        jtk_result = _run_discrete_jtk(series, period_range=period_range, asymmetries=[0.5])
+        jtk_result = _run_discrete_jtk(
+            series, period_range=p['jtk_periods'], asymmetries=[0.5]
+        )
 
         if jtk_result is not None:
             features['jtk_p_value'] = jtk_result.adj_p_value
@@ -113,9 +191,9 @@ def extract_features(
 
     # --- Cosinor OLS ---
     try:
-        from .rhythm_analysis import _fit_cosinor, DefaultPeriodRanges
+        from .rhythm_analysis import _fit_cosinor
 
-        cosinor_result = _fit_cosinor(times, values, period_range=DefaultPeriodRanges.CIRCADIAN)
+        cosinor_result = _fit_cosinor(times, values, period_range=p['cosinor_periods'])
 
         if cosinor_result is not None:
             features['cosinor_p_value'] = cosinor_result.adj_p_value
@@ -146,7 +224,7 @@ def extract_features(
 
         ls_result = _compute_lomb_scargle(
             times, values,
-            period_range=(18.0, 32.0),
+            period_range=p['ls_range'],
             n_periods=1000
         )
 
@@ -160,22 +238,18 @@ def extract_features(
         pass
 
     # --- Fourier F24 ---
+    # Uses the same (times, values) input as every other sub-method: the
+    # caller is responsible for whatever replicate aggregation it wants
+    # (training averages replicates per timepoint upstream). Earlier
+    # versions had F24 reach into the full DataFrame and re-extract per-
+    # replicate values, which gave it access to within-timepoint variance
+    # that other methods didn't see. The asymmetric data view inflated
+    # f24_score's MDI relative to its permutation importance (~5-7x gap),
+    # not because F24 is fundamentally that informative.
     try:
         from .rhythm_analysis import _compute_fourier_f24
 
-        f24_times = times
-        f24_values = values
-
-        # If we have full data, use it for better F24 (handles replicates)
-        if data is not None and variable is not None and condition is not None:
-            cond_data = data[data[condition_col] == condition]
-            f24_times = cond_data[time_col].values.astype(float)
-            f24_values = cond_data[variable].values.astype(float)
-            mask = ~(np.isnan(f24_times) | np.isnan(f24_values))
-            f24_times = f24_times[mask]
-            f24_values = f24_values[mask]
-
-        f24_result = _compute_fourier_f24(f24_times, f24_values, target_period=24.0, n_permutations=100)
+        f24_result = _compute_fourier_f24(times, values, target_period=24.0, n_permutations=100)
 
         if f24_result is not None:
             features['f24_score'] = f24_result.f24_score
@@ -183,13 +257,16 @@ def extract_features(
         pass
 
     # --- Harmonic Cosinor ---
+    # harmonic_p_value / harmonic_r_squared are no longer model features,
+    # so honoring user n_harmonics here only affects the UI sub-method
+    # panel — it cannot move the model's prediction.
     try:
-        from .rhythm_analysis import _fit_harmonic_cosinor, DefaultPeriodRanges
+        from .rhythm_analysis import _fit_harmonic_cosinor
 
         harm_result = _fit_harmonic_cosinor(
             times, values,
-            period_range=DefaultPeriodRanges.CIRCADIAN,
-            n_harmonics=2
+            period_range=p['harmonic_periods'],
+            n_harmonics=p['n_harmonics'],
         )
 
         if harm_result is not None:

@@ -464,6 +464,14 @@ def generate_training_instances(seed: int = 42) -> Tuple[List[Dict], pd.DataFram
     # In real biology, ~21h and ~27h oscillations are NOT circadian (e.g.,
     # tidal, infradian, or non-biological artifacts); the model should
     # learn that period proximity to 24h is necessary but not sufficient.
+    #
+    # NOTE (v4 experiment, reverted): we tried restricting this list to only
+    # the near-circadian periods (18, 20-22, 26-28, 30) on the theory that
+    # ultradian/infradian cases were a trivial shortcut. Result: test AUROC
+    # dropped 0.021 and specificity collapsed 7 points. The "trivial" cases
+    # turned out to be load-bearing — they teach the model what an
+    # unambiguous non-rhythmic looks like (every method in NaN), which DOES
+    # transfer to noisy real-world genes. Keeping the full range.
     non_circadian_periods = [
         4.0, 5.0, 6.0, 8.0, 10.0, 12.0,   # ultradian
         14.0, 16.0, 18.0, 20.0,             # sub-circadian
