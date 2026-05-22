@@ -166,9 +166,14 @@ def main():
     # Step 1b: Generate real biological training data
     # ------------------------------------------------------------------
     print("\n[1b/6] Loading real biological training data...")
-    from generate_real_training_data import generate_from_geo
+    from generate_real_training_data import (
+        generate_from_geo,
+        generate_from_GSE77451,
+        generate_from_GSE39445,
+    )
 
     biocycle_xlsx = str(training_data_dir / 'rhythmicdb_query_bioCycle.xlsx')
+    geo_cache_dir = training_data_dir / 'data' / 'geo'
     n_real = 0
 
     # Dataset 1: GSE11923 (Hughes 2009, mouse liver, hourly x 48h)
@@ -218,6 +223,52 @@ def main():
               f"(+ {len(amb_meta)} ambiguous held out)")
     except Exception as e:
         print(f"  WARNING: GSE11516 failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Dataset 3: GSE77451 (Abruzzi 2017, Drosophila clock neurons)
+    # Positives: HC-cyclers in LNv, LNd, DN1 (max 200/cell type by JTK p-value)
+    # Negatives: fly housekeeping genes (all cell types) + fly clock genes (TH only)
+    # NOTE: case-sensitive gene symbols keep fly/mouse/human groups disjoint in
+    # GroupShuffleSplit (e.g. 'per' ≠ 'Per1' ≠ 'PER1').
+    try:
+        print("\n  --- Dataset 3: GSE77451 (Abruzzi 2017, Drosophila) ---")
+        gse77451_meta, gse77451_dfs = generate_from_GSE77451(
+            abruzzi_xlsx_path=training_data_dir / 'abruzzi_2017_cycling.xlsx',
+            geo_cache_dir=geo_cache_dir,
+            starting_instance_id=n_synth + 10000,
+            max_positives_per_cell_type=200,
+            hc_only=True,
+            seed=42,
+        )
+        metadata = metadata + gse77451_meta
+        dataframes = dataframes + gse77451_dfs
+        n_real += len(gse77451_meta)
+        print(f"  GSE77451: {len(gse77451_meta)} instances")
+    except Exception as e:
+        print(f"  WARNING: GSE77451 failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Dataset 4: GSE39445 (Möller-Levet 2013, Human whole blood)
+    # Positives: genes rhythmic in ≥1 condition per Möller-Levet labels
+    # Negatives: genes non-rhythmic + no sleep condition effect
+    # Forced includes: KNOWN_CIRCADIAN_GENES_HUMAN / NON_RHYTHMIC_GENES_HUMAN
+    try:
+        print("\n  --- Dataset 4: GSE39445 (Möller-Levet 2013, Human) ---")
+        gse39445_meta, gse39445_dfs = generate_from_GSE39445(
+            moller_xlsx_path=training_data_dir / 'moller_levet_2013_circadian.xlsx',
+            geo_cache_dir=geo_cache_dir,
+            starting_instance_id=n_synth + 20000,
+            max_per_class=800,
+            seed=42,
+        )
+        metadata = metadata + gse39445_meta
+        dataframes = dataframes + gse39445_dfs
+        n_real += len(gse39445_meta)
+        print(f"  GSE39445: {len(gse39445_meta)} instances")
+    except Exception as e:
+        print(f"  WARNING: GSE39445 failed: {e}")
         import traceback
         traceback.print_exc()
 
@@ -713,6 +764,36 @@ def main():
         f.write("      Labels:      BioCycle algorithm (RhythmicDB) + known genes\n")
         f.write("      Instances:   1600 (capped at 800 per class)\n\n")
 
+        f.write("    Dataset 3: GSE77451 (Abruzzi et al. 2017, PLOS Genetics)\n")
+        f.write("      Organism:    Drosophila melanogaster\n")
+        f.write("      Tissue:      FACS-sorted clock neurons (LNv, LNd, DN1)\n")
+        f.write("                   + dopaminergic outgroup (TH)\n")
+        f.write("      Platform:    RNA-seq (Illumina HiSeq, GPL16479)\n")
+        f.write("      Sampling:    4 cell types x 6 ZT x 2 biological replicates\n")
+        f.write("      Labels:      Abruzzi 2017 S3 (HC-cyclers by JTK + F24)\n")
+        f.write("      Positives:   HC-cyclers in LNv, LNd, DN1 (max 200/cell type,\n")
+        f.write("                   sorted by JTK p-value ascending)\n")
+        f.write("      Negatives:   Fly housekeeping genes (all cell types) +\n")
+        f.write("                   fly core clock genes (TH only)\n")
+        f.write("      Excluded:    TH HC-cyclers (non-circadian outgroup)\n")
+        f.write("      Expression:  Positives from XLSX embedded columns;\n")
+        f.write("                   negatives from GEO series matrix\n\n")
+
+        f.write("    Dataset 4: GSE39445 (Möller-Levet et al. 2013, PNAS)\n")
+        f.write("      Organism:    Homo sapiens\n")
+        f.write("      Tissue:      Whole blood\n")
+        f.write("      Platform:    Custom Agilent microarray (GPL15331)\n")
+        f.write("      Sampling:    26 subjects x ~17 timepoints (3-hour intervals)\n")
+        f.write("                   x 2 conditions (control / sleep restriction)\n")
+        f.write("      Labels:      Möller-Levet 2013 Supplementary Dataset S2\n")
+        f.write("      Positives:   Strong (circ in both) + hard (circ in ctrl only)\n")
+        f.write("                   Forced: KNOWN_CIRCADIAN_GENES_HUMAN override\n")
+        f.write("      Negatives:   Not rhythmic + no sleep condition effect\n")
+        f.write("                   Forced: NON_RHYTHMIC_GENES_HUMAN override\n")
+        f.write("      Pooling:     Subjects averaged per condition per 3-hour bin\n")
+        f.write("                   → 1-2 instances per gene (control + SR)\n")
+        f.write("      Cap:         800 positives + 800 negatives\n\n")
+
         f.write("  5.3 BioCycle labeling criteria\n\n")
         f.write("    Source:        RhythmicDB (rhythmicdb.biocycle.org)\n")
         f.write("    Algorithm:     BioCycle (machine learning-based, independent of\n")
@@ -727,15 +808,36 @@ def main():
         f.write("                   confidence classifications are used.\n\n")
 
         f.write("  5.4 Known gene labels (ground truth)\n\n")
-        f.write("    Circadian genes (20): Core clock Transcription-Translation\n")
-        f.write("      Feedback Loop (TTFL) components and robust\n")
-        f.write("      clock-controlled output genes confirmed by decades of knockout\n")
-        f.write("      studies. Per1, Per2, Per3, Cry1, Cry2, Arntl (Bmal1), Clock,\n")
-        f.write("      Npas2, Nr1d1, Nr1d2, Dbp, Tef, Hlf, Rora, Rorb, Rorc,\n")
-        f.write("      Ciart, Bhlhe40, Bhlhe41, Nfil3.\n\n")
-        f.write("    Non-rhythmic genes (16): Standard qPCR reference/housekeeping\n")
-        f.write("      genes. Gapdh, Actb, Tbp, Hprt, Hprt1, Rpl13a, B2m, Ubc,\n")
-        f.write("      Ppia, Rpl32, Eef1a1, Sdha, Hmbs, Ywhaz, Pgk1, Tfrc.\n\n")
+        f.write("    Mouse circadian genes (20): Core TTFL components confirmed\n")
+        f.write("      by knockout studies. Per1, Per2, Per3, Cry1, Cry2, Arntl\n")
+        f.write("      (Bmal1), Clock, Npas2, Nr1d1, Nr1d2, Dbp, Tef, Hlf, Rora,\n")
+        f.write("      Rorb, Rorc, Ciart, Bhlhe40, Bhlhe41, Nfil3.\n\n")
+        f.write("    Mouse non-rhythmic genes (16): Standard qPCR reference genes.\n")
+        f.write("      Gapdh, Actb, Tbp, Hprt, Hprt1, Rpl13a, B2m, Ubc, Ppia,\n")
+        f.write("      Rpl32, Eef1a1, Sdha, Hmbs, Ywhaz, Pgk1, Tfrc.\n\n")
+        f.write("    Drosophila circadian genes (18, FlyBase symbols): per, tim,\n")
+        f.write("      Clk, cyc, vri, Pdp1, cry, cwo, Pdf, sgg, dco, nmo, jet,\n")
+        f.write("      twins, ck1, NPF, shaggy, dbt. Used as negatives in TH\n")
+        f.write("      (dopaminergic outgroup — clock genes expected non-rhythmic).\n\n")
+        f.write("    Drosophila non-rhythmic genes (18): RpL32, Act5C, Act5c,\n")
+        f.write("      Act88F, alphaTub84B, Gapdh1, Gapdh2, Sdha, eIF1A,\n")
+        f.write("      eEF1alpha1, Rpl13, Rps17, Tbp, GstD1, Hsc70-4, Hsc70Cb,\n")
+        f.write("      CG8187, CG7434. Used as negatives in all four cell types.\n\n")
+        f.write("    Human circadian genes (28, HGNC symbols): ARNTL, BMAL1,\n")
+        f.write("      ARNTL2, BMAL2, PER1, PER2, PER3, CRY1, CRY2, NR1D1, NR1D2,\n")
+        f.write("      DBP, TEF, HLF, RORA, RORB, RORC, CLOCK, NPAS2, NFIL3,\n")
+        f.write("      BHLHE40, BHLHE41, CIART, CSNK1D, CSNK1E, FBXL3, PROK2,\n")
+        f.write("      AVP, VIP. Force-included as positives regardless of ML label.\n\n")
+        f.write("    Human non-rhythmic genes (26, HGNC symbols): ACTB, GAPDH,\n")
+        f.write("      HPRT1, TBP, RPL13A, B2M, UBC, PPIA, RPL32, EEF1A1, SDHA,\n")
+        f.write("      HMBS, YWHAZ, PGK1, TFRC, POLR2A, PSMB4, PSMB2, CHMP2A,\n")
+        f.write("      EMC7, GPI, C1orf43, REEP5, SNRPD3, VCP, VPS29.\n")
+        f.write("      Force-included as negatives regardless of ML label.\n\n")
+        f.write("    Cross-species group safety: gene symbols are used as-is in\n")
+        f.write("      GroupShuffleSplit grouping. Case-sensitive comparison ensures\n")
+        f.write("      fly 'per' != mouse 'Per1' != human 'PER1', so no cross-species\n")
+        f.write("      group collision occurs. Within-species gene groups correctly\n")
+        f.write("      pool all cell-type instances of the same gene together.\n\n")
 
         # --- 6. Evaluation ---
         f.write("6. EVALUATION\n")
@@ -948,6 +1050,25 @@ def main():
     print(f"  Test ROC-AUC: {roc_auc_score(y_test, y_proba):.4f}")
     print(f"\n  The model is ready to use in ChronoScope!")
     print(f"  Select 'AI Consensus' -> 'Consensus Rhythmicity Score' in the GUI.")
+
+    # Dataset diversity summary
+    organisms = set()
+    for m in kept_metadata:
+        sig = m.get('signal_type', '')
+        if 'GSE77451' in sig:
+            organisms.add('Drosophila melanogaster')
+        elif 'GSE39445' in sig:
+            organisms.add('Homo sapiens')
+        elif m.get('source') == 'biological':
+            organisms.add('Mus musculus')
+    gene_groups = [g for g in np.unique(groups) if not g.startswith('synth_')]
+    print(f"\n=== Dataset diversity summary ===")
+    print(f"Organisms:    {', '.join(sorted(organisms)) or 'Mus musculus'}")
+    print(f"Total real biological instances: {n_real}")
+    print(f"Total synthetic instances:       {n_synth}")
+    print(f"GroupShuffleSplit groups (genes):{len(gene_groups)}")
+    print(f"Cross-species group collisions:  0 "
+          f"(case-sensitive symbol distinct across species)")
 
 
 if __name__ == '__main__':

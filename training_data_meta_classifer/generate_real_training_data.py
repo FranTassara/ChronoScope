@@ -85,6 +85,44 @@ KNOWN_NON_RHYTHMIC_GENES: Set[str] = {
     'Tfrc',      # Transferrin receptor
 }
 
+# Drosophila melanogaster core clock genes (FlyBase symbols, case-sensitive)
+KNOWN_CIRCADIAN_GENES_FLY: Set[str] = {
+    'per', 'tim', 'Clk', 'cyc', 'vri', 'Pdp1', 'cry', 'cwo',
+    'Pdf', 'sgg', 'dco', 'nmo', 'jet', 'twins', 'ck1', 'NPF',
+    'shaggy', 'dbt',
+}
+
+# Drosophila housekeeping genes — should always be non-rhythmic
+NON_RHYTHMIC_GENES_FLY: Set[str] = {
+    'RpL32', 'Act5C', 'Act5c', 'Act88F', 'alphaTub84B',
+    'Gapdh1', 'Gapdh2', 'Sdha', 'eIF1A', 'eEF1alpha1',
+    'Rpl13', 'Rps17', 'Tbp', 'GstD1', 'Hsc70-4', 'Hsc70Cb',
+    'CG8187', 'CG7434',
+}
+
+# Homo sapiens core clock genes (HGNC symbols, uppercase)
+KNOWN_CIRCADIAN_GENES_HUMAN: Set[str] = {
+    'ARNTL', 'BMAL1', 'ARNTL2', 'BMAL2',
+    'PER1', 'PER2', 'PER3',
+    'CRY1', 'CRY2',
+    'NR1D1', 'NR1D2',
+    'DBP', 'TEF', 'HLF',
+    'RORA', 'RORB', 'RORC',
+    'CLOCK', 'NPAS2',
+    'NFIL3', 'BHLHE40', 'BHLHE41',
+    'CIART',
+    'CSNK1D', 'CSNK1E', 'FBXL3',
+    'PROK2', 'AVP', 'VIP',
+}
+
+# Homo sapiens housekeeping genes — should always be non-rhythmic in blood
+NON_RHYTHMIC_GENES_HUMAN: Set[str] = {
+    'ACTB', 'GAPDH', 'HPRT1', 'TBP', 'RPL13A', 'B2M', 'UBC',
+    'PPIA', 'RPL32', 'EEF1A1', 'SDHA', 'HMBS', 'YWHAZ', 'PGK1',
+    'TFRC', 'POLR2A', 'PSMB4', 'PSMB2', 'CHMP2A', 'EMC7',
+    'GPI', 'C1orf43', 'REEP5', 'SNRPD3', 'VCP', 'VPS29',
+}
+
 
 # =============================================================================
 # GEO DATA DOWNLOAD
@@ -117,23 +155,37 @@ def download_file(url: str, output_path: str) -> str:
     return output_path
 
 
-def download_geo_series_matrix(accession: str) -> str:
-    """Download GEO series matrix file."""
+def download_geo_series_matrix(accession: str,
+                               cache_dir: Optional[str] = None) -> str:
+    """Download GEO series matrix file.
+
+    Args:
+        accession:  GEO series accession (e.g. 'GSE11923').
+        cache_dir:  Directory for cached downloads. Defaults to GEO_DATA_DIR.
+    """
     prefix = _geo_ftp_prefix(accession)
     url = (f"https://ftp.ncbi.nlm.nih.gov/geo/series/{prefix}/"
            f"{accession}/matrix/{accession}_series_matrix.txt.gz")
-    output = os.path.join(GEO_DATA_DIR, f"{accession}_series_matrix.txt.gz")
+    out_dir = cache_dir if cache_dir is not None else GEO_DATA_DIR
+    output = os.path.join(out_dir, f"{accession}_series_matrix.txt.gz")
     return download_file(url, output)
 
 
-def download_geo_platform_annot(platform_id: str) -> str:
-    """Download GEO platform annotation file (.annot.gz or .soft.gz fallback)."""
+def download_geo_platform_annot(platform_id: str,
+                                cache_dir: Optional[str] = None) -> str:
+    """Download GEO platform annotation file (.annot.gz or .soft.gz fallback).
+
+    Args:
+        platform_id: GEO platform accession (e.g. 'GPL1261').
+        cache_dir:   Directory for cached downloads. Defaults to GEO_DATA_DIR.
+    """
     prefix = _geo_ftp_prefix(platform_id)
+    out_dir = cache_dir if cache_dir is not None else GEO_DATA_DIR
 
     # Try .annot.gz first (Affymetrix platforms typically have this)
     annot_url = (f"https://ftp.ncbi.nlm.nih.gov/geo/platforms/{prefix}/"
                  f"{platform_id}/annot/{platform_id}.annot.gz")
-    annot_output = os.path.join(GEO_DATA_DIR, f"{platform_id}.annot.gz")
+    annot_output = os.path.join(out_dir, f"{platform_id}.annot.gz")
 
     try:
         return download_file(annot_url, annot_output)
@@ -143,7 +195,7 @@ def download_geo_platform_annot(platform_id: str) -> str:
     # Fallback: download SOFT file (Illumina and other platforms)
     soft_url = (f"https://ftp.ncbi.nlm.nih.gov/geo/platforms/{prefix}/"
                 f"{platform_id}/soft/{platform_id}_family.soft.gz")
-    soft_output = os.path.join(GEO_DATA_DIR, f"{platform_id}_family.soft.gz")
+    soft_output = os.path.join(out_dir, f"{platform_id}_family.soft.gz")
     return download_file(soft_url, soft_output)
 
 
@@ -798,6 +850,769 @@ def generate_from_geo(
         return metadata, dataframes, amb_metadata, amb_dataframes
 
     return metadata, dataframes
+
+
+# =============================================================================
+# XLSX LABEL LOADERS (for new biological datasets)
+# =============================================================================
+
+def load_abruzzi_cycling_labels(
+    xlsx_path: Path,
+    hc_only: bool = True,
+) -> Dict[str, Set[str]]:
+    """
+    Load per-cell-type cycling gene labels from Abruzzi 2017 S3 XLSX.
+
+    Returns {cell_type: set_of_gene_symbols} for 'LNv', 'LNd', 'DN1', 'TH'.
+    Symbols are case-sensitive FlyBase symbols exactly as published.
+
+    If hc_only=True (default), only HC-cyclers are returned; otherwise both
+    HC- and LC-cyclers are included.
+
+    Source: https://doi.org/10.1371/journal.pgen.1006613.s003
+    """
+    xlsx_path = Path(xlsx_path)
+    if not xlsx_path.exists():
+        raise FileNotFoundError(
+            f"Abruzzi 2017 cycling XLSX not found: {xlsx_path}\n"
+            f"  Source: https://doi.org/10.1371/journal.pgen.1006613.s003"
+        )
+
+    sheet_map = {
+        'LNv': 'LNv_cyclers',
+        'LNd': 'LNd_cyclers',
+        'DN1': 'DN1_cyclers',
+        'TH':  'TH_cyclers',
+    }
+    result: Dict[str, Set[str]] = {}
+    for cell_type, sheet_name in sheet_map.items():
+        df = pd.read_excel(xlsx_path, sheet_name=sheet_name)
+        sym_col = df.columns[0]  # gene symbol always column 0
+
+        # 'cycling?' column name varies across sheets — locate by keyword
+        cyc_col = next(
+            (c for c in df.columns if 'cycling' in str(c).lower()), None
+        )
+        if cyc_col is None:
+            raise ValueError(
+                f"No 'cycling?' column found in sheet '{sheet_name}'. "
+                f"Columns: {list(df.columns)}"
+            )
+
+        cycling_vals = df[cyc_col].fillna('').astype(str).str.strip()
+        if hc_only:
+            mask = cycling_vals == 'HC-cycler'
+        else:
+            mask = cycling_vals.isin(['HC-cycler', 'LC-cycler'])
+
+        genes = set(df.loc[mask, sym_col].dropna().astype(str).str.strip())
+        result[cell_type] = genes
+        print(f"    Abruzzi ({cell_type}): {len(genes)} "
+              f"{'HC-' if hc_only else ''}cyclers")
+
+    return result
+
+
+def load_moller_levet_labels(xlsx_path: Path) -> pd.DataFrame:
+    """
+    Load circadian labels from Möller-Levet 2013 PNAS Dataset S2 (Main_list sheet).
+
+    Returns DataFrame with columns:
+        gene         : identifier (gene symbol or accession)
+        circ_control : 1 if circadian in control condition, else 0
+        circ_sr      : 1 if circadian in sleep restriction, else 0
+        sleep_effect : 1 if sleep condition has a significant effect, else 0
+
+    Probe-ID rows (Identifier starting with 'A_') are filtered out because
+    they lack gene-symbol mapping and cannot be matched to the expression matrix.
+
+    Source: https://doi.org/10.1073/pnas.1217154110
+    """
+    xlsx_path = Path(xlsx_path)
+    if not xlsx_path.exists():
+        raise FileNotFoundError(
+            f"Möller-Levet 2013 XLSX not found: {xlsx_path}\n"
+            f"  Source: https://doi.org/10.1073/pnas.1217154110"
+        )
+
+    df = pd.read_excel(xlsx_path, sheet_name='Main_list')
+
+    col_map = {
+        'Identifier (Gene/ Probe/ Accession)': 'gene',
+        'Sleep Condition effect':              'sleep_effect',
+        'Circadian in Control':                'circ_control',
+        'Circadian in Sleep Restriction':      'circ_sr',
+    }
+    df = df.rename(columns=col_map)
+    df = df[['gene', 'circ_control', 'circ_sr', 'sleep_effect']].copy()
+
+    n_before = len(df)
+    df = df[~df['gene'].astype(str).str.startswith('A_')].copy()
+    n_probe = n_before - len(df)
+
+    print(f"  Möller-Levet 2013 Main_list: {n_before} total rows")
+    print(f"    Agilent probe IDs removed: {n_probe}")
+    print(f"    Gene/accession rows:       {len(df)}")
+
+    circ_both      = ((df['circ_control'] == 1) & (df['circ_sr'] == 1)).sum()
+    circ_ctrl_only = ((df['circ_control'] == 1) & (df['circ_sr'] == 0)).sum()
+    neg_clean      = ((df['circ_control'] == 0) & (df['circ_sr'] == 0)
+                      & (df['sleep_effect'] == 0)).sum()
+    print(f"    Rhythmic in both conditions:  {circ_both}")
+    print(f"    Rhythmic in control only:     {circ_ctrl_only}")
+    print(f"    Clean negatives (all flags=0):{neg_clean}")
+
+    return df.reset_index(drop=True)
+
+
+# =============================================================================
+# DATASET 3: GSE77451 (Abruzzi 2017, Drosophila clock neurons)
+# =============================================================================
+
+def generate_from_GSE77451(
+    abruzzi_xlsx_path: Path,
+    geo_cache_dir: Optional[Path] = None,
+    starting_instance_id: int = 5000,
+    max_positives_per_cell_type: int = 200,
+    hc_only: bool = True,
+    seed: int = 42,
+) -> Tuple[List[Dict], List[pd.DataFrame]]:
+    """
+    Generate training instances from GSE77451 (Abruzzi et al. 2017, PLOS Genetics).
+
+    Positives (label=1):
+      HC-cyclers in LNv, LNd, DN1 from Abruzzi 2017 S3 XLSX (embedded expression
+      data). Sorted by JTK p-value (ascending), capped at max_positives_per_cell_type.
+      TH positives are excluded — TH is a non-circadian dopaminergic outgroup.
+
+    Negatives (label=0):
+      NON_RHYTHMIC_GENES_FLY in ALL four cell types (requires GEO expression).
+      KNOWN_CIRCADIAN_GENES_FLY in TH only (clock genes don't cycle in TH).
+
+    NOTE: Positive expression comes directly from the XLSX supplementary file.
+    Negative expression requires downloading the GSE77451 series matrix from GEO.
+    If the GEO download fails, only positives are returned with a warning.
+
+    Cross-species group safety: Drosophila symbols like 'per' are distinct from
+    mouse 'Per1' and human 'PER1' in case-sensitive string comparison, so
+    GroupShuffleSplit groups remain disjoint across species.
+
+    Returns (metadata_list, dataframes_list) in ChronoScope format.
+    """
+    print("=" * 70)
+    print("GSE77451: Drosophila Clock Neurons (Abruzzi et al. 2017)")
+    print("=" * 70)
+
+    abruzzi_xlsx_path = Path(abruzzi_xlsx_path)
+    if not abruzzi_xlsx_path.exists():
+        raise FileNotFoundError(
+            f"Abruzzi 2017 XLSX not found: {abruzzi_xlsx_path}\n"
+            f"  Source: https://doi.org/10.1371/journal.pgen.1006613.s003"
+        )
+
+    # Per-cell-type XLSX configuration:
+    #   (sheet_name, rep1_zt_columns, rep2_zt_columns)
+    # Rep1 columns are integers (ZT values); rep2 columns are the string
+    # versions with '.1' suffix (e.g. 2 → '2.1') as read by pd.read_excel.
+    CELL_CFG: Dict[str, tuple] = {
+        'LNv': ('LNv_cyclers',
+                [2, 6, 10, 14, 18, 22],
+                ['2.1', '6.1', '10.1', '14.1', '18.1', '22.1']),
+        'LNd': ('LNd_cyclers',
+                [2, 6, 10, 14, 18, 22],
+                ['2.1', '6.1', '10.1', '14.1', '18.1', '22.1']),
+        'DN1': ('DN1_cyclers',
+                [3, 7, 11, 15, 19, 23],
+                ['3.1', '7.1', '11.1', '15.1', '19.1', '23.1']),
+        'TH':  ('TH_cyclers',
+                [2, 6, 10, 14, 18, 22],
+                ['2.1', '6.1', '10.1', '14.1', '18.1', '22.1']),
+    }
+
+    metadata_list: List[Dict] = []
+    dataframe_list: List[pd.DataFrame] = []
+    instance_id = starting_instance_id
+
+    # ------------------------------------------------------------------ #
+    # Step 1: Positive instances from XLSX expression data                #
+    # ------------------------------------------------------------------ #
+    print("\n[1/3] Generating POSITIVE instances from XLSX HC-cyclers...")
+    pos_by_ct: Dict[str, int] = {}
+
+    for cell_type, (sheet_name, zt_rep1, zt_rep2) in CELL_CFG.items():
+        if cell_type == 'TH':
+            print(f"  {cell_type}: positives skipped "
+                  f"(non-circadian outgroup per Abruzzi 2017)")
+            pos_by_ct['TH'] = 0
+            continue
+
+        df_sheet = pd.read_excel(abruzzi_xlsx_path, sheet_name=sheet_name)
+        sym_col = df_sheet.columns[0]
+
+        cyc_col = next(
+            (c for c in df_sheet.columns if 'cycling' in str(c).lower()), None
+        )
+        jtk_col = next(
+            (c for c in df_sheet.columns
+             if str(c).strip().lower().startswith('jtk p')), None
+        )
+        if cyc_col is None:
+            raise ValueError(f"No 'cycling?' column in sheet '{sheet_name}'")
+        if jtk_col is None:
+            raise ValueError(f"No 'JTK p-value' column in sheet '{sheet_name}'")
+
+        cycling_str = df_sheet[cyc_col].fillna('').astype(str).str.strip()
+        if hc_only:
+            df_hc = df_sheet[cycling_str == 'HC-cycler'].copy()
+        else:
+            df_hc = df_sheet[
+                cycling_str.isin(['HC-cycler', 'LC-cycler'])
+            ].copy()
+
+        print(f"  {cell_type}: {len(df_hc)} HC-cyclers "
+              f"({'hc_only' if hc_only else 'hc+lc'})")
+
+        # Deterministic cap: sort by JTK p-value ascending (most rhythmic first)
+        df_hc = df_hc.sort_values(jtk_col, ascending=True, na_position='last')
+        if len(df_hc) > max_positives_per_cell_type:
+            df_hc = df_hc.iloc[:max_positives_per_cell_type]
+            print(f"    Capped to {max_positives_per_cell_type} "
+                  f"by lowest JTK p-value")
+
+        n_built = 0
+        for _, row in df_hc.iterrows():
+            gene = str(row[sym_col]).strip()
+            if not gene or gene.lower() == 'nan':
+                continue
+
+            try:
+                r1_vals = [float(row[c]) for c in zt_rep1]
+                r2_vals = [float(row[c]) for c in zt_rep2]
+            except (KeyError, ValueError, TypeError):
+                continue
+            if any(np.isnan(v) for v in r1_vals + r2_vals):
+                continue
+
+            var_name = f'var_{instance_id}'
+            rows = []
+            for zt, v1, v2 in zip(zt_rep1, r1_vals, r2_vals):
+                rows.append({
+                    'time': float(zt), 'condition': 'control',
+                    'replicate': 'rep1', var_name: v1,
+                })
+                rows.append({
+                    'time': float(zt), 'condition': 'control',
+                    'replicate': 'rep2', var_name: v2,
+                })
+
+            metadata_list.append({
+                'instance_id': instance_id,
+                'variable': var_name,
+                'signal_type': f'real_{gene}_{cell_type}_GSE77451',
+                'is_rhythmic': 1,
+                'n_timepoints': len(zt_rep1),
+                'n_replicates': 2,
+                'sampling_hours': 4.0,
+                'snr': 0.0,
+                'period': 24.0,
+                'has_outliers': False,
+                'source': 'biological',
+                'gene': gene,
+                'cell_type': cell_type,
+            })
+            dataframe_list.append(pd.DataFrame(rows))
+            instance_id += 1
+            n_built += 1
+
+        pos_by_ct[cell_type] = n_built
+        print(f"    Generated {n_built} positive instances for {cell_type}")
+
+    # ------------------------------------------------------------------ #
+    # Step 2: Negative instances from GEO series matrix                   #
+    # ------------------------------------------------------------------ #
+    print("\n[2/3] Generating NEGATIVE instances from GEO supplementary files...")
+    neg_by_ct: Dict[str, int] = {ct: 0 for ct in CELL_CFG}
+
+    _SUPPL_URL = (
+        "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE77nnn/GSE77451/"
+        "suppl/GSE77451_{ct}_gene_expression.txt.gz"
+    )
+
+    def _load_gse77451_suppl(cell_type: str) -> Dict[str, list]:
+        """Download and parse per-cell-type supplementary expression file.
+
+        Format: col0=FlyBase transcript ID (ignored), col1=gene symbol,
+        cols 2-7=rep1 expression (ZT order per CELL_CFG),
+        cols 8-13=rep2 expression.  Multiple transcripts per gene: first row
+        kept (highest-expressed canonical isoform in GEO file ordering).
+
+        Returns {gene_symbol: [v0..v5_rep1, v0..v5_rep2]} (12 floats).
+        """
+        cache_base = str(geo_cache_dir) if geo_cache_dir is not None else GEO_DATA_DIR
+        out_path = os.path.join(
+            cache_base, f"GSE77451_{cell_type}_gene_expression.txt.gz"
+        )
+        url = _SUPPL_URL.format(ct=cell_type)
+        download_file(url, out_path)
+
+        gene_map: Dict[str, list] = {}
+        opener = gzip.open if out_path.endswith('.gz') else open
+        with opener(out_path, 'rt', encoding='utf-8', errors='replace') as fh:
+            for i, line in enumerate(fh):
+                line = line.rstrip('\n').rstrip('\r')
+                if i == 0:           # header row — skip
+                    continue
+                parts = line.split('\t')
+                if len(parts) < 14:  # need 2 ID cols + 12 expression cols
+                    continue
+                gene = parts[1].strip()
+                if not gene or gene.lower() in ('', 'na', 'nan'):
+                    continue
+                try:
+                    vals = [float(parts[c]) for c in range(2, 14)]
+                except (ValueError, IndexError):
+                    continue
+                if gene not in gene_map:
+                    gene_map[gene] = vals  # keep first transcript per gene
+        print(f"    {cell_type}: {len(gene_map)} unique genes in supplementary file")
+        return gene_map
+
+    for cell_type, (sheet_name, zt_rep1, zt_rep2) in CELL_CFG.items():
+        try:
+            gene_map = _load_gse77451_suppl(cell_type)
+        except Exception as e:
+            print(f"  WARNING: Could not load {cell_type} supplementary file: {e}")
+            continue
+
+        gene_lower = {g.lower(): g for g in gene_map}
+
+        # Genes that should be non-rhythmic in this cell type
+        target_neg = set(NON_RHYTHMIC_GENES_FLY)
+        if cell_type == 'TH':
+            target_neg |= KNOWN_CIRCADIAN_GENES_FLY
+
+        n_neg_ct = 0
+        for gene in sorted(target_neg):
+            if gene in gene_map:
+                vals = gene_map[gene]
+            elif gene.lower() in gene_lower:
+                vals = gene_map[gene_lower[gene.lower()]]
+            else:
+                continue
+
+            rep1_vals = vals[:6]
+            rep2_vals = vals[6:]
+
+            if any(np.isnan(v) for v in rep1_vals + rep2_vals):
+                continue
+
+            var_name = f'var_{instance_id}'
+            rows = []
+            for zt, v1, v2 in zip(zt_rep1, rep1_vals, rep2_vals):
+                rows.append({
+                    'time': float(zt), 'condition': 'control',
+                    'replicate': 'rep1', var_name: v1,
+                })
+                rows.append({
+                    'time': float(zt), 'condition': 'control',
+                    'replicate': 'rep2', var_name: v2,
+                })
+
+            metadata_list.append({
+                'instance_id': instance_id,
+                'variable': var_name,
+                'signal_type': f'real_{gene}_{cell_type}_GSE77451',
+                'is_rhythmic': 0,
+                'n_timepoints': len(zt_rep1),
+                'n_replicates': 2,
+                'sampling_hours': 4.0,
+                'snr': 0.0,
+                'period': 0.0,
+                'has_outliers': False,
+                'source': 'biological',
+                'gene': gene,
+                'cell_type': cell_type,
+            })
+            dataframe_list.append(pd.DataFrame(rows))
+            instance_id += 1
+            n_neg_ct += 1
+
+        neg_by_ct[cell_type] = n_neg_ct
+        print(f"  {cell_type}: {n_neg_ct} negative instances")
+
+    # ------------------------------------------------------------------ #
+    # Step 3: Sanity checks                                               #
+    # ------------------------------------------------------------------ #
+    print("\n[3/3] Sanity checks...")
+    n_pos_total = sum(1 for m in metadata_list if m['is_rhythmic'] == 1)
+    n_neg_total = sum(1 for m in metadata_list if m['is_rhythmic'] == 0)
+    th_pos = sum(
+        1 for m in metadata_list
+        if m.get('cell_type') == 'TH' and m['is_rhythmic'] == 1
+    )
+    print(f"  Total: {len(metadata_list)} instances  "
+          f"(pos={n_pos_total}, neg={n_neg_total})")
+    print(f"  TH positives (must be 0): {th_pos}")
+    assert th_pos == 0, f"SANITY FAIL: TH positives={th_pos}"
+
+    # Within-cell-type label conflict check
+    seen_labels: Dict[tuple, Set[int]] = {}
+    for m in metadata_list:
+        key = (m['gene'], m.get('cell_type', ''))
+        seen_labels.setdefault(key, set()).add(m['is_rhythmic'])
+    conflicts = [
+        f"{g}@{ct}"
+        for (g, ct), lbls in seen_labels.items()
+        if len(lbls) > 1
+    ]
+    if conflicts:
+        print(f"  Within-cell-type label conflicts (unexpected): {conflicts}")
+    else:
+        print(f"  Label conflict check: OK (no within-cell-type conflicts)")
+
+    hk_neg_genes = {
+        m['gene'] for m in metadata_list
+        if m['is_rhythmic'] == 0 and m['gene'] in NON_RHYTHMIC_GENES_FLY
+    }
+    pct_hk = (len(hk_neg_genes) / len(NON_RHYTHMIC_GENES_FLY) * 100
+               if NON_RHYTHMIC_GENES_FLY else 0.0)
+    print(f"  Housekeeping gene coverage in negatives: "
+          f"{len(hk_neg_genes)}/{len(NON_RHYTHMIC_GENES_FLY)} ({pct_hk:.0f}%)")
+
+    for ct_name in ('LNv', 'LNd', 'DN1'):
+        p = pos_by_ct.get(ct_name, 0)
+        n = neg_by_ct.get(ct_name, 0)
+        print(f"  {ct_name}: {p} pos, {n} neg")
+    print(f"  TH: 0 pos (skipped), {neg_by_ct.get('TH', 0)} neg")
+
+    # Print first 5 instances for user sanity-check
+    print("\n  First 5 instances:")
+    for m in metadata_list[:5]:
+        df_i = dataframe_list[metadata_list.index(m)]
+        print(f"    id={m['instance_id']} gene={m['gene']} "
+              f"ct={m.get('cell_type')} label={m['is_rhythmic']} "
+              f"nrows={len(df_i)}")
+
+    return metadata_list, dataframe_list
+
+
+# =============================================================================
+# DATASET 4: GSE39445 (Möller-Levet 2013, Human whole blood)
+# =============================================================================
+
+def generate_from_GSE39445(
+    moller_xlsx_path: Path,
+    geo_cache_dir: Optional[Path] = None,
+    starting_instance_id: int = 20000,
+    max_per_class: int = 800,
+    seed: int = 42,
+) -> Tuple[List[Dict], List[pd.DataFrame]]:
+    """
+    Generate training instances from GSE39445 (Möller-Levet et al. 2013, PNAS).
+
+    Label strategy:
+      Strong positive (circ_control=1, circ_sr=1):
+        → control instance (label=1) + SR instance (label=1)
+      Hard positive (circ_control=1, circ_sr=0):
+        → control instance only (label=1); SR not included
+      Negative (circ_control=0, circ_sr=0, sleep_effect=0):
+        → control instance (label=0) + SR instance (label=0)
+      Forced positives: KNOWN_CIRCADIAN_GENES_HUMAN (override null label)
+      Forced negatives: NON_RHYTHMIC_GENES_HUMAN (override null label)
+
+    Expression: subjects pooled (averaged) per condition per timepoint.
+    Timepoints are rounded to the nearest 3-hour bin before averaging.
+
+    Cross-species group safety: human symbols (UPPERCASE HGNC) are case-
+    sensitively distinct from mouse ('Per1') and fly ('per') symbols.
+
+    Returns (metadata_list, dataframes_list) in ChronoScope format.
+    """
+    print("=" * 70)
+    print("GSE39445: Human Blood Transcriptome (Möller-Levet et al. 2013)")
+    print("=" * 70)
+
+    moller_xlsx_path = Path(moller_xlsx_path)
+    rng = np.random.RandomState(seed)
+    cache_str = str(geo_cache_dir) if geo_cache_dir is not None else None
+
+    # ------------------------------------------------------------------ #
+    # Step 1: Download and parse GEO series matrix (large: ~438 samples)  #
+    # ------------------------------------------------------------------ #
+    print("\n[1/6] Downloading GSE39445 series matrix (large file, may take time)...")
+    matrix_path = download_geo_series_matrix('GSE39445', cache_dir=cache_str)
+    expr_df, sinfo = parse_series_matrix(matrix_path)
+    print(f"  Matrix: {len(expr_df)} probes × {len(expr_df.columns)} samples")
+
+    # ------------------------------------------------------------------ #
+    # Step 2: Parse sample metadata (condition + timepoint)               #
+    # ------------------------------------------------------------------ #
+    print("\n[2/6] Parsing sample metadata (condition, timepoint)...")
+
+    def _extract_condition(meta: dict) -> Optional[str]:
+        """Return 'control' or 'sleep_restriction' from sample characteristics."""
+        for key, vals in meta.items():
+            if ('characteristic' not in key.lower()
+                    and 'title' not in key.lower()):
+                continue
+            for v in vals:
+                vl = v.lower()
+                if any(kw in vl for kw in
+                       ('sleep sufficient', 'normal sleep', '10 h sleep',
+                        'control', 'non-sleep deprived')):
+                    return 'control'
+                if any(kw in vl for kw in
+                       ('sleep restrict', 'restricted', 'sleep depri',
+                        '5.7 h sleep', 'sleep-restricted')):
+                    return 'sleep_restriction'
+        return None
+
+    sample_times = extract_timepoints_from_samples(sinfo)
+    sample_cond: Dict[str, str] = {}
+    for sid in expr_df.columns:
+        if sid in sinfo:
+            cond = _extract_condition(sinfo[sid])
+            if cond:
+                sample_cond[sid] = cond
+
+    ctrl_sids = [s for s, c in sample_cond.items() if c == 'control']
+    sr_sids   = [s for s, c in sample_cond.items() if c == 'sleep_restriction']
+    print(f"  Control samples:           {len(ctrl_sids)}")
+    print(f"  Sleep-restriction samples: {len(sr_sids)}")
+    print(f"  Samples with timepoints:   {len(sample_times)}")
+
+    if not ctrl_sids:
+        # Diagnosis: print first 5 sample titles for user to fix the parser
+        print("\n  WARNING: No control samples found. Printing raw metadata "
+              "for the first 5 samples for diagnosis:")
+        for sid in list(expr_df.columns)[:5]:
+            meta = sinfo.get(sid, {})
+            for k, vs in meta.items():
+                if 'title' in k.lower() or 'characteristic' in k.lower():
+                    print(f"    {sid} | {k}: {vs[:3]}")
+        raise RuntimeError(
+            "Cannot classify GSE39445 samples by sleep condition. "
+            "Update _extract_condition() in generate_from_GSE39445() "
+            "to match the actual Sample_characteristics_ch1 values."
+        )
+
+    # ------------------------------------------------------------------ #
+    # Step 3: Map probes → genes (GPL15331, custom Agilent array)         #
+    # ------------------------------------------------------------------ #
+    print("\n[3/6] Mapping probes to gene symbols (GPL15331)...")
+    try:
+        annot_path = download_geo_platform_annot('GPL15331', cache_dir=cache_str)
+        probe_to_gene = parse_platform_annotation(annot_path)
+        gene_expr = map_expression_to_genes(expr_df, probe_to_gene)
+    except Exception as e:
+        print(f"  WARNING: GPL15331 annotation failed ({e}). "
+              f"Trying row IDs as gene symbols directly.")
+        gene_expr = expr_df.copy()
+        gene_expr.index.name = 'gene'
+
+    print(f"  Gene-level expression: {len(gene_expr)} genes")
+
+    # ------------------------------------------------------------------ #
+    # Step 4: Load Möller-Levet circadian labels                          #
+    # ------------------------------------------------------------------ #
+    print("\n[4/6] Loading Möller-Levet 2013 labels...")
+    ml_df = load_moller_levet_labels(moller_xlsx_path)
+    ml_by_gene = ml_df.set_index('gene')
+
+    # ------------------------------------------------------------------ #
+    # Step 5: Pool time-series per (gene, condition)                      #
+    # ------------------------------------------------------------------ #
+    print("\n[5/6] Classifying genes and pooling time-series...")
+
+    BIN_HOURS = 3.0  # round timepoints to nearest 3-hour bin
+
+    def _pool(gene_row: pd.Series, sids: List[str]) -> Optional[tuple]:
+        """Average expression across subjects per timepoint bin.
+
+        Returns (unique_times_arr, avg_values_arr) or None if < 6 unique bins.
+        """
+        expr_dict = gene_row.to_dict()
+        by_time: Dict[float, List[float]] = {}
+        for s in sids:
+            if s not in sample_times:
+                continue
+            val = expr_dict.get(s, np.nan)
+            if pd.isna(val):
+                continue
+            t_bin = round(float(sample_times[s]) / BIN_HOURS) * BIN_HOURS
+            by_time.setdefault(t_bin, []).append(float(val))
+        if len(by_time) < 6:
+            return None
+        t_arr = np.array(sorted(by_time.keys()))
+        v_arr = np.array([float(np.mean(by_time[t])) for t in t_arr])
+        return t_arr, v_arr
+
+    all_genes = set(gene_expr.index)
+
+    # Build candidate gene lists
+    strong_pos: List[str] = []   # circ in both
+    hard_pos:   List[str] = []   # circ in control only
+    neg_cands:  List[str] = []   # clean non-rhythmic
+
+    for gene in all_genes:
+        gene_str = str(gene)
+        gene_up = gene_str.upper()
+
+        # Force-include clock/housekeeping genes regardless of ML label
+        if gene_str in KNOWN_CIRCADIAN_GENES_HUMAN or gene_up in KNOWN_CIRCADIAN_GENES_HUMAN:
+            strong_pos.append(gene)
+            continue
+        if gene_str in NON_RHYTHMIC_GENES_HUMAN or gene_up in NON_RHYTHMIC_GENES_HUMAN:
+            neg_cands.append(gene)
+            continue
+
+        # Use Möller-Levet label (match by gene symbol exactly)
+        if gene_str not in ml_by_gene.index:
+            continue
+        row_ml = ml_by_gene.loc[gene_str]
+        cc = int(row_ml['circ_control'])
+        cs = int(row_ml['circ_sr'])
+        se = int(row_ml['sleep_effect'])
+
+        if cc == 1 and cs == 1:
+            strong_pos.append(gene)
+        elif cc == 1 and cs == 0:
+            hard_pos.append(gene)
+        elif cc == 0 and cs == 0 and se == 0:
+            neg_cands.append(gene)
+        # else: ambiguous — skip
+
+    print(f"  Strong positives (circ in both):   {len(strong_pos)}")
+    print(f"  Hard positives (ctrl only):        {len(hard_pos)}")
+    print(f"  Negative candidates:               {len(neg_cands)}")
+
+    # ------------------------------------------------------------------ #
+    # Step 6: Build instances with caps                                   #
+    # ------------------------------------------------------------------ #
+    print(f"\n[6/6] Building instances (cap: {max_per_class} per class)...")
+
+    metadata_list: List[Dict] = []
+    dataframe_list: List[pd.DataFrame] = []
+    instance_id = starting_instance_id
+
+    def _add_instance(gene: str, condition_label: str, label: int,
+                      t_arr: np.ndarray, v_arr: np.ndarray) -> bool:
+        nonlocal instance_id
+        if len(t_arr) < 6:
+            return False
+        var_name = f'var_{instance_id}'
+        df_inst = pd.DataFrame([
+            {'time': float(t), 'condition': 'control',
+             'replicate': 'rep1', var_name: float(v)}
+            for t, v in zip(t_arr, v_arr)
+        ])
+        metadata_list.append({
+            'instance_id': instance_id,
+            'variable': var_name,
+            'signal_type': f'real_{gene}_{condition_label}_GSE39445',
+            'is_rhythmic': label,
+            'n_timepoints': len(t_arr),
+            'n_replicates': 1,
+            'sampling_hours': BIN_HOURS,
+            'snr': 0.0,
+            'period': 24.0 if label == 1 else 0.0,
+            'has_outliers': False,
+            'source': 'biological',
+            'gene': str(gene),
+        })
+        dataframe_list.append(df_inst)
+        instance_id += 1
+        return True
+
+    # Shuffle for diversity under capping
+    rng.shuffle(strong_pos)
+    rng.shuffle(hard_pos)
+    rng.shuffle(neg_cands)
+
+    n_pos = 0
+    # Strong positives → control + SR instances
+    for gene in strong_pos:
+        if n_pos >= max_per_class:
+            break
+        gene_row = gene_expr.loc[gene]
+        for cond_name, sids in [('control', ctrl_sids),
+                                 ('sleep_restriction', sr_sids)]:
+            if n_pos >= max_per_class:
+                break
+            pooled = _pool(gene_row, sids)
+            if pooled and _add_instance(gene, cond_name, 1, *pooled):
+                n_pos += 1
+
+    # Hard positives → control instance only
+    for gene in hard_pos:
+        if n_pos >= max_per_class:
+            break
+        gene_row = gene_expr.loc[gene]
+        pooled = _pool(gene_row, ctrl_sids)
+        if pooled and _add_instance(gene, 'control', 1, *pooled):
+            n_pos += 1
+
+    n_neg = 0
+    # Negatives → control + SR instances
+    for gene in neg_cands:
+        if n_neg >= max_per_class:
+            break
+        gene_row = gene_expr.loc[gene]
+        for cond_name, sids in [('control', ctrl_sids),
+                                 ('sleep_restriction', sr_sids)]:
+            if n_neg >= max_per_class:
+                break
+            pooled = _pool(gene_row, sids)
+            if pooled and _add_instance(gene, cond_name, 0, *pooled):
+                n_neg += 1
+
+    print(f"\n  Generated {len(metadata_list)} instances")
+    print(f"    Positives: {n_pos}")
+    print(f"    Negatives: {n_neg}")
+
+    # Sanity checks
+    clock_in_pos = sorted({
+        m['gene'] for m in metadata_list
+        if m['is_rhythmic'] == 1
+        and m['gene'] in KNOWN_CIRCADIAN_GENES_HUMAN
+    })
+    hk_in_neg = sorted({
+        m['gene'] for m in metadata_list
+        if m['is_rhythmic'] == 0
+        and m['gene'] in NON_RHYTHMIC_GENES_HUMAN
+    })
+    core_expected = ['ARNTL', 'NR1D1', 'PER1', 'PER2']
+    missing_core = [g for g in core_expected if g not in clock_in_pos]
+    if missing_core:
+        print(f"  NOTE: Core clock genes not in positives: {missing_core} "
+              f"(may not be in expression matrix)")
+    else:
+        print(f"  Core clock genes confirmed in positives: {core_expected}")
+
+    hk_expected = ['ACTB', 'GAPDH']
+    missing_hk = [g for g in hk_expected if g not in hk_in_neg]
+    if missing_hk:
+        print(f"  NOTE: Housekeeping genes not in negatives: {missing_hk}")
+    else:
+        print(f"  Housekeeping genes confirmed in negatives: {hk_expected}")
+
+    non_upper = [
+        m['gene'] for m in metadata_list
+        if m['gene'] != m['gene'].upper() and m['gene'] in ml_by_gene.index
+    ]
+    if non_upper:
+        print(f"  NOTE: {len(non_upper)} non-uppercase identifiers "
+              f"(RefSeq/other accessions): {non_upper[:5]}")
+
+    # Print first 5 instances for sanity check
+    print("\n  First 5 instances:")
+    for m in metadata_list[:5]:
+        df_i = dataframe_list[metadata_list.index(m)]
+        print(f"    id={m['instance_id']} gene={m['gene']} "
+              f"cond={m['signal_type'].split('_')[-2]} "
+              f"label={m['is_rhythmic']} nrows={len(df_i)}")
+
+    return metadata_list, dataframe_list
 
 
 # =============================================================================
