@@ -281,8 +281,10 @@ def extract_timepoints_from_samples(sample_info: Dict) -> Dict[str, float]:
                 continue
             for val in values:
                 match = re.search(
-                    r'(?:time\s*(?:point)?|CT|ZT|circadian\s+time|'
-                    r'hours?\s*(?:post)?|time\s*\(hours?\))\s*'
+                    r'(?:time\s*(?:point|of\s+\w+(?:\s+\w+)*)?|CT|ZT|'
+                    r'circadian\s+time|hours?\s*(?:post|of\s+\w+)*|'
+                    r'time\s*\(hours?\)|wakefulness|collection\s+time|'
+                    r'blood\s+draw|draw\s+time|sample\s+time)\s*'
                     r'[:\s=]*\s*(?:CT|ZT)?\s*(\d+(?:\.\d+)?)',
                     val, re.IGNORECASE
                 )
@@ -1287,8 +1289,8 @@ def generate_from_GSE77451(
 
     # Print first 5 instances for user sanity-check
     print("\n  First 5 instances:")
-    for m in metadata_list[:5]:
-        df_i = dataframe_list[metadata_list.index(m)]
+    for i, m in enumerate(metadata_list[:5]):
+        df_i = dataframe_list[i]
         print(f"    id={m['instance_id']} gene={m['gene']} "
               f"ct={m.get('cell_type')} label={m['is_rhythmic']} "
               f"nrows={len(df_i)}")
@@ -1350,7 +1352,11 @@ def generate_from_GSE39445(
     print("\n[2/6] Parsing sample metadata (condition, timepoint)...")
 
     def _extract_condition(meta: dict) -> Optional[str]:
-        """Return 'control' or 'sleep_restriction' from sample characteristics."""
+        """Return 'control' or 'sleep_restriction' from sample characteristics.
+
+        GSE39445 uses 'sleepprotocol: Sleep Extension' (control) and
+        'sleepprotocol: Sleep Restriction' (SR). Both are handled below.
+        """
         for key, vals in meta.items():
             if ('characteristic' not in key.lower()
                     and 'title' not in key.lower()):
@@ -1359,7 +1365,7 @@ def generate_from_GSE39445(
                 vl = v.lower()
                 if any(kw in vl for kw in
                        ('sleep sufficient', 'normal sleep', '10 h sleep',
-                        'control', 'non-sleep deprived')):
+                        'control', 'non-sleep deprived', 'sleep extension')):
                     return 'control'
                 if any(kw in vl for kw in
                        ('sleep restrict', 'restricted', 'sleep depri',
@@ -1367,7 +1373,8 @@ def generate_from_GSE39445(
                     return 'sleep_restriction'
         return None
 
-    sample_times = extract_timepoints_from_samples(sinfo)
+    # Step 2a: classify samples by sleep condition (must come first so the
+    # T-number fallback below can assign condition-specific wake times)
     sample_cond: Dict[str, str] = {}
     for sid in expr_df.columns:
         if sid in sinfo:
@@ -1379,22 +1386,49 @@ def generate_from_GSE39445(
     sr_sids   = [s for s, c in sample_cond.items() if c == 'sleep_restriction']
     print(f"  Control samples:           {len(ctrl_sids)}")
     print(f"  Sleep-restriction samples: {len(sr_sids)}")
-    print(f"  Samples with timepoints:   {len(sample_times)}")
 
     if not ctrl_sids:
-        # Diagnosis: print first 5 sample titles for user to fix the parser
-        print("\n  WARNING: No control samples found. Printing raw metadata "
-              "for the first 5 samples for diagnosis:")
+        print("\n  ERROR: No control samples found. Raw metadata for first 5 samples:")
         for sid in list(expr_df.columns)[:5]:
-            meta = sinfo.get(sid, {})
-            for k, vs in meta.items():
+            meta_s = sinfo.get(sid, {})
+            for k, vs in meta_s.items():
                 if 'title' in k.lower() or 'characteristic' in k.lower():
                     print(f"    {sid} | {k}: {vs[:3]}")
-        raise RuntimeError(
-            "Cannot classify GSE39445 samples by sleep condition. "
-            "Update _extract_condition() in generate_from_GSE39445() "
-            "to match the actual Sample_characteristics_ch1 values."
-        )
+        print("  Update _extract_condition() in generate_from_GSE39445() "
+              "to match the Sample_characteristics_ch1 values shown above.")
+        return [], []
+
+    # Step 2b: parse absolute timepoints
+    # Standard path: looks for 'time:', 'ZT:', 'CT:', wakefulness, etc. in metadata
+    sample_times = extract_timepoints_from_samples(sinfo)
+    if len(sample_times) < len(expr_df.columns) // 2:
+        # GSE39445-specific fallback: extract T-index from Sample_title
+        # Title format: Subject_XXXX_SE_T# or Subject_XXXX_SR_T#
+        # Wake times from Möller-Levet 2013 PNAS sleep protocol:
+        #   Sleep Extension (SE): lights-on 09:00 → wake_h = 9.0
+        #   Sleep Restriction (SR): lights-on 06:42 → wake_h = 6.7
+        #   Sampling interval: ~2h per Möller-Levet 2013 PNAS methods
+        print(f"  Standard timepoint parsing: {len(sample_times)} samples. "
+              "Trying GSE39445 T-number fallback...")
+        for sid in expr_df.columns:
+            if sid in sample_times or sid not in sinfo:
+                continue
+            for title in sinfo[sid].get('Sample_title', []):
+                m_t = re.search(r'_T(\d+)$', title.strip())
+                if m_t:
+                    t_idx = int(m_t.group(1))
+                    wake_h = 9.0 if sample_cond.get(sid) == 'control' else 6.7
+                    sample_times[sid] = wake_h + (t_idx - 1) * 2.0
+                    break
+        print(f"  T-number fallback: {len(sample_times)}/{len(expr_df.columns)} samples "
+              "(SE wake=09:00h, SR wake=06:42h, 2h intervals)")
+
+    print(f"  Samples with timepoints:   {len(sample_times)}")
+
+    if not sample_times:
+        print("  ERROR: Could not extract any timepoints. "
+              "Check Sample_title format for a trailing _T# suffix.")
+        return [], []
 
     # ------------------------------------------------------------------ #
     # Step 3: Map probes → genes (GPL15331, custom Agilent array)         #
@@ -1405,10 +1439,10 @@ def generate_from_GSE39445(
         probe_to_gene = parse_platform_annotation(annot_path)
         gene_expr = map_expression_to_genes(expr_df, probe_to_gene)
     except Exception as e:
-        print(f"  WARNING: GPL15331 annotation failed ({e}). "
-              f"Trying row IDs as gene symbols directly.")
-        gene_expr = expr_df.copy()
-        gene_expr.index.name = 'gene'
+        print(f"  ERROR: GPL15331 annotation failed: {e}")
+        print("  Cannot proceed without probe→gene mapping — using probe IDs "
+              "as index would yield 0 matches against Möller-Levet gene labels.")
+        return [], []
 
     print(f"  Gene-level expression: {len(gene_expr)} genes")
 
@@ -1606,8 +1640,8 @@ def generate_from_GSE39445(
 
     # Print first 5 instances for sanity check
     print("\n  First 5 instances:")
-    for m in metadata_list[:5]:
-        df_i = dataframe_list[metadata_list.index(m)]
+    for i, m in enumerate(metadata_list[:5]):
+        df_i = dataframe_list[i]
         print(f"    id={m['instance_id']} gene={m['gene']} "
               f"cond={m['signal_type'].split('_')[-2]} "
               f"label={m['is_rhythmic']} nrows={len(df_i)}")

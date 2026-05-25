@@ -38,6 +38,7 @@ import time
 import warnings
 import hashlib
 import re
+import gzip
 from datetime import datetime
 from pathlib import Path
 
@@ -69,6 +70,7 @@ from core.feature_extraction import extract_features, FEATURE_NAMES
 from generate_real_training_data import (
     download_geo_series_matrix,
     download_geo_platform_annot,
+    download_file,
     parse_series_matrix,
     parse_platform_annotation,
     map_expression_to_genes,
@@ -156,6 +158,73 @@ if feature_names_file != FEATURE_NAMES:
 print(f"  Features: {len(FEATURE_NAMES)}")
 
 # ---------------------------------------------------------------------------
+# RUM summary parser (fallback when series matrix has no expression rows)
+# ---------------------------------------------------------------------------
+_RUM_ZT_RE = re.compile(r'_(ZT)(\d+(?:\.\d+)?)_', re.I)
+
+def _parse_rum_summary(path: str) -> tuple:
+    """Parse GSE29972_RUM_allFeatures_Summary.txt.gz into (gene_expr_df, sample_times).
+
+    Returns
+    -------
+    gene_expr_df : DataFrame  — genes × CS-non-polyA sample columns
+    sample_times : dict       — column_name → ZT float (hours)
+
+    Only the Canton-S (CS) non-polyA columns are returned; Per-null and
+    polyA-selection samples are dropped so the validation is on wild-type
+    rhythmic vs. arrhythmic genes only.
+    """
+    opener = gzip.open if path.endswith('.gz') else open
+    data: dict = {}   # gene_name → {col_name: float}
+    cs_cols: list = []
+
+    with opener(path, 'rt', encoding='utf-8', errors='replace') as fh:
+        header = fh.readline().rstrip('\n').split('\t')
+        # Select CS non-polyA columns only
+        cs_col_indices = [
+            i for i, h in enumerate(header)
+            if h.upper().startswith('CS_') and 'POLYA' not in h.upper()
+        ]
+        cs_cols = [header[i] for i in cs_col_indices]
+
+        for line in fh:
+            parts = line.rstrip('\n').split('\t')
+            if len(parts) < 3:
+                continue
+            name = parts[0].strip()
+            # Skip sub-gene rows (exon N / intron N)
+            if re.match(r'^(exon|intron)\s+\d+', name, re.I):
+                continue
+            # Strip isoform suffix: "genename.a(modencode)" → "genename"
+            base = re.sub(r'[\.\(].+', '', name).strip()
+            if not base:
+                continue
+            try:
+                vals = {cs_cols[j]: float(parts[cs_col_indices[j]])
+                        for j in range(len(cs_cols))
+                        if cs_col_indices[j] < len(parts)}
+            except (ValueError, IndexError):
+                continue
+            if base not in data:
+                data[base] = vals
+
+    if not data:
+        raise ValueError("No gene-level rows found in RUM summary file.")
+
+    gene_expr_df = pd.DataFrame.from_dict(data, orient='index', columns=cs_cols)
+    gene_expr_df.index.name = 'gene'
+
+    # Build sample_times from column names
+    sample_times: dict = {}
+    for col in cs_cols:
+        m = _RUM_ZT_RE.search(col)
+        if m:
+            sample_times[col] = float(m.group(2))
+
+    return gene_expr_df, sample_times
+
+
+# ---------------------------------------------------------------------------
 # Step 2: Download and parse GSE29972
 # ---------------------------------------------------------------------------
 print("\n[2/5] Downloading GSE29972 (Hughes 2012, Drosophila brain)...")
@@ -165,6 +234,29 @@ matrix_path = download_geo_series_matrix('GSE29972',
 expr_df, sinfo = parse_series_matrix(matrix_path)
 print(f"  Matrix: {len(expr_df)} rows x {len(expr_df.columns)} samples  "
       f"({time.time()-t0:.1f}s)")
+
+sample_times = None  # set here or from RUM column names below
+
+# GSE29972 series matrix contains only metadata (0 data rows).
+# Fall back to the processed RUM summary supplementary file.
+if len(expr_df) == 0:
+    print("  Series matrix has no expression rows — loading RUM summary file...")
+    RUM_URL  = ("https://ftp.ncbi.nlm.nih.gov/geo/series/GSE29nnn/GSE29972/"
+                "suppl/GSE29972_RUM_allFeatures_Summary.txt.gz")
+    rum_path = str(GEO_CACHE_DIR / 'GSE29972_RUM_allFeatures_Summary.txt.gz')
+    if Path(rum_path).exists():
+        print("  [cached] GSE29972_RUM_allFeatures_Summary.txt.gz")
+    else:
+        print("  Downloading RUM summary (~16 MB)...")
+    download_file(RUM_URL, rum_path)
+    t_rum = time.time()
+    expr_df, _rum_times = _parse_rum_summary(rum_path)
+    print(f"  RUM parsed: {len(expr_df)} genes x {len(expr_df.columns)} CS samples  "
+          f"({time.time()-t_rum:.1f}s)")
+    # Override sample_times with ZT values decoded from column names;
+    # sinfo-derived times are ignored (sinfo keys are GSM IDs, not col names).
+    sample_times = _rum_times
+    print(f"  ZT timepoints decoded: {sorted(set(sample_times.values()))}")
 
 # -- Check row ID format and map if needed --
 sample_ids = [str(x) for x in expr_df.index[:20]]
@@ -214,26 +306,25 @@ else:
     gene_expr = expr_df.copy()
     gene_expr.index.name = 'gene'
 
-# -- Extract timepoints --
-sample_times = extract_timepoints_from_samples(sinfo)
-print(f"  Samples with ZT timepoints: {len(sample_times)}/{len(expr_df.columns)}")
+# -- Extract timepoints (skip if already obtained from RUM column names) --
+if sample_times is None:
+    sample_times = extract_timepoints_from_samples(sinfo)
+    print(f"  Samples with ZT timepoints: {len(sample_times)}/{len(expr_df.columns)}")
+    if len(sample_times) == 0:
+        print("  WARNING: No timepoints extracted. Printing raw metadata:")
+        for sid in list(expr_df.columns)[:5]:
+            meta = sinfo.get(sid, {})
+            for k, vs in meta.items():
+                if 'title' in k.lower() or 'characteristic' in k.lower():
+                    print(f"    {sid} | {k}: {vs[:3]}")
+        raise RuntimeError(
+            "Cannot extract ZT timepoints from GSE29972 sample metadata.\n"
+            "Update extract_timepoints_from_samples() or manually specify times."
+        )
 
-if len(sample_times) > 0:
-    t_vals = sorted(sample_times.values())
-    print(f"  ZT range: {t_vals[0]:.0f} – {t_vals[-1]:.0f} h  "
-          f"(~{len(set(round(t) for t in t_vals))} unique timepoints)")
-else:
-    # Diagnosis: print first few sample titles
-    print("  WARNING: No timepoints extracted. Printing raw metadata:")
-    for sid in list(expr_df.columns)[:5]:
-        meta = sinfo.get(sid, {})
-        for k, vs in meta.items():
-            if 'title' in k.lower() or 'characteristic' in k.lower():
-                print(f"    {sid} | {k}: {vs[:3]}")
-    raise RuntimeError(
-        "Cannot extract ZT timepoints from GSE29972 sample metadata.\n"
-        "Update extract_timepoints_from_samples() or manually specify times."
-    )
+t_vals = sorted(sample_times.values())
+print(f"  ZT range: {t_vals[0]:.0f} – {t_vals[-1]:.0f} h  "
+      f"(~{len(set(round(t) for t in t_vals))} unique timepoints)")
 
 # -- Sort samples by time --
 valid_samples = [s for s in gene_expr.columns if s in sample_times]

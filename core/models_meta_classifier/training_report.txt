@@ -3,7 +3,7 @@ ChronoScope - CONSENSUS RHYTHMICITY SCORE (CRS-AI)
 MODEL TRAINING REPORT
 ================================================================================
 
-  Training date: 2026-05-21
+  Training date: 2026-05-22
 
 1. MODEL OVERVIEW
 --------------------------------------------------------------------------------
@@ -18,9 +18,9 @@ multiple independent algorithms.
 2. SOFTWARE ENVIRONMENT
 --------------------------------------------------------------------------------
 
-  Python:        3.12.10
-  scikit-learn:  1.8.0
-  NumPy:         2.4.2
+  Python:        3.11.15
+  scikit-learn:  1.7.1
+  NumPy:         2.4.4
   pandas:        3.0.1
 
 3. MODEL ARCHITECTURE
@@ -83,30 +83,32 @@ plus derived consensus metrics:
 
   Feature                        Importance   Description
   -----------------------------  ----------   ------------------------------------
-  f24_score                          0.2071   Fourier F24 test score (24h periodicity statistic)
-  cosinor_r_squared                  0.1314   Cosinor OLS goodness-of-fit (R-squared)
-  cosinor_p_value                    0.1260   Cosinor OLS regression adjusted p-value
-  ls_p_value                         0.1159   Lomb-Scargle false alarm probability
-  cosinor_amplitude                  0.0810   Cosinor fitted amplitude (expression units)
-  ls_power                           0.0755   Lomb-Scargle dominant spectral power
-  period_dev_24h                     0.0645   Min |period - 24h| across methods (circadian proximity)
-  amplitude_relative                 0.0610   Amplitude relative to mesor (amplitude / |mean|)
-  jtk_p_value                        0.0584   JTK_CYCLE adjusted p-value (non-parametric rhythmicity test)
-  ls_dominant_period                 0.0477   Lomb-Scargle dominant period (hours)
-  cosinor_period                     0.0314   Cosinor detected period (hours)
+  cosinor_amplitude                  0.1723   Cosinor fitted amplitude (expression units)
+  cosinor_r_squared                  0.1710   Cosinor OLS goodness-of-fit (R-squared)
+  f24_score                          0.1294   Fourier F24 test score (24h periodicity statistic)
+  ls_power                           0.1169   Lomb-Scargle dominant spectral power
+  amplitude_relative                 0.1038   Amplitude relative to mesor (amplitude / |mean|)
+  ls_dominant_period                 0.0928   Lomb-Scargle dominant period (hours)
+  ls_p_value                         0.0711   Lomb-Scargle false alarm probability
+  cosinor_p_value                    0.0441   Cosinor OLS regression adjusted p-value
+  cosinor_period                     0.0348   Cosinor detected period (hours)
+  period_dev_24h                     0.0338   Min |period - 24h| across methods (circadian proximity)
+  jtk_p_value                        0.0299   JTK_CYCLE adjusted p-value (non-parametric rhythmicity test)
 
   Feature completeness (NaN analysis):
-    All features complete (0% NaN)
+    jtk_p_value                      0.0% NaN
+    ls_power                         0.0% NaN
+    amplitude_relative               0.0% NaN
 
 5. TRAINING DATA
 --------------------------------------------------------------------------------
 
-  Total instances:        3395
+  Total instances:        5653
     Synthetic:            1696
-    Real biological:      1699
+    Real biological:      3957
   Class distribution:
-    Rhythmic (label=1):   1660 (48.9%)
-    Non-rhythmic (label=0): 1735 (51.1%)
+    Rhythmic (label=1):   3045 (53.9%)
+    Non-rhythmic (label=0): 2608 (46.1%)
 
   5.1 Synthetic data (1696 instances)
 
@@ -128,7 +130,7 @@ plus derived consensus metrics:
     amplitude regularity and inter-method agreement, instead of
     relying on a synthetic shortcut.
 
-  5.2 Real biological data (1699 instances)
+  5.2 Real biological data (3957 instances)
 
     Dataset 1: GSE11923 (Hughes et al., 2009)
       Organism:    Mus musculus (mouse liver)
@@ -147,6 +149,36 @@ plus derived consensus metrics:
       Labels:      BioCycle algorithm (RhythmicDB) + known genes
       Instances:   1600 (capped at 800 per class)
 
+    Dataset 3: GSE77451 (Abruzzi et al. 2017, PLOS Genetics)
+      Organism:    Drosophila melanogaster
+      Tissue:      FACS-sorted clock neurons (LNv, LNd, DN1)
+                   + dopaminergic outgroup (TH)
+      Platform:    RNA-seq (Illumina HiSeq, GPL16479)
+      Sampling:    4 cell types x 6 ZT x 2 biological replicates
+      Labels:      Abruzzi 2017 S3 (HC-cyclers by JTK + F24)
+      Positives:   HC-cyclers in LNv, LNd, DN1 (max 200/cell type,
+                   sorted by JTK p-value ascending)
+      Negatives:   Fly housekeeping genes (all cell types) +
+                   fly core clock genes (TH only)
+      Excluded:    TH HC-cyclers (non-circadian outgroup)
+      Expression:  Positives from XLSX embedded columns;
+                   negatives from GEO series matrix
+
+    Dataset 4: GSE39445 (Möller-Levet et al. 2013, PNAS)
+      Organism:    Homo sapiens
+      Tissue:      Whole blood
+      Platform:    Custom Agilent microarray (GPL15331)
+      Sampling:    26 subjects x ~17 timepoints (3-hour intervals)
+                   x 2 conditions (control / sleep restriction)
+      Labels:      Möller-Levet 2013 Supplementary Dataset S2
+      Positives:   Strong (circ in both) + hard (circ in ctrl only)
+                   Forced: KNOWN_CIRCADIAN_GENES_HUMAN override
+      Negatives:   Not rhythmic + no sleep condition effect
+                   Forced: NON_RHYTHMIC_GENES_HUMAN override
+      Pooling:     Subjects averaged per condition per 3-hour bin
+                   → 1-2 instances per gene (control + SR)
+      Cap:         800 positives + 800 negatives
+
   5.3 BioCycle labeling criteria
 
     Source:        RhythmicDB (rhythmicdb.biocycle.org)
@@ -163,27 +195,53 @@ plus derived consensus metrics:
 
   5.4 Known gene labels (ground truth)
 
-    Circadian genes (20): Core clock Transcription-Translation
-      Feedback Loop (TTFL) components and robust
-      clock-controlled output genes confirmed by decades of knockout
-      studies. Per1, Per2, Per3, Cry1, Cry2, Arntl (Bmal1), Clock,
-      Npas2, Nr1d1, Nr1d2, Dbp, Tef, Hlf, Rora, Rorb, Rorc,
-      Ciart, Bhlhe40, Bhlhe41, Nfil3.
+    Mouse circadian genes (20): Core TTFL components confirmed
+      by knockout studies. Per1, Per2, Per3, Cry1, Cry2, Arntl
+      (Bmal1), Clock, Npas2, Nr1d1, Nr1d2, Dbp, Tef, Hlf, Rora,
+      Rorb, Rorc, Ciart, Bhlhe40, Bhlhe41, Nfil3.
 
-    Non-rhythmic genes (16): Standard qPCR reference/housekeeping
-      genes. Gapdh, Actb, Tbp, Hprt, Hprt1, Rpl13a, B2m, Ubc,
-      Ppia, Rpl32, Eef1a1, Sdha, Hmbs, Ywhaz, Pgk1, Tfrc.
+    Mouse non-rhythmic genes (16): Standard qPCR reference genes.
+      Gapdh, Actb, Tbp, Hprt, Hprt1, Rpl13a, B2m, Ubc, Ppia,
+      Rpl32, Eef1a1, Sdha, Hmbs, Ywhaz, Pgk1, Tfrc.
+
+    Drosophila circadian genes (18, FlyBase symbols): per, tim,
+      Clk, cyc, vri, Pdp1, cry, cwo, Pdf, sgg, dco, nmo, jet,
+      twins, ck1, NPF, shaggy, dbt. Used as negatives in TH
+      (dopaminergic outgroup — clock genes expected non-rhythmic).
+
+    Drosophila non-rhythmic genes (18): RpL32, Act5C, Act5c,
+      Act88F, alphaTub84B, Gapdh1, Gapdh2, Sdha, eIF1A,
+      eEF1alpha1, Rpl13, Rps17, Tbp, GstD1, Hsc70-4, Hsc70Cb,
+      CG8187, CG7434. Used as negatives in all four cell types.
+
+    Human circadian genes (28, HGNC symbols): ARNTL, BMAL1,
+      ARNTL2, BMAL2, PER1, PER2, PER3, CRY1, CRY2, NR1D1, NR1D2,
+      DBP, TEF, HLF, RORA, RORB, RORC, CLOCK, NPAS2, NFIL3,
+      BHLHE40, BHLHE41, CIART, CSNK1D, CSNK1E, FBXL3, PROK2,
+      AVP, VIP. Force-included as positives regardless of ML label.
+
+    Human non-rhythmic genes (26, HGNC symbols): ACTB, GAPDH,
+      HPRT1, TBP, RPL13A, B2M, UBC, PPIA, RPL32, EEF1A1, SDHA,
+      HMBS, YWHAZ, PGK1, TFRC, POLR2A, PSMB4, PSMB2, CHMP2A,
+      EMC7, GPI, C1orf43, REEP5, SNRPD3, VCP, VPS29.
+      Force-included as negatives regardless of ML label.
+
+    Cross-species group safety: gene symbols are used as-is in
+      GroupShuffleSplit grouping. Case-sensitive comparison ensures
+      fly 'per' != mouse 'Per1' != human 'PER1', so no cross-species
+      group collision occurs. Within-species gene groups correctly
+      pool all cell-type instances of the same gene together.
 
 6. EVALUATION
 --------------------------------------------------------------------------------
 
   Train/test split: 80/20 GroupShuffleSplit (random_state=42)
   Grouping:         by gene name (real) or unique ID (synthetic)
-  Total groups:     3311
-    Gene groups:    1615
+  Total groups:     4682
+    Gene groups:    2986
     Synthetic:      1696
-  Train set:        2712 samples (1318 rhythmic, 1394 non-rhythmic)
-  Test set:         683 samples (342 rhythmic, 341 non-rhythmic)
+  Train set:        4506 samples (2422 rhythmic, 2084 non-rhythmic)
+  Test set:         1147 samples (623 rhythmic, 524 non-rhythmic)
 
   Rationale: GroupShuffleSplit prevents the same gene from
   appearing in both train and test sets. In prior versions
@@ -198,8 +256,8 @@ plus derived consensus metrics:
 
   6.1 Cross-validation (5-fold StratifiedGroupKFold, on training set)
 
-    ROC-AUC:   0.9330 +/- 0.0081
-    Per-fold:  0.9252, 0.9250, 0.9303, 0.9388, 0.9458
+    ROC-AUC:   0.9269 +/- 0.0025
+    Per-fold:  0.9250, 0.9271, 0.9240, 0.9311, 0.9271
 
   6.2 Holdout test set performance (high-confidence cases)
 
@@ -211,34 +269,34 @@ plus derived consensus metrics:
     (n=1000 resamples, 1000 valid; iterations with single-
     class resamples were skipped):
 
-    Accuracy:    0.8419  [95% CI 0.8155, 0.8682]
-    Precision:   0.8421
-    Recall:      0.8421
-    Specificity: 0.8416
-    F1 Score:    0.8421  [95% CI 0.8119, 0.8696]
-    ROC-AUC:     0.9152  [95% CI 0.8930, 0.9353]
-    MCC:         0.6837
-    Brier loss:  0.1143  [95% CI 0.0979, 0.1310]  (lower=better calibration)
+    Accuracy:    0.8439  [95% CI 0.8230, 0.8649]
+    Precision:   0.8546
+    Recall:      0.8587
+    Specificity: 0.8263
+    F1 Score:    0.8567  [95% CI 0.8368, 0.8758]
+    ROC-AUC:     0.9172  [95% CI 0.9012, 0.9323]
+    MCC:         0.6854
+    Brier loss:  0.1135  [95% CI 0.1011, 0.1265]  (lower=better calibration)
 
   6.3 Confusion matrix
 
                        Predicted
                    Non-rhythmic  Rhythmic
-    Actual NR          287           54
-    Actual R            54          288
+    Actual NR          433           91
+    Actual R            88          535
 
-    TP=288, FP=54, TN=287, FN=54
+    TP=535, FP=91, TN=433, FN=88
 
   6.4 Classification report
 
                   precision    recall  f1-score   support
     
-    Non-rhythmic       0.84      0.84      0.84       341
-        Rhythmic       0.84      0.84      0.84       342
+    Non-rhythmic       0.83      0.83      0.83       524
+        Rhythmic       0.85      0.86      0.86       623
     
-        accuracy                           0.84       683
-       macro avg       0.84      0.84      0.84       683
-    weighted avg       0.84      0.84      0.84       683
+        accuracy                           0.84      1147
+       macro avg       0.84      0.84      0.84      1147
+    weighted avg       0.84      0.84      0.84      1147
     
 
   6.5 Ambiguous holdout (BioCycle borderline-q genes)
@@ -257,10 +315,10 @@ plus derived consensus metrics:
     a direct comparison to 6.2.
 
     N:                       2335
-    Accuracy (vs midpoint):  0.6064
-    AUROC (vs midpoint):     0.7015
-    Brier loss:              0.3110
-    % flagged borderline:    23.9%
+    Accuracy (vs midpoint):  0.5880
+    AUROC (vs midpoint):     0.7076
+    Brier loss:              0.3028
+    % flagged borderline:    20.2%
       (probability in [0.30, 0.70])
 
     A high % flagged borderline is the desired behavior
@@ -285,33 +343,33 @@ plus derived consensus metrics:
 
   Rank   Feature                        Importance  Cumulative
   -----  -----------------------------  ----------  ----------
-  1      f24_score                          0.2071      0.2071
-  2      cosinor_r_squared                  0.1314      0.3385
-  3      cosinor_p_value                    0.1260      0.4645
-  4      ls_p_value                         0.1159      0.5804
-  5      cosinor_amplitude                  0.0810      0.6614
-  6      ls_power                           0.0755      0.7370
-  7      period_dev_24h                     0.0645      0.8015
-  8      amplitude_relative                 0.0610      0.8625
-  9      jtk_p_value                        0.0584      0.9210
-  10     ls_dominant_period                 0.0477      0.9686
-  11     cosinor_period                     0.0314      1.0000
+  1      cosinor_amplitude                  0.1723      0.1723
+  2      cosinor_r_squared                  0.1710      0.3433
+  3      f24_score                          0.1294      0.4727
+  4      ls_power                           0.1169      0.5896
+  5      amplitude_relative                 0.1038      0.6934
+  6      ls_dominant_period                 0.0928      0.7862
+  7      ls_p_value                         0.0711      0.8573
+  8      cosinor_p_value                    0.0441      0.9015
+  9      cosinor_period                     0.0348      0.9363
+  10     period_dev_24h                     0.0338      0.9701
+  11     jtk_p_value                        0.0299      1.0000
 
   7.2 Permutation importance (test-set ROC-AUC drop, n_repeats=10)
 
   Rank   Feature                         Mean AUROC drop       Std
   -----  -----------------------------  ----------------  --------
-  1      f24_score                               +0.0350    0.0066
-  2      cosinor_amplitude                       +0.0274    0.0046
-  3      period_dev_24h                          +0.0222    0.0032
-  4      ls_dominant_period                      +0.0108    0.0024
-  5      amplitude_relative                      +0.0103    0.0031
-  6      cosinor_p_value                         +0.0090    0.0043
-  7      cosinor_r_squared                       +0.0089    0.0033
-  8      ls_p_value                              +0.0086    0.0042
-  9      cosinor_period                          +0.0062    0.0021
-  10     ls_power                                +0.0055    0.0022
-  11     jtk_p_value                             +0.0030    0.0015
+  1      cosinor_amplitude                       +0.0724    0.0053
+  2      cosinor_r_squared                       +0.0402    0.0046
+  3      f24_score                               +0.0352    0.0032
+  4      ls_dominant_period                      +0.0264    0.0030
+  5      amplitude_relative                      +0.0168    0.0017
+  6      ls_power                                +0.0140    0.0028
+  7      period_dev_24h                          +0.0110    0.0009
+  8      ls_p_value                              +0.0073    0.0015
+  9      cosinor_period                          +0.0071    0.0012
+  10     cosinor_p_value                         +0.0040    0.0012
+  11     jtk_p_value                             +0.0017    0.0007
 
   Interpretation: a permutation-importance value of 0.05
   means shuffling that feature drops test ROC-AUC by 0.05
@@ -332,96 +390,58 @@ plus derived consensus metrics:
     Ambiguous holdout: core/models_meta_classifier/ambiguous_holdout_predictions.csv
     This report:      core/models_meta_classifier/training_report.txt
 
-  Model file size:    15482.1 KB
+  Model file size:    23760.0 KB
 
 9. RUNTIME PARAMETER OVERRIDE POLICY
 --------------------------------------------------------------------------------
 
-The Random Forest classifier was trained with the sub-method search
-windows fixed at the values listed above: JTK 20-28h, Lomb-Scargle 18-32h,
-Cosinor and Harmonic Cosinor on a half-step circadian grid spanning
-20-28h, F24 target_period=24h, JTK asymmetry=0.5, harmonic order=2.
-Because the calibrated probability outputs depend on the feature
-distribution induced by those settings, changing them at inference time
-can produce miscalibrated predictions. The runtime path
-(`core/feature_extraction.py::_resolve_params`) therefore applies a
-typed filter to user-supplied parameters.
+The classifier was trained with the sub-method search windows
+fixed at the values listed in Section 4 (JTK 20-28h,
+Lomb-Scargle 18-32h, Cosinor and Harmonic on a half-step
+circadian grid 20-28h, F24 target_period=24h, JTK asymmetry=0.5,
+harmonic order=2). Because the calibrated probability outputs
+depend on the feature distribution induced by those settings,
+user-supplied parameters are filtered at inference time by
+core/feature_extraction.py::_resolve_params.
 
   9.1 Parameters affecting model features (bounded)
 
-      period_range:  Honored if and only if it intersects the training
-                     window [18, 32]h. Clipped to that window if it
-                     spills out; falls back to training defaults (with
-                     a warning) if it lies entirely outside. The
-                     resolved range is applied uniformly to JTK_CYCLE,
-                     Cosinor OLS, Lomb-Scargle, and Harmonic Cosinor.
+      period_range:  Honored if and only if it intersects the
+                     training window [18, 32]h. Clipped to that
+                     window if it spills out; falls back to
+                     training defaults (with a warning) if it
+                     lies entirely outside. Applied uniformly
+                     to JTK, Cosinor OLS, Lomb-Scargle, and
+                     Harmonic Cosinor.
 
-      f24 target_period:   Locked at 24h. f24_score is a model feature
-                           and was trained at a single target period.
+      F24 target:    Locked at 24h. f24_score is a model
+                     feature trained at a single target.
 
-      JTK asymmetries:     Locked at [0.5]. jtk_p_value is a model
-                           feature and was trained with the symmetric-
-                           waveform assumption.
+      JTK asymmetries: Locked at [0.5]. jtk_p_value was
+                       trained with the symmetric-waveform
+                       assumption.
 
   9.2 Parameters not affecting model features (free override)
 
       n_harmonics:   User-controlled (default 2). Affects only
-                     harmonic_p_value and harmonic_r_squared, which
-                     were dropped from the feature vector in v2
-                     (Section 4). The override drives the UI's per-
-                     method panel and cannot alter classifier output.
+                     harmonic_p_value and harmonic_r_squared,
+                     which were dropped from the feature vector
+                     in v2 (Section 4). The override drives
+                     the UI's per-method panel and cannot
+                     alter classifier output.
 
-  9.3 Validation of the bounded override
+  9.3 Empirical validation of the bounded override
 
-      The holdout test set of 683 instances (Section 6.2) was re-
-      evaluated under two regimes: (i) default training-window
-      settings, and (ii) period_range = (22, 26)h, fully inside the
-      training window. Both regimes used the same v5 model. The
-      re-extracted DEFAULT features reproduced the cached X_test.npy
-      bit-for-bit, confirming the test partition is deterministic.
+      A holdout re-evaluation comparing default settings
+      against period_range=(22, 26)h is maintained as a
+      standalone report:
 
-                                Default       Narrowed (22-26h)   Delta
-      ----------------------    -----------   -----------------   --------
-      Accuracy                  0.8419        0.8228              -0.0191
-      Precision                 0.8421        0.8078              -0.0343
-      Recall                    0.8421        0.8480              +0.0059
-      F1                        0.8421        0.8274              -0.0147
-      ROC-AUC                   0.9152        0.9060              -0.0092
-      Brier loss                0.1143        0.1218              +0.0075
-      Specificity               0.842         0.798               -0.0440
-      Confusion (TN/FP/FN/TP)   287/54/54/288 272/69/52/290       +15 FP
+        core/models_meta_classifier/parameter_override_validation.txt
 
-      Prediction agreement between regimes:
-        Binary (p >= 0.5):                              658/683  (96.3%)
-        Three-class (Rhythmic/Borderline/Arrhythmic):   626/683  (91.7%)
-        Mean |delta-probability|:                       0.0352
-        Median |delta-probability|:                     0.0096
-        Max |delta-probability|:                        0.5917
-        Cases with |delta-p| > 0.10:                    58/683   (8.5%)
-        Cases with |delta-p| > 0.20:                    24/683   (3.5%)
-        Binary disagreements among true rhythmic:        8/342   (2.3%)
-        Binary disagreements among true non-rhythmic:   17/341   (5.0%)
-
-      Interpretation. Discrimination is preserved: the 0.009 drop in
-      ROC-AUC lies within the 95% bootstrap CI of the default holdout
-      AUROC ([0.8930, 0.9353], Section 6.2), and is therefore
-      indistinguishable from sampling noise. The cost concentrates on
-      specificity (-4.4 percentage points, 15 additional false
-      positives), consistent with the expected mechanism: narrowing
-      prevents Lomb-Scargle and Cosinor from reporting peaks at the
-      edges of the training window, so non-rhythmic genes with a weak
-      spectral peak at ~20h or ~28h are forced to report their best
-      period inside 22-26h — closer to 24h on average — which
-      elevates f24_score and amplitude_relative. The median absolute
-      probability shift is below 1 percentage point; only 25 of 683
-      cases flip their binary decision.
-
-      Conclusion. The bounded period_range override is empirically
-      safe within the training window. Users opting for narrower
-      ranges trade a small amount of global specificity for tighter
-      local agreement with the biology of their species or condition.
-      Full numerical detail in
-      `core/models_meta_classifier/parameter_override_validation.txt`.
+      The numbers there are model-version-specific. After
+      retraining, re-run
+        python validate_period_range_override.py
+      to refresh them.
 
 ================================================================================
 END OF REPORT
