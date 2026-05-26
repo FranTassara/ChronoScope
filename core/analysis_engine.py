@@ -6229,37 +6229,66 @@ class AnalysisEngine:
         parameters: Dict[str, Any],
         params: RhythmCountParameters,
     ) -> AnalysisResult:
-        """Fit all (count_model, n_components) combinations."""
-        import json
+        """Fit all (count_model, n_components) combinations across the period range.
 
-        df_results = self._rhythmcount.fit_all_models(params)
+        Returns one AnalysisResult per (period, count_model, n_components) combination
+        so the results table shows every fit, not just the best-by-AIC one.
+        """
+        from dataclasses import replace as dc_replace
 
-        if df_results is None or df_results.empty:
+        def _safe(val):
+            try:
+                f = float(val)
+                return None if np.isnan(f) else f
+            except (TypeError, ValueError):
+                return None
+
+        period_param = parameters.get('period', 24.0)
+        periods = period_param if isinstance(period_param, list) else [period_param]
+
+        results = []
+        for period in periods:
+            per_params = dc_replace(params, period=float(period))
+            df_results = self._rhythmcount.fit_all_models(per_params)
+
+            if df_results is None or df_results.empty:
+                continue
+
+            for _, row in df_results.iterrows():
+                err = str(row.get('error', '') or '')
+                msg = err if err else (
+                    f"Period={period}h, Model={row.get('count_model', 'N/A')}, "
+                    f"N={row.get('n_components', 'N/A')}"
+                )
+                results.append(AnalysisResult(
+                    variable=variable,
+                    condition=condition,
+                    method='rhythmcount_all_models',
+                    mesor=_safe(row.get('mesor')),
+                    amplitude=_safe(row.get('amplitude')),
+                    p_value=_safe(row.get('llr_pvalue')),
+                    aic=_safe(row.get('AIC')),
+                    bic=_safe(row.get('BIC')),
+                    rss=_safe(row.get('RSS')),
+                    log_likelihood=_safe(row.get('log_likelihood')),
+                    r_squared=_safe(row.get('prsquared')),
+                    n_components=int(row.get('n_components', 1)),
+                    period=float(period),
+                    success=bool(row.get('success', False)),
+                    message=msg,
+                ))
+
+        if not results:
             return AnalysisResult(
                 variable=variable, condition=condition,
                 method='rhythmcount_all_models', success=False,
                 message="fit_all_models returned empty results.",
             )
 
-        # Serialize table as JSON for downstream display
-        table_json = df_results.to_json(orient='records', default_handler=str)
+        if len(results) > 1:
+            return results
 
-        n_models = len(df_results)
-        best_row = df_results.loc[df_results['AIC'].idxmin()] if 'AIC' in df_results.columns else df_results.iloc[0]
-
-        return AnalysisResult(
-            variable=variable,
-            condition=condition,
-            method='rhythmcount_all_models',
-            mesor=float(best_row.get('mesor', float('nan'))) if not np.isnan(float(best_row.get('mesor', float('nan')))) else None,
-            amplitude=float(best_row.get('amplitude', float('nan'))) if not np.isnan(float(best_row.get('amplitude', float('nan')))) else None,
-            aic=float(best_row.get('AIC', float('nan'))) if not np.isnan(float(best_row.get('AIC', float('nan')))) else None,
-            bic=float(best_row.get('BIC', float('nan'))) if not np.isnan(float(best_row.get('BIC', float('nan')))) else None,
-            period=params.period,
-            results_table_json=table_json,
-            success=True,
-            message=f"Fitted {n_models} model combinations. Best by AIC: {best_row.get('count_model', 'N/A')}, N={best_row.get('n_components', 'N/A')}",
-        )
+        return results[0]
 
     def _run_rhythmcount_best_model(
         self,
@@ -6268,35 +6297,64 @@ class AnalysisEngine:
         parameters: Dict[str, Any],
         params: RhythmCountParameters,
     ) -> AnalysisResult:
-        """Fit all models and automatically select the best one."""
-        import json
+        """Fit all models and automatically select the best one per period."""
+        from dataclasses import replace as dc_replace
 
-        result = self._rhythmcount.fit_best_model(params)
+        def _safe(val):
+            try:
+                f = float(val)
+                return None if np.isnan(f) else f
+            except (TypeError, ValueError):
+                return None
 
-        table_json = None
-        if result.success and not result.all_results.empty:
-            table_json = result.all_results.to_json(orient='records', default_handler=str)
+        period_param = parameters.get('period', 24.0)
+        periods = period_param if isinstance(period_param, list) else [period_param]
 
-        return AnalysisResult(
-            variable=variable,
-            condition=condition,
-            method='rhythmcount_best_model',
-            mesor=result.mesor if not np.isnan(result.mesor) else None,
-            amplitude=result.amplitude if not np.isnan(result.amplitude) else None,
-            peak_times=result.peaks.tolist() if len(result.peaks) > 0 else None,
-            p_value=result.llr_pvalue if not np.isnan(result.llr_pvalue) else None,
-            aic=result.AIC if not np.isnan(result.AIC) else None,
-            bic=result.BIC if not np.isnan(result.BIC) else None,
-            rss=result.RSS if not np.isnan(result.RSS) else None,
-            r_squared=result.prsquared if not np.isnan(result.prsquared) else None,
-            n_components=result.n_components,
-            period=params.period,
-            times=result.X_test if len(result.X_test) > 0 else None,
-            fitted_values=result.Y_test if len(result.Y_test) > 0 else None,
-            results_table_json=table_json,
-            success=result.success,
-            message=f"Best model: {result.count_model}, N={result.n_components}, criterion={result.selection_test}" + (f" | Error: {result.error}" if result.error else ""),
-        )
+        results = []
+        for period in periods:
+            per_params = dc_replace(params, period=float(period))
+            result = self._rhythmcount.fit_best_model(per_params)
+
+            table_json = None
+            if result.success and not result.all_results.empty:
+                table_json = result.all_results.to_json(orient='records', default_handler=str)
+
+            results.append(AnalysisResult(
+                variable=variable,
+                condition=condition,
+                method='rhythmcount_best_model',
+                mesor=_safe(result.mesor),
+                amplitude=_safe(result.amplitude),
+                peak_times=result.peaks.tolist() if len(result.peaks) > 0 else None,
+                p_value=_safe(result.llr_pvalue),
+                aic=_safe(result.AIC),
+                bic=_safe(result.BIC),
+                rss=_safe(result.RSS),
+                r_squared=_safe(result.prsquared),
+                n_components=result.n_components,
+                period=float(period),
+                times=result.X_test if len(result.X_test) > 0 else None,
+                fitted_values=result.Y_test if len(result.Y_test) > 0 else None,
+                results_table_json=table_json,
+                success=result.success,
+                message=(
+                    f"Period={period}h — Best: {result.count_model}, N={result.n_components}, "
+                    f"criterion={result.selection_test}"
+                    + (f" | Error: {result.error}" if result.error else "")
+                ),
+            ))
+
+        if not results:
+            return AnalysisResult(
+                variable=variable, condition=condition,
+                method='rhythmcount_best_model', success=False,
+                message="fit_best_model returned no results.",
+            )
+
+        if len(results) > 1:
+            return results
+
+        return results[0]
 
     def _run_rhythmcount_parameter_cis(
         self,
@@ -6305,47 +6363,72 @@ class AnalysisEngine:
         parameters: Dict[str, Any],
         params: RhythmCountParameters,
     ) -> AnalysisResult:
-        """Compute bootstrap confidence intervals for rhythm parameters."""
+        """Compute bootstrap confidence intervals for each (period, n_components) combination."""
+        from dataclasses import replace as dc_replace
+
         raw_model = parameters.get('rc_single_count_model', 'poisson')
         try:
             count_model = CountModel(raw_model)
         except ValueError:
             count_model = CountModel.POISSON
 
-        # For CIs, use the first (or only) value from the list
         n_comps_list = parameters.get('rc_single_n_components_list', [1])
-        n_comp = int(n_comps_list[0]) if n_comps_list else 1
+        if not n_comps_list:
+            n_comps_list = [1]
 
-        # reference_peaks: from a prior best model run stored in parameters,
-        # or fall back to [12.0] as a reasonable default for a 24h rhythm
+        period_param = parameters.get('period', 24.0)
+        periods = period_param if isinstance(period_param, list) else [period_param]
+
         ref_peaks_raw = parameters.get('rc_reference_peaks', None)
-        if ref_peaks_raw is not None:
-            reference_peaks = np.array(ref_peaks_raw, dtype=float)
-        else:
-            reference_peaks = np.array([params.period / 2.0])
 
-        result = self._rhythmcount.calculate_parameter_cis(
-            count_model, n_comp, reference_peaks, params
-        )
+        results = []
+        for period in periods:
+            per_params = dc_replace(params, period=float(period))
 
-        amplitude_ci = None
-        mesor_ci = None
-        if result.success and len(result.amplitude_CIs) >= 2:
-            amplitude_ci = (float(result.amplitude_CIs[0]), float(result.amplitude_CIs[1]))
-        if result.success and len(result.mesor_CIs) >= 2:
-            mesor_ci = (float(result.mesor_CIs[0]), float(result.mesor_CIs[1]))
+            if ref_peaks_raw is not None:
+                reference_peaks = np.array(ref_peaks_raw, dtype=float)
+            else:
+                reference_peaks = np.array([float(period) / 2.0])
 
-        return AnalysisResult(
-            variable=variable,
-            condition=condition,
-            method='rhythmcount_parameter_cis',
-            n_components=n_comp,
-            period=params.period,
-            amplitude_ci=amplitude_ci,
-            mesor_ci=mesor_ci,
-            success=result.success,
-            message=f"Bootstrap CIs ({result.repetitions} reps), model={result.count_model}, N={result.n_components}" + (f" | Error: {result.error}" if result.error else ""),
-        )
+            for n_comp in n_comps_list:
+                result = self._rhythmcount.calculate_parameter_cis(
+                    count_model, int(n_comp), reference_peaks, per_params
+                )
+
+                amplitude_ci = None
+                mesor_ci = None
+                if result.success and len(result.amplitude_CIs) >= 2:
+                    amplitude_ci = (float(result.amplitude_CIs[0]), float(result.amplitude_CIs[1]))
+                if result.success and len(result.mesor_CIs) >= 2:
+                    mesor_ci = (float(result.mesor_CIs[0]), float(result.mesor_CIs[1]))
+
+                results.append(AnalysisResult(
+                    variable=variable,
+                    condition=condition,
+                    method='rhythmcount_parameter_cis',
+                    n_components=int(n_comp),
+                    period=float(period),
+                    amplitude_ci=amplitude_ci,
+                    mesor_ci=mesor_ci,
+                    success=result.success,
+                    message=(
+                        f"Bootstrap CIs ({result.repetitions} reps), "
+                        f"period={period}h, model={result.count_model}, N={result.n_components}"
+                        + (f" | Error: {result.error}" if result.error else "")
+                    ),
+                ))
+
+        if not results:
+            return AnalysisResult(
+                variable=variable, condition=condition,
+                method='rhythmcount_parameter_cis', success=False,
+                message="No results produced.",
+            )
+
+        if len(results) > 1:
+            return results
+
+        return results[0]
 
     def _run_rhythmcount_compare_groups(
         self,
@@ -6357,32 +6440,53 @@ class AnalysisEngine:
         parameters: Dict[str, Any],
         params: RhythmCountParameters,
     ) -> AnalysisResult:
-        """Compare count-based cosinor models across all groups in condition_col."""
-        import json
+        """Compare count-based cosinor models across all groups, for each period in the range."""
+        from dataclasses import replace as dc_replace
 
-        # Build X/Y/group DataFrame with all conditions
+        # Build X/Y/group DataFrame with all conditions (done once, period-independent)
         df_xy = data[[time_col, variable, condition_col]].copy()
         df_xy = df_xy.rename(columns={time_col: 'X', variable: 'Y'})
         df_xy = df_xy.dropna(subset=['X', 'Y'])
-
         self._rhythmcount.load_data(df_xy)
 
-        result = self._rhythmcount.compare_groups(
-            group_column=condition_col,
-            params=params,
-            plot_comparison=False,
-        )
+        period_param = parameters.get('period', 24.0)
+        periods = period_param if isinstance(period_param, list) else [period_param]
 
-        table_json = None
-        if result.success and not result.results_table.empty:
-            table_json = result.results_table.to_json(orient='records', default_handler=str)
+        results = []
+        for period in periods:
+            per_params = dc_replace(params, period=float(period))
+            result = self._rhythmcount.compare_groups(
+                group_column=condition_col,
+                params=per_params,
+                plot_comparison=False,
+            )
 
-        return AnalysisResult(
-            variable=variable or '',
-            condition='all',
-            method='rhythmcount_compare_groups',
-            period=params.period,
-            results_table_json=table_json,
-            success=result.success,
-            message=f"Group comparison ({result.group_column}), criterion={result.selection_test}" + (f" | Error: {result.error}" if result.error else ""),
-        )
+            table_json = None
+            if result.success and not result.results_table.empty:
+                table_json = result.results_table.to_json(orient='records', default_handler=str)
+
+            results.append(AnalysisResult(
+                variable=variable or '',
+                condition='all',
+                method='rhythmcount_compare_groups',
+                period=float(period),
+                results_table_json=table_json,
+                success=result.success,
+                message=(
+                    f"Period={period}h — Group comparison ({result.group_column}), "
+                    f"criterion={result.selection_test}"
+                    + (f" | Error: {result.error}" if result.error else "")
+                ),
+            ))
+
+        if not results:
+            return AnalysisResult(
+                variable=variable or '', condition='all',
+                method='rhythmcount_compare_groups', success=False,
+                message="compare_groups returned no results.",
+            )
+
+        if len(results) > 1:
+            return results
+
+        return results[0]

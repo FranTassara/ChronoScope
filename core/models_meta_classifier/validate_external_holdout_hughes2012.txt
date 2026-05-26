@@ -3,10 +3,10 @@ ChronoScope CRS-AI — EXTERNAL LODO VALIDATION REPORT
 GSE29972: Hughes 2012, Drosophila melanogaster brain
 ================================================================================
 
-  Run date:    2026-05-26 11:44
+  Run date:    2026-05-26 17:37
   Model file:  consensus_rf_model.pkl
-  Model size:  24025.4 KB
-  Model MD5:   4a49283e026a
+  Model size:  24263.2 KB
+  Model MD5:   b4a0340628a9
   Dataset:     GSE29972  (Hughes et al. 2012)
 
 1. DATASET SUMMARY
@@ -48,42 +48,42 @@ GSE29972: Hughes 2012, Drosophila melanogaster brain
 
   95% CIs from percentile bootstrap (1000 valid resamples of 1000):
 
-  ROC-AUC:        0.9394  [95% CI 0.8000, 1.0000]
-  Avg. Precision: 0.9723  [95% CI 0.8972, 1.0000]
+  ROC-AUC:        0.9394  [95% CI 0.7917, 1.0000]
+  Avg. Precision: 0.9758  [95% CI 0.9028, 1.0000]
   Accuracy:       0.8235  [95% CI 0.6471, 1.0000]
-  Brier score:    0.1326  [95% CI 0.0852, 0.1786]  (lower = better calibration)
+  Brier score:    0.1408  [95% CI 0.0907, 0.1933]  (lower = better calibration)
 
   Confusion matrix (threshold 0.5):
 
                         Predicted
                    Arrhythmic  Rhythmic
-    Actual Arr            5         1
-    Actual Rhy            2         9
+    Actual Arr            4         2
+    Actual Rhy            1        10
 
-    TP=9  FP=1  TN=5  FN=2
+    TP=10  FP=2  TN=4  FN=1
 
 4. PER-INSTANCE PREDICTIONS
 --------------------------------------------------------------------------------
 
   Gene                Label  P(rhythmic)   Predicted
   -----------------  -----  -----------  ---------
-  Act5C                   0       0.4908  Arrhythmic
-  Clk                     1       0.8877    Rhythmic
-  GstD1                   0       0.4196  Arrhythmic
-  Hsc70-4                 0       0.4652  Arrhythmic
-  Hsc70Cb                 0       0.1413  Arrhythmic
-  NPF                     1       0.8060    Rhythmic
-  Pdp1                    1       0.5496    Rhythmic
-  RpL32                   0       0.5272    Rhythmic
-  alphaTub84B             0       0.3382  Arrhythmic
-  cwo                     1       0.9024    Rhythmic
-  cyc                     1       0.4286  Arrhythmic
-  dco                     1       0.4995  Arrhythmic
-  nmo                     1       0.6968    Rhythmic
-  per                     1       0.7130    Rhythmic
-  sgg                     1       0.5855    Rhythmic
-  tim                     1       0.8566    Rhythmic
-  vri                     1       0.9451    Rhythmic
+  Act5C                   0       0.4972  Arrhythmic
+  Clk                     1       0.8634    Rhythmic
+  GstD1                   0       0.5161    Rhythmic
+  Hsc70-4                 0       0.4972  Arrhythmic
+  Hsc70Cb                 0       0.1602  Arrhythmic
+  NPF                     1       0.7535    Rhythmic
+  Pdp1                    1       0.5222    Rhythmic
+  RpL32                   0       0.5060    Rhythmic
+  alphaTub84B             0       0.2813  Arrhythmic
+  cwo                     1       0.8705    Rhythmic
+  cyc                     1       0.3725  Arrhythmic
+  dco                     1       0.5273    Rhythmic
+  nmo                     1       0.6877    Rhythmic
+  per                     1       0.6815    Rhythmic
+  sgg                     1       0.6815    Rhythmic
+  tim                     1       0.8490    Rhythmic
+  vri                     1       0.9197    Rhythmic
 
 5. INTERPRETATION
 --------------------------------------------------------------------------------

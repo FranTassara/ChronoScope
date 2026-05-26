@@ -2829,7 +2829,10 @@ class AnalysisPanel(QWidget):
                  "Compute bootstrap confidence intervals for amplitude, MESOR, and peak time(s). "
                  "Requires specifying the count model and number of components (typically from a "
                  "prior Best Model run). Note: this method requires reference peaks from a previous "
-                 "Best Model analysis."),
+                 "Best Model analysis. "
+                 "A separate bootstrap is run for each (period, N) combination — "
+                 "for faster results, it is recommended to set a single period and a single component "
+                 "to match the best model found previously."),
                 ("Compare Groups",
                  "Independently fit and compare count-based cosinor models across all groups "
                  "(conditions). For each group, selects the best model and computes bootstrap CIs "

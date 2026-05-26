@@ -990,6 +990,12 @@ class ResultsPanel(QWidget):
         # Check if we have JTK-family results
         has_jtk = any(r.get('method') in JTK_METHODS for r in self._results)
 
+        # Check if we have RhythmCount results
+        RC_METHODS = {'rhythmcount_single', 'rhythmcount_all_models', 'rhythmcount_best_model',
+                      'rhythmcount_parameter_cis', 'rhythmcount_compare_groups'}
+        has_rhythmcount_cis = any(r.get('method') == 'rhythmcount_parameter_cis' for r in self._results)
+        has_rhythmcount = any(r.get('method') in RC_METHODS for r in self._results)
+
         # Determine columns based on result type
         if is_comparison:
             has_circacompare_compare = any(r.get('method') == 'circacompare_compare' for r in self._results)
@@ -1086,6 +1092,20 @@ class ResultsPanel(QWidget):
                 if any(r.get('best_model') is not None for r in self._results):
                     columns.append('best_model')
                     headers.append('Best Fit')
+            # For RhythmCount: Parameter Confidence Intervals
+            elif has_rhythmcount_cis:
+                columns = ['variable', 'condition', 'method', 'period', 'n_components',
+                           'amplitude_ci', 'mesor_ci', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Period (h)', 'Components',
+                           'CI (Amplitude)', 'CI (MESOR)', 'Notes']
+            # For RhythmCount: Fit Single / All Models / Best Model
+            elif has_rhythmcount:
+                columns = ['variable', 'condition', 'method', 'period', 'n_components',
+                           'mesor', 'amplitude', 'p_value', 'aic', 'bic',
+                           'rss', 'log_likelihood', 'r_squared', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Period (h)', 'Components',
+                           'MESOR', 'Amplitude', 'p (LRT)', 'AIC', 'BIC',
+                           'RSS', 'Log-Likelihood', 'McFadden R²', 'Notes']
             # For Harmonic Cosinor
             elif any(r.get('method') == 'harmonic_cosinor' for r in self._results):
                 columns = ['variable', 'condition', 'method', 'period', 'n_components',
