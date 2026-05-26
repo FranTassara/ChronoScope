@@ -1667,8 +1667,8 @@ plus derived consensus metrics:
       twins, ck1, NPF, shaggy, dbt. Used as negatives in TH
       (dopaminergic outgroup -- clock genes expected non-rhythmic).
 
-    Drosophila non-rhythmic genes (18): RpL32, Act5C, Act5c,
-      Act88F, alphaTub84B, Gapdh1, Gapdh2, Sdha, eIF1A,
+    Drosophila non-rhythmic genes (17): RpL32, Act5C, Act88F,
+      alphaTub84B, Gapdh1, Gapdh2, Sdha, eIF1A,
       eEF1alpha1, Rpl13, Rps17, Tbp, GstD1, Hsc70-4, Hsc70Cb,
       CG8187, CG7434. Used as negatives in all four cell types.
 
