@@ -6183,11 +6183,6 @@ class AnalysisEngine:
             )
 
         df = pd.DataFrame(rows)
-        table_json = df.to_json(orient='records', default_handler=str)
-
-        # Surface the best row (lowest AIC among successful fits)
-        successful = df[df['success']]
-        best = successful.loc[successful['AIC'].idxmin()] if not successful.empty else df.iloc[0]
 
         def _safe(val):
             try:
@@ -6195,30 +6190,37 @@ class AnalysisEngine:
             except (TypeError, ValueError):
                 return None
 
-        n_periods = len(periods)
-        n_comps_tested = len(n_comps)
-        return AnalysisResult(
-            variable=variable,
-            condition=condition,
-            method='rhythmcount_single',
-            mesor=_safe(best.get('mesor')),
-            amplitude=_safe(best.get('amplitude')),
-            p_value=_safe(best.get('llr_pvalue')),
-            aic=_safe(best.get('AIC')),
-            bic=_safe(best.get('BIC')),
-            rss=_safe(best.get('RSS')),
-            log_likelihood=_safe(best.get('log_likelihood')),
-            r_squared=_safe(best.get('McFadden_R2')),
-            n_components=int(best.get('n_components', 1)),
-            period=float(best.get('period', periods[0])),
-            results_table_json=table_json,
-            success=True,
-            message=(
-                f"Tested {n_periods} period(s) × {n_comps_tested} N(s) = {len(rows)} fits. "
-                f"Best (AIC): {best.get('count_model')}, N={best.get('n_components')}, "
-                f"period={best.get('period')}h"
-            ),
-        )
+        def _row_to_result(row) -> AnalysisResult:
+            err = row.get('error', '')
+            msg = err if err else (
+                f"Period={row.get('period')}h, N={row.get('n_components')}, "
+                f"Model={row.get('count_model')}"
+            )
+            return AnalysisResult(
+                variable=variable,
+                condition=condition,
+                method='rhythmcount_single',
+                mesor=_safe(row.get('mesor')),
+                amplitude=_safe(row.get('amplitude')),
+                p_value=_safe(row.get('llr_pvalue')),
+                aic=_safe(row.get('AIC')),
+                bic=_safe(row.get('BIC')),
+                rss=_safe(row.get('RSS')),
+                log_likelihood=_safe(row.get('log_likelihood')),
+                r_squared=_safe(row.get('McFadden_R2')),
+                n_components=int(row.get('n_components', 1)),
+                period=float(row.get('period', periods[0])),
+                success=bool(row.get('success', False)),
+                message=msg,
+            )
+
+        # Multiple (period, n_comp) combinations → return one result per row,
+        # matching CosinorPy's behaviour so the UI shows a row per period.
+        if len(rows) > 1:
+            return [_row_to_result(row) for _, row in df.iterrows()]
+
+        # Single combination → keep original single-result behaviour.
+        return _row_to_result(df.iloc[0])
 
     def _run_rhythmcount_all_models(
         self,
