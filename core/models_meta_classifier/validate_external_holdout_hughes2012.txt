@@ -3,10 +3,10 @@ ChronoScope CRS-AI — EXTERNAL LODO VALIDATION REPORT
 GSE29972: Hughes 2012, Drosophila melanogaster brain
 ================================================================================
 
-  Run date:    2026-05-22 21:48
+  Run date:    2026-05-26 11:44
   Model file:  consensus_rf_model.pkl
-  Model size:  23760.0 KB
-  Model MD5:   42051069ec0f
+  Model size:  24025.4 KB
+  Model MD5:   4a49283e026a
   Dataset:     GSE29972  (Hughes et al. 2012)
 
 1. DATASET SUMMARY
@@ -20,12 +20,12 @@ GSE29972: Hughes 2012, Drosophila melanogaster brain
               Fly housekeeping genes (NON_RHYTHMIC_GENES_FLY) = 0
               No per-cell-type complexity (whole-brain tissue)
 
-  Total instances:    18
+  Total instances:    17
     Rhythmic (pos):   11
-    Arrhythmic (neg): 7
+    Arrhythmic (neg): 6
 
   Positive genes (clock): Clk, NPF, Pdp1, cwo, cyc, dco, nmo, per, sgg, tim, vri
-  Negative genes (HK):    Act5C, Act5c, GstD1, Hsc70-4, Hsc70Cb, RpL32, alphaTub84B
+  Negative genes (HK):    Act5C, GstD1, Hsc70-4, Hsc70Cb, RpL32, alphaTub84B
 
 2. VALIDATION DESIGN
 --------------------------------------------------------------------------------
@@ -48,43 +48,42 @@ GSE29972: Hughes 2012, Drosophila melanogaster brain
 
   95% CIs from percentile bootstrap (1000 valid resamples of 1000):
 
-  ROC-AUC:        0.8961  [95% CI 0.7222, 1.0000]
-  Avg. Precision: 0.9498  [95% CI 0.8457, 1.0000]
-  Accuracy:       0.7778  [95% CI 0.6111, 0.9444]
-  Brier score:    0.1430  [95% CI 0.0869, 0.1925]  (lower = better calibration)
+  ROC-AUC:        0.9394  [95% CI 0.8000, 1.0000]
+  Avg. Precision: 0.9723  [95% CI 0.8972, 1.0000]
+  Accuracy:       0.8235  [95% CI 0.6471, 1.0000]
+  Brier score:    0.1326  [95% CI 0.0852, 0.1786]  (lower = better calibration)
 
   Confusion matrix (threshold 0.5):
 
                         Predicted
                    Arrhythmic  Rhythmic
-    Actual Arr            5         2
+    Actual Arr            5         1
     Actual Rhy            2         9
 
-    TP=9  FP=2  TN=5  FN=2
+    TP=9  FP=1  TN=5  FN=2
 
 4. PER-INSTANCE PREDICTIONS
 --------------------------------------------------------------------------------
 
   Gene                Label  P(rhythmic)   Predicted
   -----------------  -----  -----------  ---------
-  Act5C                   0       0.4904  Arrhythmic
-  Act5c                   0       0.4904  Arrhythmic
-  Clk                     1       0.9463    Rhythmic
-  GstD1                   0       0.5116    Rhythmic
-  Hsc70-4                 0       0.3947  Arrhythmic
-  Hsc70Cb                 0       0.1475  Arrhythmic
-  NPF                     1       0.8196    Rhythmic
-  Pdp1                    1       0.5370    Rhythmic
-  RpL32                   0       0.5100    Rhythmic
-  alphaTub84B             0       0.3554  Arrhythmic
-  cwo                     1       0.9250    Rhythmic
-  cyc                     1       0.4334  Arrhythmic
-  dco                     1       0.4117  Arrhythmic
-  nmo                     1       0.7094    Rhythmic
-  per                     1       0.6586    Rhythmic
-  sgg                     1       0.6376    Rhythmic
-  tim                     1       0.8972    Rhythmic
-  vri                     1       0.9520    Rhythmic
+  Act5C                   0       0.4908  Arrhythmic
+  Clk                     1       0.8877    Rhythmic
+  GstD1                   0       0.4196  Arrhythmic
+  Hsc70-4                 0       0.4652  Arrhythmic
+  Hsc70Cb                 0       0.1413  Arrhythmic
+  NPF                     1       0.8060    Rhythmic
+  Pdp1                    1       0.5496    Rhythmic
+  RpL32                   0       0.5272    Rhythmic
+  alphaTub84B             0       0.3382  Arrhythmic
+  cwo                     1       0.9024    Rhythmic
+  cyc                     1       0.4286  Arrhythmic
+  dco                     1       0.4995  Arrhythmic
+  nmo                     1       0.6968    Rhythmic
+  per                     1       0.7130    Rhythmic
+  sgg                     1       0.5855    Rhythmic
+  tim                     1       0.8566    Rhythmic
+  vri                     1       0.9451    Rhythmic
 
 5. INTERPRETATION
 --------------------------------------------------------------------------------

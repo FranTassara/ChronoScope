@@ -352,6 +352,7 @@ def main():
     X_train, X_test = X[train_idx], X[test_idx]
     y_train, y_test = y[train_idx], y[test_idx]
     groups_train = groups[train_idx]
+    meta_test = [kept_metadata[i] for i in test_idx]
 
     print(f"  Train set: {len(X_train)} samples "
           f"({y_train.sum()} rhythmic, {len(y_train) - y_train.sum()} non-rhythmic)")
@@ -549,7 +550,13 @@ def main():
     model_dir.mkdir(exist_ok=True)
 
     # y_true + y_proba CSV — used for ROC curve and figures
-    holdout_df = pd.DataFrame({'y_true': y_test, 'y_proba': y_proba})
+    holdout_df = pd.DataFrame({
+        'y_true': y_test,
+        'y_proba': y_proba,
+        'gene': [m.get('gene', f"synth_{m.get('instance_id', '?')}") for m in meta_test],
+        'source': [m.get('source', 'synthetic') for m in meta_test],
+        'signal_type': [m['signal_type'] for m in meta_test],
+    })
     holdout_path = model_dir / 'holdout_predictions.csv'
     holdout_df.to_csv(holdout_path, index=False)
     print(f"  Holdout predictions saved: {holdout_path}  ({len(holdout_df)} rows)")

@@ -482,7 +482,7 @@ for m, p in zip(kept_meta, y_proba):
 # ---------------------------------------------------------------------------
 # Write report
 # ---------------------------------------------------------------------------
-print(f"\nWriting report → {REPORT_PATH}")
+print(f"\nWriting report -> {REPORT_PATH}")
 W = 80
 run_date = datetime.now().strftime('%Y-%m-%d %H:%M')
 

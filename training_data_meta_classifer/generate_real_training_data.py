@@ -94,7 +94,7 @@ KNOWN_CIRCADIAN_GENES_FLY: Set[str] = {
 
 # Drosophila housekeeping genes — should always be non-rhythmic
 NON_RHYTHMIC_GENES_FLY: Set[str] = {
-    'RpL32', 'Act5C', 'Act5c', 'Act88F', 'alphaTub84B',
+    'RpL32', 'Act5C', 'Act88F', 'alphaTub84B',
     'Gapdh1', 'Gapdh2', 'Sdha', 'eIF1A', 'eEF1alpha1',
     'Rpl13', 'Rps17', 'Tbp', 'GstD1', 'Hsc70-4', 'Hsc70Cb',
     'CG8187', 'CG7434',

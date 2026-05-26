@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Path setup — must mirror train_consensus_model.py
 # ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.feature_extraction import extract_features, FEATURE_NAMES  # noqa: E402
