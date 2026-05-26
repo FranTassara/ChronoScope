@@ -1795,8 +1795,7 @@ class AnalysisPanel(QWidget):
         self._ai_consensus_info_label = QLabel(
             "ℹ Period applies to JTK, Cosinor, Lomb-Scargle and Harmonic searches. "
             "Values outside [18, 32]h are automatically clipped to the model's "
-            "training window. Components controls only the Harmonic Cosinor "
-            "sub-method display — it does not affect the consensus probability."
+            "training window."
         )
         self._ai_consensus_info_label.setWordWrap(True)
         self._ai_consensus_info_label.setStyleSheet(
@@ -2513,12 +2512,9 @@ class AnalysisPanel(QWidget):
         # AI CONSENSUS
         # =====================================================================
         elif module_text == "AI Consensus":
-            # AI Consensus exposes only the two parameters that
-            # _resolve_params() actually honors:
-            #   - Period (min, max): bounded override, clipped to [18, 32]h
-            #   - Components: free override, drives only the Harmonic
-            #                 sub-method display panel (not the model)
-            # Everything else is locked at training defaults.
+            # AI Consensus exposes only Period (min, max).
+            # n_harmonics is intentionally hidden: it has zero effect on the
+            # consensus probability (harmonic features were dropped in v2).
             self._show_param("Period:")
             self._set_period_mode('range')
             # Hide the step controls — the AI uses fixed internal grids
@@ -2526,7 +2522,6 @@ class AnalysisPanel(QWidget):
             # LS log-spaced 1000 points), so the step value is ignored.
             self._period_step_label.setVisible(False)
             self._period_step_spin.setVisible(False)
-            self._show_param("Components:")
             self._set_row_visible_for_widget(
                 self._ai_consensus_info_label, True
             )
