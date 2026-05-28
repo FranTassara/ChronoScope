@@ -322,7 +322,12 @@ class AWDDataLoader:
 
     def get_summary(self) -> Optional[AWDSummary]:
         return self._summary
-        
+
+    def get_available_dates(self) -> Tuple[Optional[datetime], Optional[datetime]]:
+        if self._raw_data is None or 'datetime' not in self._raw_data.columns:
+            return None, None
+        return (self._raw_data['datetime'].min(), self._raw_data['datetime'].max())
+
     def get_time_column(self) -> str: return self._time_col
     def get_condition_column(self) -> str: return self._condition_col
     def get_variable_columns(self) -> List[str]: return self._variable_cols.copy()
@@ -440,13 +445,21 @@ class MultiAWDDataLoader:
                 self._files[index].loader._config.condition_name = condition_name
             self._combined_data = None
 
+    def update_subject_id(self, index: int, subject_id: str) -> None:
+        if 0 <= index < len(self._files):
+            if self._files[index].loader:
+                self._files[index].loader._config.subject_id = subject_id
+            self._combined_data = None
+
     def set_shared_config(self, config: AWDConfig) -> None:
         self._shared_config = config
         for entry in self._files:
             if entry.loader:
                 ind_condition = entry.condition_name
+                ind_subject = entry.loader._config.subject_id  # preserve per-animal subject_id
                 new_config = AWDConfig(**config.__dict__)
                 new_config.condition_name = ind_condition
+                new_config.subject_id = ind_subject
                 entry.loader.configure(new_config)
                 entry.summary = entry.loader.get_summary()
         self._combined_data = None
@@ -576,3 +589,23 @@ class MultiAWDDataLoader:
             'total_data_points': total_rows,
             'missing_data_points': total_missing
         }
+
+    def get_conditions(self) -> List[str]:
+        return [e.condition_name for e in self._files if e.is_loaded]
+
+    def get_time_column(self) -> str:
+        return self._time_col
+
+    def get_condition_column(self) -> str:
+        return self._condition_col
+
+    def get_variable_columns(self) -> List[str]:
+        return self._variable_cols.copy()
+
+    def get_timepoints(self) -> List[float]:
+        if self._combined_data is None:
+            return []
+        return sorted(self._combined_data['time'].unique().tolist())
+
+    def get_columns(self) -> List[str]:
+        return ['time', 'condition', 'subject', 'activity']

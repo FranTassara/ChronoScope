@@ -113,7 +113,7 @@ class AnalysisWorker(QThread):
             engine = AnalysisEngine()
 
             # Get the full dataset
-            if self.source_type == 'csv' or self.source_type == 'dam':
+            if self.source_type in ('csv', 'dam', 'awd'):
                 data = self.loader.get_data()
                 time_col = self.loader.get_time_column()
                 condition_col = self.loader._condition_col if hasattr(self.loader, '_condition_col') else 'condition'
@@ -171,7 +171,7 @@ class AnalysisWorker(QThread):
                             progress_msg
                         )
 
-                        if self.source_type == 'csv' or self.source_type == 'dam':
+                        if self.source_type in ('csv', 'dam', 'awd'):
                             # Get CSV/DAM file path from loader for saving plots
                             csv_path = getattr(self.loader, '_filepath', None)
                             result = engine.run_comparison(
@@ -220,7 +220,7 @@ class AnalysisWorker(QThread):
                                 progress_msg
                             )
 
-                            if self.source_type == 'csv' or self.source_type == 'dam':
+                            if self.source_type in ('csv', 'dam', 'awd'):
                                 csv_path = getattr(self.loader, '_filepath', None)
                                 result = engine.run_comparison(
                                     data, var, cond1, cond2, analysis_type,
@@ -272,7 +272,7 @@ class AnalysisWorker(QThread):
                             progress_msg
                         )
 
-                        if self.source_type == 'csv' or self.source_type == 'dam':
+                        if self.source_type in ('csv', 'dam', 'awd'):
                             # Get CSV/DAM file path from loader for saving plots
                             csv_path = getattr(self.loader, '_filepath', None)
 
@@ -306,7 +306,7 @@ class AnalysisWorker(QThread):
             elif analysis_type == AnalysisType.COSINORPY_PERIODOGRAM:
                 self.progress.emit(10, "Generating periodograms...")
 
-                if self.source_type == 'csv' or self.source_type == 'dam':
+                if self.source_type in ('csv', 'dam', 'awd'):
                     # Get CSV/DAM file path from loader for saving plots
                     csv_path = getattr(self.loader, '_filepath', None)
 
@@ -355,7 +355,7 @@ class AnalysisWorker(QThread):
                                 progress_msg
                             )
 
-                            if self.source_type == 'csv' or self.source_type == 'dam':
+                            if self.source_type in ('csv', 'dam', 'awd'):
                                 # Get CSV/DAM file path from loader for saving plots
                                 csv_path = getattr(self.loader, '_filepath', None)
                                 result = engine.run_analysis(
@@ -2074,7 +2074,7 @@ class AnalysisPanel(QWidget):
             # Independent: attempt to show per-condition periods
             n_conditions = 0
             conditions = []
-            if hasattr(self, '_loader') and self._loader and self._source_type in ('csv', 'dam'):
+            if hasattr(self, '_loader') and self._loader and self._source_type in ('csv', 'dam', 'awd'):
                 try:
                     dataset_info = self._loader.get_dataset_info()
                     n_conditions = len(dataset_info.conditions) if dataset_info.conditions else 0
@@ -2140,7 +2140,7 @@ class AnalysisPanel(QWidget):
 
             if comparison_type == "Independent Models":
                 # Count unique conditions in data
-                if hasattr(self, '_loader') and self._loader and self._source_type in ('csv', 'dam'):
+                if hasattr(self, '_loader') and self._loader and self._source_type in ('csv', 'dam', 'awd'):
                     dataset_info = self._loader.get_dataset_info()
                     n_conditions = len(dataset_info.conditions) if dataset_info.conditions else 0
 
@@ -2741,7 +2741,7 @@ class AnalysisPanel(QWidget):
 
         # Check if subject column exists (for dependent data methods)
         has_subject_col = False
-        if hasattr(self, '_loader') and self._loader and self._source_type in ('csv', 'dam'):
+        if hasattr(self, '_loader') and self._loader and self._source_type in ('csv', 'dam', 'awd'):
             dataset_info = self._loader.get_dataset_info()
             has_subject_col = dataset_info.subject_column is not None
 
@@ -3256,9 +3256,9 @@ class AnalysisPanel(QWidget):
         # Update variable list
         self._var_list.clear()
 
-        if source_type == 'csv' or source_type == 'dam':
-            # CSV/DAM: Show all available variables
-            if source_type == 'dam':
+        if source_type in ('csv', 'dam', 'awd'):
+            # CSV/DAM/AWD: Show all available variables
+            if source_type in ('dam', 'awd'):
                 self._var_label.setText("Activity:")
             else:
                 self._var_label.setText("Variables:")
@@ -3308,7 +3308,7 @@ class AnalysisPanel(QWidget):
         self._cond1_combo.clear()
         self._cond2_combo.clear()
 
-        if source_type == 'csv' or source_type == 'dam':
+        if source_type in ('csv', 'dam', 'awd'):
             conditions = loader.get_conditions()
         else:  # rosbash
             info = loader.get_dataset_info()
@@ -3326,8 +3326,8 @@ class AnalysisPanel(QWidget):
         self._available_variables = self._all_genes if source_type == 'rosbash' else variables
         self._available_conditions = conditions
 
-        # Populate LME comboboxes with available columns (for CSV/DAM data)
-        if source_type == 'csv' or source_type == 'dam':
+        # Populate LME comboboxes with available columns (for CSV/DAM/AWD data)
+        if source_type in ('csv', 'dam', 'awd'):
             self._populate_lme_columns(loader)
 
         # Detect and display data type information
@@ -3429,7 +3429,7 @@ class AnalysisPanel(QWidget):
                 ai_consensus_idx = i
                 break
 
-        if source_type == 'dam':
+        if source_type in ('dam', 'awd'):
             if ai_consensus_idx is not None:
                 self._module_combo.removeItem(ai_consensus_idx)
         else:
@@ -3438,14 +3438,14 @@ class AnalysisPanel(QWidget):
                 insert_pos = min(3, self._module_combo.count())
                 self._module_combo.insertItem(insert_pos, "AI Consensus")
 
-        # --- Visualization: show only for DAM data ---
+        # --- Visualization: show for DAM and AWD data ---
         has_visualization = False
         for i in range(self._module_combo.count()):
             if self._module_combo.itemText(i) == "Visualization":
                 has_visualization = True
                 break
 
-        if source_type == 'dam':
+        if source_type in ('dam', 'awd'):
             if not has_visualization:
                 self._module_combo.addItem("Visualization")
         else:

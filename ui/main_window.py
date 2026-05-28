@@ -301,6 +301,10 @@ https://github.com/FranTassara/chronoscope
             n_channels = loader.get_channel_count()
             info = loader.get_dataset_info()
             status = f"DAM: {n_channels} channels, {len(info.timepoints)} timepoints"
+        elif source_type == 'awd':
+            n_animals = sum(1 for e in loader.get_files() if e.is_loaded)
+            info = loader.get_dataset_info()
+            status = f"AWD: {n_animals} animals, {len(info.timepoints)} timepoints"
         else:
             info = loader.get_dataset_info()
             status = f"Rosbash: {info.n_genes} genes, {info.n_cells} cells"
