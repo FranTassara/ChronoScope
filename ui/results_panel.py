@@ -540,22 +540,36 @@ class PlotCanvas(FigureCanvas):
         lighting_phases: dict = None,
     ):
         """
-        Plot double-plotted actogram with optional LD/DD/LL phase segmentation.
+        Plot double-plotted actogram.
 
-        Shows 48h on X-axis (current day 0-24h, next day 0-24h).
-        Days on Y-axis. A colored sidebar on the right marks LD/DD/LL phases.
+        Background per row reflects the lighting phase of that day:
+          - LD rows : alternating light-yellow / gray (12:12 LD cycle)
+          - DD rows : uniform gray
+          - LL rows : uniform light yellow
+          - No phases defined : standard 12:12 LD shading for all rows
 
         Args:
-            actogram_data: Dict mapping condition to dict with 'days', 'zt_times', 'matrix'
-            conditions: List of condition names
-            lighting_phases: Optional dict {'LD': (start, end), 'DD': (start, end), 'LL': ...}
-            title: Plot title
+            actogram_data   : condition → {days, zt_times, matrix}
+            conditions      : list of condition names
+            lighting_phases : optional dict {phase: (start_day, end_day)}
+            title           : plot title
         """
         self.fig.clear()
 
-        # Phase colors for the sidebar stripe
-        _phase_colors = {'LD': '#f9d71c', 'DD': '#222222', 'LL': '#fffde7'}
-        _phase_labels = {'LD': 'LD', 'DD': 'DD', 'LL': 'LL'}
+        # Build a day→phase lookup from lighting_phases
+        def _day_phase(day):
+            if not lighting_phases:
+                return 'LD'
+            for phase_name, phase_range in lighting_phases.items():
+                if phase_range is None:
+                    continue
+                p_start, p_end = phase_range
+                if p_start is None:
+                    continue
+                p_end_eff = p_end if p_end is not None else 99999
+                if p_start <= day <= p_end_eff:
+                    return phase_name
+            return 'LD'  # default if day falls outside all defined ranges
 
         n_conditions = len(conditions)
 
@@ -568,7 +582,6 @@ class PlotCanvas(FigureCanvas):
 
             data = actogram_data[cond]
             days = data['days']
-            zt_times = data['zt_times']
             matrix = np.array(data['matrix'])
 
             if len(matrix) == 0:
@@ -578,9 +591,31 @@ class PlotCanvas(FigureCanvas):
             n_days = len(days)
             n_bins = len(matrix[0]) if len(matrix) > 0 else 0
             bin_width = 48.0 / n_bins if n_bins > 0 else 1
-
             max_val = np.max(matrix) if np.max(matrix) > 0 else 1
 
+            # --- Row backgrounds (drawn first, zorder=0) ---
+            for i, day in enumerate(days):
+                y_bot = n_days - i - 1
+                y_top = n_days - i
+                phase = _day_phase(day)
+
+                if phase == 'DD':
+                    # Uniform gray across the full 48h
+                    ax.axhspan(y_bot, y_top, color='#bbbbbb', alpha=0.35, zorder=0)
+
+                elif phase == 'LL':
+                    # Uniform light yellow across the full 48h
+                    ax.axhspan(y_bot, y_top, color='#fff9c4', alpha=0.55, zorder=0)
+
+                else:
+                    # LD: alternating light (yellow) / dark (gray) every 12h
+                    # xmin/xmax are axis fractions (0–1 maps to 0–48 h)
+                    ax.axhspan(y_bot, y_top, xmin=0/48,  xmax=12/48, color='#fff176', alpha=0.45, zorder=0)
+                    ax.axhspan(y_bot, y_top, xmin=12/48, xmax=24/48, color='#9e9e9e', alpha=0.30, zorder=0)
+                    ax.axhspan(y_bot, y_top, xmin=24/48, xmax=36/48, color='#fff176', alpha=0.45, zorder=0)
+                    ax.axhspan(y_bot, y_top, xmin=36/48, xmax=48/48, color='#9e9e9e', alpha=0.30, zorder=0)
+
+            # --- Activity bars ---
             for i, day in enumerate(days):
                 row = matrix[i]
                 for j, val in enumerate(row):
@@ -588,55 +623,10 @@ class PlotCanvas(FigureCanvas):
                         x_pos = j * bin_width
                         height = 0.8 * (val / max_val)
                         ax.bar(x_pos, height, width=bin_width, bottom=n_days - i - 1,
-                               color='black', align='edge', linewidth=0)
+                               color='black', align='edge', linewidth=0, zorder=2)
 
-            # Light/dark cycle shading within each 48h row (standard LD 12:12)
-            ax.axvspan(0, 12, alpha=0.08, color='#ffe066', zorder=0)
-            ax.axvspan(12, 24, alpha=0.08, color='#888888', zorder=0)
-            ax.axvspan(24, 36, alpha=0.08, color='#ffe066', zorder=0)
-            ax.axvspan(36, 48, alpha=0.08, color='#888888', zorder=0)
-
-            # Phase segmentation: colored horizontal bands on the Y-axis area
-            if lighting_phases:
-                for phase_name, phase_range in lighting_phases.items():
-                    if phase_range is None:
-                        continue
-                    p_start, p_end = phase_range
-                    if p_start is None:
-                        continue
-                    color = _phase_colors.get(phase_name, '#cccccc')
-
-                    # Convert day numbers to y-positions
-                    # days are 1-based; y = n_days - day positions in the plot
-                    y_bottom_day = p_end if p_end is not None else max(days) + 1
-                    y_top_day = p_start
-
-                    # Clamp to plotted range
-                    y_bottom_day = min(y_bottom_day, max(days) + 1)
-                    y_top_day = max(y_top_day, min(days))
-
-                    # In actogram y-coords: day d maps to y = n_days - d
-                    y_bottom = n_days - y_bottom_day + 1
-                    y_top = n_days - y_top_day + 1
-
-                    # Draw a thin stripe to the right of the plot (x=49..50)
-                    ax.barh(
-                        y=(y_bottom + y_top) / 2,
-                        width=1.5,
-                        height=max(0.1, y_top - y_bottom),
-                        left=49,
-                        color=color,
-                        alpha=0.9,
-                        zorder=5,
-                    )
-                    ax.text(
-                        50.2, (y_bottom + y_top) / 2,
-                        _phase_labels.get(phase_name, phase_name),
-                        va='center', ha='left', fontsize=7,
-                        color='black', fontweight='bold',
-                    )
-
-            ax.set_xlim(0, 53 if lighting_phases else 48)
+            # --- Axes ---
+            ax.set_xlim(0, 48)
             ax.set_ylim(0, n_days)
             ax.set_xlabel('Time (hours)')
             ax.set_ylabel('Day')
@@ -1249,8 +1239,22 @@ class ResultsPanel(QWidget):
             # Check if this is an Activity Profile visualization
             is_activity_profile = any(r.get('type') == 'activity_profile' for r in self._results)
             if is_activity_profile:
-                columns = ['variable', 'method', 'conditions', 'message']
-                headers = ['Variable', 'Method', 'Conditions', 'Status']
+                columns = [
+                    'condition', 'n_subjects', 'n_days',
+                    'tau_h', 'tau_significant', 'phase_used',
+                    'IS', 'IV',
+                    'alpha_mean_h', 'alpha_sd_h',
+                    'rho_mean_h', 'rho_sd_h',
+                    'onset_sd_h', 'offset_sd_h',
+                ]
+                headers = [
+                    'Condition', 'n', 'Days',
+                    'τ (h)', 'τ sig. (p<0.05)', 'Phase (τ)',
+                    'IS', 'IV',
+                    'α mean (h)', 'α SD (h)',
+                    'ρ mean (h)', 'ρ SD (h)',
+                    'Onset SD (h)', 'Offset SD (h)',
+                ]
             # For CosinorPy periodogram, show just message
             elif has_cosinorpy_periodogram:
                 columns = ['variable', 'condition', 'method', 'message']
@@ -1397,6 +1401,78 @@ class ResultsPanel(QWidget):
 
         self._results_table.setColumnCount(len(columns))
         self._results_table.setHorizontalHeaderLabels(headers)
+
+        # ---------------------------------------------------------------
+        # Activity Profile: build one flat row per condition
+        # ---------------------------------------------------------------
+        if is_activity_profile:
+            result = self._results[0]
+            conditions_list = result.get('conditions', [])
+            n_subjects_map = result.get('n_subjects', {})
+            n_days_total = result.get('n_days', 0)
+            chi_sq_data = result.get('chi_sq_data', {})
+            is_iv_data = result.get('is_iv_data', {})
+            alpha_rho_data = result.get('alpha_rho_data', {})
+
+            self._results_table.setRowCount(len(conditions_list))
+            for i, cond in enumerate(conditions_list):
+                chi = chi_sq_data.get(cond, {})
+                iiv = is_iv_data.get(cond, {})
+                ar = alpha_rho_data.get(cond, {})
+
+                # τ significance: compare tau_qp against threshold
+                tau_qp = chi.get('tau_qp')
+                sig_thresh = chi.get('significance')
+                if tau_qp is not None and sig_thresh is not None:
+                    tau_sig = 'Yes' if tau_qp > sig_thresh else 'No'
+                else:
+                    tau_sig = 'N/A'
+
+                row_data = {
+                    'condition': cond,
+                    'n_subjects': n_subjects_map.get(cond, 'N/A'),
+                    'n_days': n_days_total,
+                    'tau_h': chi.get('tau'),
+                    'tau_significant': tau_sig,
+                    'phase_used': chi.get('phase_used', 'N/A'),
+                    'IS': iiv.get('IS'),
+                    'IV': iiv.get('IV'),
+                    'alpha_mean_h': ar.get('alpha_mean'),
+                    'alpha_sd_h': ar.get('alpha_sd'),
+                    'rho_mean_h': ar.get('rho_mean'),
+                    'rho_sd_h': ar.get('rho_sd'),
+                    'onset_sd_h': ar.get('onset_sd'),
+                    'offset_sd_h': ar.get('offset_sd'),
+                }
+
+                for j, col in enumerate(columns):
+                    val = row_data.get(col, 'N/A')
+                    if isinstance(val, float):
+                        import math as _math
+                        cell = 'N/A' if _math.isnan(val) else f'{val:.3f}'
+                    elif val is None:
+                        cell = 'N/A'
+                    else:
+                        cell = str(val)
+
+                    item = QTableWidgetItem(cell)
+                    # Highlight τ significance
+                    if col == 'tau_significant':
+                        if cell == 'Yes':
+                            item.setBackground(QColor(144, 238, 144))  # light green
+                        elif cell == 'No':
+                            item.setBackground(QColor(255, 180, 180))  # light red
+                    self._results_table.setItem(i, j, item)
+
+            # Hide all-N/A columns
+            for j in range(len(columns)):
+                all_na = all(
+                    (self._results_table.item(i, j) is None or
+                     self._results_table.item(i, j).text() in ('N/A', '-', ''))
+                    for i in range(len(conditions_list))
+                )
+                self._results_table.setColumnHidden(j, all_na)
+            return
 
         # Apply filter
         filtered = self._get_filtered_results()
@@ -1656,16 +1732,15 @@ class ResultsPanel(QWidget):
             conditions = result.get('conditions', [])
             n_days = result.get('n_days', 1)
 
-            # Show and rename all 7 tabs for Activity Profile
+            # Show tabs 0-5 for Activity Profile; keep tab 6 (Behavioral Metrics) hidden
             for i in range(self._viz_tabs.count()):
-                self._viz_tabs.setTabVisible(i, True)
+                self._viz_tabs.setTabVisible(i, i < 6)
             self._viz_tabs.setTabText(0, "Heatmap")
             self._viz_tabs.setTabText(1, "Daily Average")
             self._viz_tabs.setTabText(2, "Actogram")
             self._viz_tabs.setTabText(3, "Total Activity")
             self._viz_tabs.setTabText(4, "Onset/Offset")
             self._viz_tabs.setTabText(5, "Chi-sq Periodogram")
-            self._viz_tabs.setTabText(6, "Behavioral Metrics")
 
             self._bar_param_container.setVisible(False)
 
@@ -1699,12 +1774,6 @@ class ResultsPanel(QWidget):
                 chi_sq_data=chi_sq_data,
                 conditions=conditions,
                 title="Chi-square Periodogram (Sokolove-Bushell)"
-            )
-            self._metrics_canvas.plot_behavioral_metrics(
-                is_iv_data=is_iv_data,
-                alpha_rho_data=alpha_rho_data,
-                conditions=conditions,
-                title="Behavioral Metrics"
             )
             return
 
