@@ -1062,15 +1062,17 @@ class ResultsPanel(QWidget):
         bar_widget = QWidget()
         bar_layout = QVBoxLayout(bar_widget)
         
-        # Parameter selector for bar chart
-        bar_ctrl_layout = QHBoxLayout()
+        # Parameter selector for bar chart (hidden when tab is used as Actogram)
+        self._bar_param_container = QWidget()
+        bar_ctrl_layout = QHBoxLayout(self._bar_param_container)
+        bar_ctrl_layout.setContentsMargins(0, 0, 0, 0)
         bar_ctrl_layout.addWidget(QLabel("Parameter:"))
         self._bar_param_combo = QComboBox()
         self._bar_param_combo.addItems(['amplitude', 'mesor', 'acrophase_hours', 'p_value'])
         self._bar_param_combo.currentTextChanged.connect(self._update_bar_plot)
         bar_ctrl_layout.addWidget(self._bar_param_combo)
         bar_ctrl_layout.addStretch()
-        bar_layout.addLayout(bar_ctrl_layout)
+        bar_layout.addWidget(self._bar_param_container)
         
         bar_toolbar = NavigationToolbar(self._bar_canvas, self)
         bar_layout.addWidget(bar_toolbar)
@@ -1556,9 +1558,10 @@ class ResultsPanel(QWidget):
             method: The analysis method identifier
             is_comparison: Whether this is a comparison result
         """
-        # Default: hide all tabs first
+        # Default: hide all tabs first; restore the parameter selector
         for i in range(self._viz_tabs.count()):
             self._viz_tabs.setTabVisible(i, False)
+        self._bar_param_container.setVisible(True)
 
         # Activity Profile - all 5 specialized tabs
         # (handled separately in _update_plots before this is called)
@@ -1663,6 +1666,8 @@ class ResultsPanel(QWidget):
             self._viz_tabs.setTabText(4, "Onset/Offset")
             self._viz_tabs.setTabText(5, "Chi-sq Periodogram")
             self._viz_tabs.setTabText(6, "Behavioral Metrics")
+
+            self._bar_param_container.setVisible(False)
 
             self._fit_canvas.plot_activity_profile(
                 profile_data=profile_data,
