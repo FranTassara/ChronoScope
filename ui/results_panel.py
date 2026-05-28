@@ -536,20 +536,26 @@ class PlotCanvas(FigureCanvas):
         self,
         actogram_data: dict,
         conditions: list,
-        title: str = "Actogram (Double-Plotted)"
+        title: str = "Actogram (Double-Plotted)",
+        lighting_phases: dict = None,
     ):
         """
-        Plot double-plotted actogram.
+        Plot double-plotted actogram with optional LD/DD/LL phase segmentation.
 
         Shows 48h on X-axis (current day 0-24h, next day 0-24h).
-        Days on Y-axis. Classic visualization for circadian rhythms.
+        Days on Y-axis. A colored sidebar on the right marks LD/DD/LL phases.
 
         Args:
             actogram_data: Dict mapping condition to dict with 'days', 'zt_times', 'matrix'
             conditions: List of condition names
+            lighting_phases: Optional dict {'LD': (start, end), 'DD': (start, end), 'LL': ...}
             title: Plot title
         """
         self.fig.clear()
+
+        # Phase colors for the sidebar stripe
+        _phase_colors = {'LD': '#f9d71c', 'DD': '#222222', 'LL': '#fffde7'}
+        _phase_labels = {'LD': 'LD', 'DD': 'DD', 'LL': 'LL'}
 
         n_conditions = len(conditions)
 
@@ -569,31 +575,68 @@ class PlotCanvas(FigureCanvas):
                 ax.text(0.5, 0.5, f'No data for {cond}', ha='center', va='center')
                 continue
 
-            # Create actogram using bar representation
             n_days = len(days)
             n_bins = len(matrix[0]) if len(matrix) > 0 else 0
             bin_width = 48.0 / n_bins if n_bins > 0 else 1
 
-            # Normalize for display
             max_val = np.max(matrix) if np.max(matrix) > 0 else 1
 
             for i, day in enumerate(days):
                 row = matrix[i]
                 for j, val in enumerate(row):
                     if val > 0:
-                        x = j * bin_width
+                        x_pos = j * bin_width
                         height = 0.8 * (val / max_val)
-                        ax.bar(x, height, width=bin_width, bottom=n_days - i - 1,
+                        ax.bar(x_pos, height, width=bin_width, bottom=n_days - i - 1,
                                color='black', align='edge', linewidth=0)
 
-            # Add light/dark shading (0-12 light, 12-24 dark, 24-36 light, 36-48 dark)
-            ax.axvspan(0, 12, alpha=0.1, color='yellow')
-            ax.axvspan(12, 24, alpha=0.1, color='gray')
-            ax.axvspan(24, 36, alpha=0.1, color='yellow')
-            ax.axvspan(36, 48, alpha=0.1, color='gray')
+            # Light/dark cycle shading within each 48h row (standard LD 12:12)
+            ax.axvspan(0, 12, alpha=0.08, color='#ffe066', zorder=0)
+            ax.axvspan(12, 24, alpha=0.08, color='#888888', zorder=0)
+            ax.axvspan(24, 36, alpha=0.08, color='#ffe066', zorder=0)
+            ax.axvspan(36, 48, alpha=0.08, color='#888888', zorder=0)
 
-            # Configure axes
-            ax.set_xlim(0, 48)
+            # Phase segmentation: colored horizontal bands on the Y-axis area
+            if lighting_phases:
+                for phase_name, phase_range in lighting_phases.items():
+                    if phase_range is None:
+                        continue
+                    p_start, p_end = phase_range
+                    if p_start is None:
+                        continue
+                    color = _phase_colors.get(phase_name, '#cccccc')
+
+                    # Convert day numbers to y-positions
+                    # days are 1-based; y = n_days - day positions in the plot
+                    y_bottom_day = p_end if p_end is not None else max(days) + 1
+                    y_top_day = p_start
+
+                    # Clamp to plotted range
+                    y_bottom_day = min(y_bottom_day, max(days) + 1)
+                    y_top_day = max(y_top_day, min(days))
+
+                    # In actogram y-coords: day d maps to y = n_days - d
+                    y_bottom = n_days - y_bottom_day + 1
+                    y_top = n_days - y_top_day + 1
+
+                    # Draw a thin stripe to the right of the plot (x=49..50)
+                    ax.barh(
+                        y=(y_bottom + y_top) / 2,
+                        width=1.5,
+                        height=max(0.1, y_top - y_bottom),
+                        left=49,
+                        color=color,
+                        alpha=0.9,
+                        zorder=5,
+                    )
+                    ax.text(
+                        50.2, (y_bottom + y_top) / 2,
+                        _phase_labels.get(phase_name, phase_name),
+                        va='center', ha='left', fontsize=7,
+                        color='black', fontweight='bold',
+                    )
+
+            ax.set_xlim(0, 53 if lighting_phases else 48)
             ax.set_ylim(0, n_days)
             ax.set_xlabel('Time (hours)')
             ax.set_ylabel('Day')
@@ -601,7 +644,6 @@ class PlotCanvas(FigureCanvas):
             ax.set_xticks([0, 6, 12, 18, 24, 30, 36, 42, 48])
             ax.set_xticklabels(['0', '6', '12', '18', '24', '30', '36', '42', '48'])
 
-            # Y-ticks: show day numbers
             if n_days <= 20:
                 ax.set_yticks([n_days - d for d in days])
                 ax.set_yticklabels([str(d) for d in days])
@@ -728,6 +770,157 @@ class PlotCanvas(FigureCanvas):
         self.fig.tight_layout()
         self.draw()
 
+    # ------------------------------------------------------------------
+    # Chi-square periodogram (Sokolove-Bushell)
+    # ------------------------------------------------------------------
+
+    def plot_chi_square_periodogram(
+        self,
+        chi_sq_data: dict,
+        conditions: list,
+        title: str = "Chi-square Periodogram (Sokolove-Bushell)"
+    ):
+        """Plot Qp vs period for each condition, with significance line and τ annotation."""
+        self.fig.clear()
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
+                  '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
+
+        ax = self.fig.add_subplot(111)
+        any_plotted = False
+
+        for idx, cond in enumerate(conditions):
+            if cond not in chi_sq_data:
+                continue
+            res = chi_sq_data[cond]
+            periods = res.get('periods')
+            qp = res.get('qp')
+            tau = res.get('tau')
+            tau_qp = res.get('tau_qp')
+            significance = res.get('significance')
+
+            if periods is None or len(periods) == 0:
+                continue
+
+            color = colors[idx % len(colors)]
+            ax.plot(periods, qp, color=color, linewidth=1.5, label=cond)
+
+            if tau is not None and tau_qp is not None:
+                ax.axvline(tau, color=color, linestyle='--', linewidth=1, alpha=0.7)
+                ax.annotate(
+                    f'τ={tau:.1f}h',
+                    xy=(tau, tau_qp),
+                    xytext=(tau + 0.3, tau_qp),
+                    color=color,
+                    fontsize=8,
+                    va='center',
+                )
+
+            # Draw significance threshold once (first condition that has it)
+            if significance is not None and not any_plotted:
+                ax.axhline(significance, color='red', linestyle=':', linewidth=1.0,
+                           label='p=0.05 threshold')
+
+            phase_used = res.get('phase_used', 'all')
+            if phase_used != 'all' and idx == 0:
+                ax.set_title(f"{title}\n(computed on {phase_used} phase)", fontsize=10)
+
+            any_plotted = True
+
+        if not any_plotted:
+            ax.text(0.5, 0.5, 'No periodogram data available',
+                    ha='center', va='center', transform=ax.transAxes)
+        else:
+            if ax.get_title() == '':
+                ax.set_title(title, fontsize=10)
+            ax.set_xlabel('Period (h)')
+            ax.set_ylabel('Qp statistic')
+            ax.legend(fontsize=8)
+            ax.grid(True, alpha=0.3)
+
+        self.fig.tight_layout()
+        self.draw()
+
+    # ------------------------------------------------------------------
+    # Behavioral metrics: IS, IV, α, ρ
+    # ------------------------------------------------------------------
+
+    def plot_behavioral_metrics(
+        self,
+        is_iv_data: dict,
+        alpha_rho_data: dict,
+        conditions: list,
+        title: str = "Behavioral Metrics"
+    ):
+        """Bar chart of IS, IV, α (mean), ρ (mean) per condition plus onset/offset SD."""
+        self.fig.clear()
+
+        # Collect values
+        is_vals, iv_vals, alpha_vals, rho_vals = [], [], [], []
+        onset_sd_vals, offset_sd_vals = [], []
+        valid_conds = []
+
+        for cond in conditions:
+            iv_entry = is_iv_data.get(cond, {})
+            ar_entry = alpha_rho_data.get(cond, {})
+            IS = iv_entry.get('IS')
+            IV = iv_entry.get('IV')
+            alpha_m = ar_entry.get('alpha_mean')
+            rho_m = ar_entry.get('rho_mean')
+            if any(v is not None for v in [IS, IV, alpha_m, rho_m]):
+                valid_conds.append(cond)
+                is_vals.append(IS if IS is not None else float('nan'))
+                iv_vals.append(IV if IV is not None else float('nan'))
+                alpha_vals.append(alpha_m if alpha_m is not None else float('nan'))
+                rho_vals.append(rho_m if rho_m is not None else float('nan'))
+                onset_sd_vals.append(ar_entry.get('onset_sd', 0.0))
+                offset_sd_vals.append(ar_entry.get('offset_sd', 0.0))
+
+        if not valid_conds:
+            ax = self.fig.add_subplot(111)
+            ax.text(0.5, 0.5, 'No behavioral metrics available',
+                    ha='center', va='center', transform=ax.transAxes)
+            self.fig.tight_layout()
+            self.draw()
+            return
+
+        import numpy as np
+        n_conds = len(valid_conds)
+        x = np.arange(n_conds)
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
+                  '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
+        bar_colors = [colors[i % len(colors)] for i in range(n_conds)]
+
+        # 2×2 layout: IS | IV | α (with SD) | ρ (with SD)
+        axes = [self.fig.add_subplot(2, 3, i + 1) for i in range(6)]
+        metrics = [
+            (axes[0], is_vals, 'IS', 'Interdaily Stability', None, (0, 1)),
+            (axes[1], iv_vals, 'IV', 'Intradaily Variability', None, None),
+            (axes[2], alpha_vals, 'α (h)', 'Active phase duration', None, (0, 24)),
+            (axes[3], rho_vals, 'ρ (h)', 'Rest phase duration', None, (0, 24)),
+            (axes[4], onset_sd_vals, 'Onset SD (h)', 'Onset variability', None, None),
+            (axes[5], offset_sd_vals, 'Offset SD (h)', 'Offset variability', None, None),
+        ]
+
+        for ax, vals, ylabel, subplot_title, errs, ylim in metrics:
+            bars = ax.bar(x, vals, color=bar_colors, width=0.6)
+            ax.set_title(subplot_title, fontsize=9, fontweight='bold')
+            ax.set_ylabel(ylabel, fontsize=8)
+            ax.set_xticks(x)
+            ax.set_xticklabels(valid_conds, fontsize=7, rotation=15, ha='right')
+            if ylim:
+                ax.set_ylim(*ylim)
+            ax.grid(True, axis='y', alpha=0.3)
+            # Annotate values
+            for bar, val in zip(bars, vals):
+                import math
+                if val is not None and not math.isnan(val):
+                    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                            f'{val:.2f}', ha='center', va='bottom', fontsize=7)
+
+        self.fig.suptitle(title, fontsize=11, fontweight='bold')
+        self.fig.tight_layout()
+        self.draw()
+
 
 class ResultsPanel(QWidget):
     """
@@ -841,7 +1034,7 @@ class ResultsPanel(QWidget):
     
     def _create_visualization_tabs(self) -> QGroupBox:
         """Create visualization tabs."""
-        group = QGroupBox("Visualization")
+        group = QGroupBox("Visualization & Analysis")
         layout = QVBoxLayout(group)
         
         self._viz_tabs = QTabWidget()
@@ -902,6 +1095,24 @@ class ResultsPanel(QWidget):
         onset_layout.addWidget(self._onset_canvas)
         self._viz_tabs.addTab(onset_widget, "Activity Onset")
 
+        # Chi-square periodogram (Sokolove-Bushell) - Visualization module only
+        self._chisq_canvas = PlotCanvas(self, width=6, height=4)
+        chisq_widget = QWidget()
+        chisq_layout = QVBoxLayout(chisq_widget)
+        chisq_toolbar = NavigationToolbar(self._chisq_canvas, self)
+        chisq_layout.addWidget(chisq_toolbar)
+        chisq_layout.addWidget(self._chisq_canvas)
+        self._viz_tabs.addTab(chisq_widget, "Chi-sq Periodogram")
+
+        # Behavioral metrics: IS, IV, α, ρ - Visualization module only
+        self._metrics_canvas = PlotCanvas(self, width=6, height=4)
+        metrics_widget = QWidget()
+        metrics_layout = QVBoxLayout(metrics_widget)
+        metrics_toolbar = NavigationToolbar(self._metrics_canvas, self)
+        metrics_layout.addWidget(metrics_toolbar)
+        metrics_layout.addWidget(self._metrics_canvas)
+        self._viz_tabs.addTab(metrics_widget, "Behavioral Metrics")
+
         layout.addWidget(self._viz_tabs)
 
         return group
@@ -946,6 +1157,8 @@ class ResultsPanel(QWidget):
         self._bar_canvas.clear()
         self._period_canvas.clear()
         self._onset_canvas.clear()
+        self._chisq_canvas.clear()
+        self._metrics_canvas.clear()
         self._results_label.setText("No results")
         self._current_result_index = -1
     
@@ -1425,7 +1638,7 @@ class ResultsPanel(QWidget):
         is_comparison = 'condition1' in self._results[0] and 'condition2' in self._results[0]
 
         # =====================================================================
-        # ACTIVITY PROFILE - Special case with 5 custom tabs
+        # ACTIVITY PROFILE - Special case with 7 custom tabs
         # =====================================================================
         if self._results[0].get('type') == 'activity_profile':
             result = self._results[0]
@@ -1433,19 +1646,24 @@ class ResultsPanel(QWidget):
             actogram_data = result.get('actogram_data', {})
             total_activity_data = result.get('total_activity_data', {})
             onset_data = result.get('onset_data', {})
+            chi_sq_data = result.get('chi_sq_data', {})
+            is_iv_data = result.get('is_iv_data', {})
+            alpha_rho_data = result.get('alpha_rho_data', {})
+            lighting_phases = result.get('lighting_phases', None)
             conditions = result.get('conditions', [])
             n_days = result.get('n_days', 1)
 
-            # Show and rename all 5 tabs for Activity Profile
-            for i in range(5):
+            # Show and rename all 7 tabs for Activity Profile
+            for i in range(self._viz_tabs.count()):
                 self._viz_tabs.setTabVisible(i, True)
             self._viz_tabs.setTabText(0, "Heatmap")
             self._viz_tabs.setTabText(1, "Daily Average")
             self._viz_tabs.setTabText(2, "Actogram")
             self._viz_tabs.setTabText(3, "Total Activity")
             self._viz_tabs.setTabText(4, "Onset/Offset")
+            self._viz_tabs.setTabText(5, "Chi-sq Periodogram")
+            self._viz_tabs.setTabText(6, "Behavioral Metrics")
 
-            # Plot each visualization
             self._fit_canvas.plot_activity_profile(
                 profile_data=profile_data,
                 conditions=conditions,
@@ -1459,7 +1677,8 @@ class ResultsPanel(QWidget):
             self._bar_canvas.plot_actogram(
                 actogram_data=actogram_data,
                 conditions=conditions,
-                title="Actogram (Double-Plotted)"
+                title="Actogram (Double-Plotted)",
+                lighting_phases=lighting_phases,
             )
             self._period_canvas.plot_total_activity(
                 total_activity_data=total_activity_data,
@@ -1469,7 +1688,18 @@ class ResultsPanel(QWidget):
             self._onset_canvas.plot_activity_onset(
                 onset_data=onset_data,
                 conditions=conditions,
-                title="Activity Onset Time"
+                title="Activity Onset / Offset"
+            )
+            self._chisq_canvas.plot_chi_square_periodogram(
+                chi_sq_data=chi_sq_data,
+                conditions=conditions,
+                title="Chi-square Periodogram (Sokolove-Bushell)"
+            )
+            self._metrics_canvas.plot_behavioral_metrics(
+                is_iv_data=is_iv_data,
+                alpha_rho_data=alpha_rho_data,
+                conditions=conditions,
+                title="Behavioral Metrics"
             )
             return
 

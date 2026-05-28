@@ -62,8 +62,8 @@ class AnalysisMethod(Enum):
     # AI Meta-Classifier
     CONSENSUS_AI = "Consensus Rhythmicity Score (AI)"
 
-    # Visualization methods (primarily for DAM data)
-    VISUALIZATION_ACTIVITY_PROFILE = "Visualization: Activity Profile"
+    # Locomotor Activity Analysis methods (DAM / AWD data)
+    VISUALIZATION_ACTIVITY_PROFILE = "Locomotor Activity Analysis: Activity Profile"
 
     # RhythmCount methods
     RHYTHMCOUNT_SINGLE = "RhythmCount: Fit Single Model"
@@ -654,105 +654,97 @@ class AnalysisWorker(QThread):
             )
 
     def _run_activity_profile_visualization(self):
-        """Generate Activity Profile visualization for DAM data.
-
-        Creates a heatmap showing activity for each day (Y-axis) across ZT times (X-axis).
-        Each cell is the mean activity across all subjects at that day and ZT time.
-        """
+        """Generate Activity Profile visualization for DAM / AWD data."""
         try:
-            self.progress.emit(10, "Preparing activity profile data...")
+            import numpy as np
+            from core.visualization_circadian_metrics import (
+                chi_square_periodogram, compute_is_iv, compute_alpha_rho, filter_days
+            )
 
-            # Get the data
+            self.progress.emit(5, "Preparing activity profile data...")
+
             data = self.loader.get_data()
             if data is None or data.empty:
                 self.finished.emit(False, None, "No data available for visualization")
                 return
 
-            self.progress.emit(30, "Calculating ZT times and days...")
+            params = self.config.parameters
+            ld_end = int(params.get('viz_ld_end_day', 0))
+            dd_end = int(params.get('viz_dd_end_day', 0))
+            ll_end = int(params.get('viz_ll_end_day', 0))
+            tau_min = float(params.get('viz_tau_min', 18.0))
+            tau_max = float(params.get('viz_tau_max', 32.0))
+            threshold_method = params.get('viz_threshold', 'mean')
+            if threshold_method == 'percentile-25':
+                threshold_method = 'percentile25'
 
-            # Convert time to ZT (mod 24) and calculate day number
+            # Build lighting_phases dict for downstream plotting
+            # Derive DD start from LD end; LL start from DD end
+            dd_start = (ld_end + 1) if ld_end > 0 else 1
+            ll_start = (dd_end + 1) if dd_end > 0 else None
+            lighting_phases = {
+                'LD': (1, ld_end) if ld_end > 0 else None,
+                'DD': (dd_start, dd_end if dd_end > 0 else None),
+                'LL': (ll_start, ll_end if ll_end > 0 else None) if ll_start else None,
+            }
+
+            self.progress.emit(15, "Calculating ZT times and days...")
+
             df = data.copy()
             df['zt'] = (df['time'] % 24).round(2)
-            df['day'] = (df['time'] // 24).astype(int) + 1  # Day 1, 2, 3, ...
+            df['day'] = (df['time'] // 24).astype(int) + 1
 
-            # Calculate number of days in the data
-            n_days = df['day'].max()
-
-            # Get unique conditions
+            n_days = int(df['day'].max())
             conditions = df['condition'].unique().tolist()
 
-            # Get unique subjects per condition for sample size info
             n_subjects = {}
             if 'subject' in df.columns:
                 for cond in conditions:
                     n_subjects[cond] = df[df['condition'] == cond]['subject'].nunique()
 
-            self.progress.emit(50, "Computing mean activity by day and ZT...")
+            self.progress.emit(25, "Computing mean activity by day and ZT...")
 
-            # Calculate mean for each condition, day, and ZT time
-            # This averages across all subjects FOR EACH DAY separately
+            # ===== ACTIVITY PROFILE HEATMAP =====
             profile_data = {}
             for cond in conditions:
                 cond_df = df[df['condition'] == cond]
-                # Group by day and ZT time, calculate mean across subjects
                 grouped = cond_df.groupby(['day', 'zt'])['activity'].mean().reset_index()
                 grouped.columns = ['day', 'zt', 'mean']
-
-                # Pivot to create matrix: rows=days, columns=ZT times
-                pivot = grouped.pivot(index='day', columns='zt', values='mean')
-
-                # Fill any NaN values with 0
-                pivot = pivot.fillna(0)
-
+                pivot = grouped.pivot(index='day', columns='zt', values='mean').fillna(0)
                 profile_data[cond] = {
                     'days': pivot.index.tolist(),
                     'zt_times': pivot.columns.tolist(),
-                    'activity_matrix': pivot.values.tolist()  # 2D array: [day][zt]
+                    'activity_matrix': pivot.values.tolist(),
                 }
 
-            self.progress.emit(60, "Computing actogram data...")
+            self.progress.emit(35, "Computing actogram data...")
 
-            # ===== ACTOGRAM DATA (double-plotted) =====
-            # For actogram, we need 48h on X-axis (current day + next day)
+            # ===== DOUBLE-PLOTTED ACTOGRAM =====
             actogram_data = {}
             for cond in conditions:
                 cond_df = df[df['condition'] == cond]
-                # Group by day and ZT, average across subjects
                 grouped = cond_df.groupby(['day', 'zt'])['activity'].mean().reset_index()
-                # Column is 'activity' after reset_index()
-
-                # Create double-plotted data: each row has 48h (day N: 0-24h, day N+1: 0-24h)
                 days = sorted(grouped['day'].unique())
                 zt_times = sorted(grouped['zt'].unique())
                 double_plot_matrix = []
-
-                for i, day in enumerate(days[:-1]):  # Exclude last day (no next day)
+                for i, day in enumerate(days[:-1]):
                     day_data = grouped[grouped['day'] == day].set_index('zt')['activity']
                     next_day_data = grouped[grouped['day'] == days[i + 1]].set_index('zt')['activity']
-
-                    # Combine: first 24h from current day, next 24h from next day
-                    row = []
-                    for zt in zt_times:
-                        row.append(day_data.get(zt, 0))
-                    for zt in zt_times:
-                        row.append(next_day_data.get(zt, 0))
+                    row = [day_data.get(zt, 0) for zt in zt_times] + [next_day_data.get(zt, 0) for zt in zt_times]
                     double_plot_matrix.append(row)
-
                 actogram_data[cond] = {
-                    'days': days[:-1],  # Days for which we have double-plot
+                    'days': days[:-1],
                     'zt_times': zt_times,
-                    'matrix': double_plot_matrix  # 2D: [day][48h bins]
+                    'matrix': double_plot_matrix,
                 }
 
-            self.progress.emit(70, "Computing total daily activity...")
+            self.progress.emit(45, "Computing total daily activity...")
 
             # ===== TOTAL ACTIVITY PER DAY =====
             total_activity_data = {}
             for cond in conditions:
                 cond_df = df[df['condition'] == cond]
-                # Sum activity per day (across all subjects and timepoints)
                 daily_totals = cond_df.groupby('day')['activity'].sum().reset_index()
-                # Also get per-subject totals for SEM
                 if 'subject' in cond_df.columns:
                     subject_daily = cond_df.groupby(['day', 'subject'])['activity'].sum().reset_index()
                     daily_stats = subject_daily.groupby('day')['activity'].agg(['mean', 'sem']).reset_index()
@@ -761,61 +753,122 @@ class AnalysisWorker(QThread):
                     daily_stats = daily_totals.copy()
                     daily_stats['mean'] = daily_stats['activity']
                     daily_stats['sem'] = 0
-
                 total_activity_data[cond] = {
                     'days': daily_stats['day'].tolist(),
                     'mean': daily_stats['mean'].tolist(),
-                    'sem': daily_stats['sem'].tolist() if 'sem' in daily_stats.columns else [0] * len(daily_stats)
+                    'sem': daily_stats['sem'].tolist() if 'sem' in daily_stats.columns else [0] * len(daily_stats),
                 }
 
-            self.progress.emit(80, "Computing activity onset/offset times...")
+            self.progress.emit(55, "Computing activity onset/offset times...")
 
             # ===== ACTIVITY ONSET AND OFFSET PER DAY =====
-            # Onset: first time bin where activity exceeds threshold (mean + 0.5*std of that day)
-            # Offset: last time bin where activity exceeds threshold
             onset_data = {}
             for cond in conditions:
                 cond_df = df[df['condition'] == cond]
-                days_list = []
-                onset_times = []
-                offset_times = []
-
+                days_list, onset_times, offset_times = [], [], []
                 for day in sorted(cond_df['day'].unique()):
                     day_df = cond_df[cond_df['day'] == day]
-                    # Average across subjects for each ZT
                     day_profile = day_df.groupby('zt')['activity'].mean().sort_index()
-
                     if len(day_profile) > 0:
                         threshold = day_profile.mean() + 0.5 * day_profile.std()
-                        # Find bins where activity > threshold
-                        above_threshold = day_profile[day_profile > threshold]
-                        if len(above_threshold) > 0:
-                            onset_zt = above_threshold.index[0]   # First
-                            offset_zt = above_threshold.index[-1]  # Last
-                        else:
-                            onset_zt = None
-                            offset_zt = None
+                        above = day_profile[day_profile > threshold]
+                        onset_zt = float(above.index[0]) if len(above) > 0 else None
+                        offset_zt = float(above.index[-1]) if len(above) > 0 else None
                     else:
-                        onset_zt = None
-                        offset_zt = None
-
+                        onset_zt = offset_zt = None
                     days_list.append(day)
                     onset_times.append(onset_zt)
                     offset_times.append(offset_zt)
-
                 onset_data[cond] = {
                     'days': days_list,
                     'onset_times': onset_times,
-                    'offset_times': offset_times
+                    'offset_times': offset_times,
                 }
 
-            self.progress.emit(90, "Preparing visualization result...")
+            self.progress.emit(65, "Computing chi-square periodogram...")
 
-            # Build info message
+            # ===== CHI-SQUARE PERIODOGRAM =====
+            # Compute on the DD phase if specified; otherwise all data.
+            chi_sq_data = {}
+            for cond in conditions:
+                cond_df = df[df['condition'] == cond]
+                # Per-condition mean series (average across subjects)
+                if 'subject' in cond_df.columns:
+                    mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
+                else:
+                    mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
+
+                t_all = mean_series['time'].values
+                a_all = mean_series['activity'].values
+
+                # Select DD phase for τ estimation
+                dd_phase = lighting_phases.get('DD')
+                if dd_phase is not None:
+                    t_chi, a_chi = filter_days(t_all, a_all, dd_phase[0], dd_phase[1])
+                else:
+                    t_chi, a_chi = t_all, a_all
+
+                if len(t_chi) < 10:
+                    # Fallback: use all data
+                    t_chi, a_chi = t_all, a_all
+
+                # Auto-resample to ≥30 min bins for chi-sq (prevents very slow
+                # computation with fine-grained DAM data at 1-min resolution)
+                if len(t_chi) > 1:
+                    native_bin = float(np.median(np.diff(t_chi)[np.diff(t_chi) > 0]))
+                else:
+                    native_bin = 1.0
+                if native_bin < 0.5:  # < 30 min
+                    import pandas as _pd
+                    origin = _pd.Timestamp('2000-01-01')
+                    idx = origin + _pd.to_timedelta(t_chi * 3600, unit='s')
+                    s = _pd.Series(a_chi, index=idx).sort_index()
+                    rs = s.resample('30min').mean().dropna()
+                    t_chi = (rs.index - origin).total_seconds().values / 3600.0
+                    a_chi = rs.values
+
+                chi_result = chi_square_periodogram(
+                    t_chi, a_chi,
+                    period_min=tau_min,
+                    period_max=tau_max,
+                    period_step=0.1,
+                )
+                chi_result['phase_used'] = 'DD' if dd_phase and len(t_chi) >= 10 else 'all'
+                chi_sq_data[cond] = chi_result
+
+            self.progress.emit(75, "Computing IS/IV metrics...")
+
+            # ===== IS / IV =====
+            is_iv_data = {}
+            for cond in conditions:
+                cond_df = df[df['condition'] == cond]
+                if 'subject' in cond_df.columns:
+                    mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
+                else:
+                    mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
+                t = mean_series['time'].values
+                a = mean_series['activity'].values
+                is_iv_data[cond] = compute_is_iv(t, a, target_bin_h=1.0)
+
+            self.progress.emit(85, "Computing α/ρ metrics...")
+
+            # ===== α / ρ + VARIABILITY =====
+            alpha_rho_data = {}
+            for cond in conditions:
+                cond_df = df[df['condition'] == cond]
+                if 'subject' in cond_df.columns:
+                    mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
+                else:
+                    mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
+                t = mean_series['time'].values
+                a = mean_series['activity'].values
+                alpha_rho_data[cond] = compute_alpha_rho(t, a, threshold_method=threshold_method)
+
+            self.progress.emit(95, "Preparing visualization result...")
+
             subjects_info = ", ".join([f"{cond}: n={n_subjects.get(cond, '?')}" for cond in conditions])
             message = f"Activity profile: {n_days} days, {len(conditions)} condition(s) ({subjects_info})"
 
-            # Create result dictionary with data for plotting
             result = {
                 'type': 'activity_profile',
                 'success': True,
@@ -825,21 +878,24 @@ class AnalysisWorker(QThread):
                 'actogram_data': actogram_data,
                 'total_activity_data': total_activity_data,
                 'onset_data': onset_data,
+                'chi_sq_data': chi_sq_data,
+                'is_iv_data': is_iv_data,
+                'alpha_rho_data': alpha_rho_data,
+                'lighting_phases': lighting_phases,
                 'n_days': n_days,
                 'n_subjects': n_subjects,
                 'method': 'Activity Profile',
-                'message': message
+                'message': message,
             }
 
             self.results.append(result)
-
             self.progress.emit(100, "Complete")
-            self.finished.emit(True, self.results, f"Activity profile: {n_days} days, {len(conditions)} conditions")
+            self.finished.emit(True, self.results, message)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.finished.emit(False, None, f"Visualization error: {str(e)}")
+            self.finished.emit(False, None, f"Locomotor Activity Analysis error: {str(e)}")
 
 
 class ParameterWidget(QWidget):
@@ -1811,6 +1867,82 @@ class AnalysisPanel(QWidget):
         # whatever the user picks persists across module switches.
         self._ai_defaults_initialized = False
 
+        # =====================================================================
+        # VISUALIZATION - SPECIFIC PARAMETERS
+        # =====================================================================
+
+        # Lighting phase end days (0 = phase not present / runs to end of data)
+        _viz_ld_w = QWidget()
+        _viz_ld_lay = QHBoxLayout(_viz_ld_w)
+        _viz_ld_lay.setContentsMargins(0, 0, 0, 0)
+        self._viz_ld_end_spin = QSpinBox()
+        self._viz_ld_end_spin.setRange(0, 9999)
+        self._viz_ld_end_spin.setValue(0)
+        self._viz_ld_end_spin.setSpecialValueText("none")
+        self._viz_ld_end_spin.setToolTip("Last day of the LD (light-dark) phase.\n0 = no LD phase (recording starts in DD or LL).")
+        _viz_ld_lay.addWidget(self._viz_ld_end_spin)
+        _viz_ld_lay.addWidget(QLabel("(0 = none)"))
+        _viz_ld_lay.addStretch()
+        self._params_layout.addRow("LD ends day:", _viz_ld_w)
+
+        _viz_dd_w = QWidget()
+        _viz_dd_lay = QHBoxLayout(_viz_dd_w)
+        _viz_dd_lay.setContentsMargins(0, 0, 0, 0)
+        self._viz_dd_end_spin = QSpinBox()
+        self._viz_dd_end_spin.setRange(0, 9999)
+        self._viz_dd_end_spin.setValue(0)
+        self._viz_dd_end_spin.setSpecialValueText("end")
+        self._viz_dd_end_spin.setToolTip("Last day of the DD (constant darkness) phase.\n0 = runs to end of recording.")
+        _viz_dd_lay.addWidget(self._viz_dd_end_spin)
+        _viz_dd_lay.addWidget(QLabel("(0 = end)"))
+        _viz_dd_lay.addStretch()
+        self._params_layout.addRow("DD ends day:", _viz_dd_w)
+
+        _viz_ll_w = QWidget()
+        _viz_ll_lay = QHBoxLayout(_viz_ll_w)
+        _viz_ll_lay.setContentsMargins(0, 0, 0, 0)
+        self._viz_ll_end_spin = QSpinBox()
+        self._viz_ll_end_spin.setRange(0, 9999)
+        self._viz_ll_end_spin.setValue(0)
+        self._viz_ll_end_spin.setSpecialValueText("none")
+        self._viz_ll_end_spin.setToolTip("Last day of the LL (constant light) phase.\n0 = no LL phase.")
+        _viz_ll_lay.addWidget(self._viz_ll_end_spin)
+        _viz_ll_lay.addWidget(QLabel("(0 = none)"))
+        _viz_ll_lay.addStretch()
+        self._params_layout.addRow("LL ends day:", _viz_ll_w)
+
+        # Chi-square periodogram τ search range
+        _viz_tau_w = QWidget()
+        _viz_tau_lay = QHBoxLayout(_viz_tau_w)
+        _viz_tau_lay.setContentsMargins(0, 0, 0, 0)
+        self._viz_tau_min_spin = QDoubleSpinBox()
+        self._viz_tau_min_spin.setRange(1.0, 168.0)
+        self._viz_tau_min_spin.setValue(18.0)
+        self._viz_tau_min_spin.setSingleStep(0.5)
+        self._viz_tau_min_spin.setDecimals(1)
+        self._viz_tau_min_spin.setSuffix(" h")
+        _viz_tau_lay.addWidget(self._viz_tau_min_spin)
+        _viz_tau_lay.addWidget(QLabel("to"))
+        self._viz_tau_max_spin = QDoubleSpinBox()
+        self._viz_tau_max_spin.setRange(1.0, 168.0)
+        self._viz_tau_max_spin.setValue(32.0)
+        self._viz_tau_max_spin.setSingleStep(0.5)
+        self._viz_tau_max_spin.setDecimals(1)
+        self._viz_tau_max_spin.setSuffix(" h")
+        _viz_tau_lay.addWidget(self._viz_tau_max_spin)
+        _viz_tau_lay.addStretch()
+        self._params_layout.addRow("τ search (h):", _viz_tau_w)
+
+        # Activity threshold method for α/ρ
+        self._viz_threshold_combo = QComboBox()
+        self._viz_threshold_combo.addItems(["mean", "percentile-25"])
+        self._viz_threshold_combo.setToolTip(
+            "Threshold used to define active vs. rest bins for α/ρ computation:\n"
+            "  mean         – bins with activity > daily mean are 'active'\n"
+            "  percentile-25 – bins above 25th percentile of that day"
+        )
+        self._params_layout.addRow("α/ρ threshold:", self._viz_threshold_combo)
+
         # Update visibility based on current method
         self._update_parameter_visibility()
 
@@ -2278,6 +2410,13 @@ class AnalysisPanel(QWidget):
             self._hide_param("Peak Tolerance:")
             self._hide_checkbox(self._rc_clean_data_check)
             self._set_row_visible_for_widget(self._rc_cis_info_label, False)
+        # Locomotor Activity Analysis parameters
+        if hasattr(self, '_viz_ld_end_spin'):
+            self._hide_param("LD ends day:")
+            self._hide_param("DD ends day:")
+            self._hide_param("LL ends day:")
+            self._hide_param("τ search (h):")
+            self._hide_param("α/ρ threshold:")
 
         # Reset AI Consensus-specific overrides: re-show period step (it
         # was potentially hidden for AI) and hide the AI info label.
@@ -2527,12 +2666,14 @@ class AnalysisPanel(QWidget):
             )
 
         # =====================================================================
-        # VISUALIZATION (DAM data)
+        # LOCOMOTOR ACTIVITY ANALYSIS (DAM / AWD data)
         # =====================================================================
-        elif module_text == "Visualization":
-            # Activity Profile doesn't require any parameters
-            # All parameters are hidden by default
-            pass
+        elif module_text == "Locomotor Activity Analysis":
+            self._show_param("LD ends day:")
+            self._show_param("DD ends day:")
+            self._show_param("LL ends day:")
+            self._show_param("τ search (h):")
+            self._show_param("α/ρ threshold:")
 
         # =====================================================================
         # COMPARISON FRAME VISIBILITY
@@ -2847,9 +2988,9 @@ class AnalysisPanel(QWidget):
                  "(11-feature schema) trained on 3,395 instances (1,696 synthetic + 1,699 "
                  "real biological) with known ground truth.")
             ]
-        elif module_name == "Visualization":  # Visualization (available for DAM data)
+        elif module_name == "Locomotor Activity Analysis":  # available for DAM / AWD data
             methods = [
-                ("Activity Profile", "Daily activity profile with mean ± SEM by condition")
+                ("Activity Profile", "Comprehensive locomotor activity characterization: actogram, chi-sq periodogram (τ), IS/IV, α/ρ, and onset/offset metrics")
             ]
         else:
             methods = []
@@ -3115,8 +3256,8 @@ class AnalysisPanel(QWidget):
             ("Rhythm Analysis", "Linear Mixed Effects"): AnalysisMethod.RHYTHM_LME,
             # AI Consensus
             ("AI Consensus", "Consensus Rhythmicity Score"): AnalysisMethod.CONSENSUS_AI,
-            # Visualization
-            ("Visualization", "Activity Profile"): AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE,
+            # Locomotor Activity Analysis
+            ("Locomotor Activity Analysis", "Activity Profile"): AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE,
             # RhythmCount
             ("RhythmCount", "Fit Single Model"): AnalysisMethod.RHYTHMCOUNT_SINGLE,
             ("RhythmCount", "Fit All Models"): AnalysisMethod.RHYTHMCOUNT_ALL_MODELS,
@@ -3210,6 +3351,13 @@ class AnalysisPanel(QWidget):
             'rc_repetitions': self._bootstrap_size_spin.value(),
             'rc_precision_rate': self._rc_precision_spin.value(),
             'rc_clean_data': self._rc_clean_data_check.isChecked(),
+            # Visualization parameters
+            'viz_ld_end_day': self._viz_ld_end_spin.value() if hasattr(self, '_viz_ld_end_spin') else 0,
+            'viz_dd_end_day': self._viz_dd_end_spin.value() if hasattr(self, '_viz_dd_end_spin') else 0,
+            'viz_ll_end_day': self._viz_ll_end_spin.value() if hasattr(self, '_viz_ll_end_spin') else 0,
+            'viz_tau_min': self._viz_tau_min_spin.value() if hasattr(self, '_viz_tau_min_spin') else 18.0,
+            'viz_tau_max': self._viz_tau_max_spin.value() if hasattr(self, '_viz_tau_max_spin') else 32.0,
+            'viz_threshold': self._viz_threshold_combo.currentText() if hasattr(self, '_viz_threshold_combo') else 'mean',
         }
         return params
 
@@ -3438,20 +3586,20 @@ class AnalysisPanel(QWidget):
                 insert_pos = min(3, self._module_combo.count())
                 self._module_combo.insertItem(insert_pos, "AI Consensus")
 
-        # --- Visualization: show for DAM and AWD data ---
-        has_visualization = False
+        # --- Locomotor Activity Analysis: show for DAM and AWD data only ---
+        has_laa = False
         for i in range(self._module_combo.count()):
-            if self._module_combo.itemText(i) == "Visualization":
-                has_visualization = True
+            if self._module_combo.itemText(i) == "Locomotor Activity Analysis":
+                has_laa = True
                 break
 
         if source_type in ('dam', 'awd'):
-            if not has_visualization:
-                self._module_combo.addItem("Visualization")
+            if not has_laa:
+                self._module_combo.addItem("Locomotor Activity Analysis")
         else:
-            if has_visualization:
+            if has_laa:
                 for i in range(self._module_combo.count()):
-                    if self._module_combo.itemText(i) == "Visualization":
+                    if self._module_combo.itemText(i) == "Locomotor Activity Analysis":
                         self._module_combo.removeItem(i)
                         break
 
