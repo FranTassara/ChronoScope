@@ -298,8 +298,6 @@ class DataPanel(QWidget):
         zt_layout.addWidget(self._dam_lights_on)
         time_layout.addLayout(zt_layout)
 
-        layout.addWidget(time_group)
-
         # Date Range
         date_group = QGroupBox("Date Range (shared)")
         date_layout = QVBoxLayout(date_group)
@@ -323,7 +321,6 @@ class DataPanel(QWidget):
         date_range_layout.addWidget(self._dam_end_date)
 
         date_layout.addLayout(date_range_layout)
-        layout.addWidget(date_group)
 
         # Dead Fly Filter
         death_group = QGroupBox("Dead Fly Filter (shared)")
@@ -346,7 +343,13 @@ class DataPanel(QWidget):
         threshold_layout.addStretch()
 
         death_layout.addLayout(threshold_layout)
-        layout.addWidget(death_group)
+
+        # Place the three shared settings groups side by side in one row
+        shared_row = QHBoxLayout()
+        shared_row.addWidget(time_group, 1)
+        shared_row.addWidget(date_group, 1)
+        shared_row.addWidget(death_group, 1)
+        layout.addLayout(shared_row)
 
         # =====================================================================
         # Summary Section
@@ -1033,9 +1036,9 @@ class DataPanel(QWidget):
     def _on_source_changed(self, index: int):
         """Handle data source selection change."""
         self._csv_panel.setVisible(index == 0)
-        self._rosbash_panel.setVisible(index == 1)
-        self._dam_panel.setVisible(index == 2)
-        self._awd_panel.setVisible(index == 3)
+        self._dam_panel.setVisible(index == 1)
+        self._awd_panel.setVisible(index == 2)
+        self._rosbash_panel.setVisible(index == 3)
     
     def _browse_csv(self):
         """Open file dialog to select CSV file."""
@@ -1340,9 +1343,9 @@ class DataPanel(QWidget):
         """Set the current source type programmatically."""
         if source_type == 'csv':
             self._source_combo.setCurrentIndex(0)
-        elif source_type == 'rosbash':
-            self._source_combo.setCurrentIndex(1)
         elif source_type == 'dam':
-            self._source_combo.setCurrentIndex(2)
+            self._source_combo.setCurrentIndex(1)
         elif source_type == 'awd':
+            self._source_combo.setCurrentIndex(2)
+        elif source_type == 'rosbash':
             self._source_combo.setCurrentIndex(3)

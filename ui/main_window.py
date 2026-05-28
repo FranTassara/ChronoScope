@@ -218,7 +218,7 @@ class MainWindow(QMainWindow):
     def _open_h5(self):
         """Open HDF5 file dialog."""
         self._tabs.setCurrentIndex(0)
-        self._data_panel._source_combo.setCurrentIndex(1)
+        self._data_panel.set_source('rosbash')
         self._data_panel._browse_h5()
 
     def _open_dam(self):
