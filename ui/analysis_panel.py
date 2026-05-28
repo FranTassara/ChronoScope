@@ -979,11 +979,11 @@ class AnalysisPanel(QWidget):
 
         self._module_combo = QComboBox()
         self._module_combo.addItems([
-            "CosinorPy",
-            "CircaCompare",
-            "Rhythm Analysis",
-            "RhythmCount",
-            "AI Consensus"
+            "CircaCompare (Parsons et al., 2020)",
+            "CosinorPy (Moškon, 2021)",
+            "RhythmCount (Velikajne et al., 2022)",
+            "Classical Rhythm Analysis",
+            "AI Consensus (RandomForest)"
         ])
         self._module_combo.currentIndexChanged.connect(self._on_module_changed)
         module_layout.addWidget(self._module_combo)
@@ -1845,7 +1845,7 @@ class AnalysisPanel(QWidget):
         self._params_layout.addRow("", self._rc_cis_info_label)
 
         # AI Consensus parameter-contract info label (hidden by default).
-        # Shown only when "AI Consensus" module is selected. Spells out
+        # Shown only when "AI Consensus (RandomForest)" module is selected. Spells out
         # which parameters move the model and which are display-only,
         # so the user understands what their slider actually does.
         self._ai_consensus_info_label = QLabel(
@@ -1978,7 +1978,7 @@ class AnalysisPanel(QWidget):
 
         # Also update criterium options: population_fit_group does not return log-likelihood,
         # so AIC/BIC/Log-Likelihood are only valid for independent data.
-        self._update_criterium_options("CosinorPy", method_text)
+        self._update_criterium_options("CosinorPy (Moškon, 2021)", method_text)
 
     def _update_criterium_options(self, module_text: str, method_text: str):
         """Update Selection Criterion combo to show valid options for current module/method."""
@@ -1995,7 +1995,7 @@ class AnalysisPanel(QWidget):
             'F': "F-test for comparing nested models",
         }
 
-        if module_text == "CosinorPy":
+        if module_text == "CosinorPy (Moškon, 2021)":
             is_dependent = 'Dependent' in method_text
             if is_dependent:
                 options = ['RSS']
@@ -2003,7 +2003,7 @@ class AnalysisPanel(QWidget):
             else:
                 options = ['RSS', 'AIC', 'BIC', 'Log-Likelihood']
                 default = 'RSS'
-        elif module_text == "RhythmCount":
+        elif module_text == "RhythmCount (Velikajne et al., 2022)":
             options = ['AIC', 'BIC', 'Vuong', 'F']
             default = 'AIC'
         else:
@@ -2359,7 +2359,7 @@ class AnalysisPanel(QWidget):
         print(f"[DEBUG _update_parameter_visibility] method_text: '{method_text}', module_text: '{module_text}'")
 
         # Update Analysis Method options based on data type (independent vs dependent)
-        if module_text == "CosinorPy":
+        if module_text == "CosinorPy (Moškon, 2021)":
             self._update_analysis_method_options(method_text)
 
         # Default: hide ALL parameters
@@ -2431,7 +2431,7 @@ class AnalysisPanel(QWidget):
         # =====================================================================
         # COSINORPY - NEW REFACTORED METHODS
         # =====================================================================
-        if module_text == "CosinorPy":
+        if module_text == "CosinorPy (Moškon, 2021)":
 
             # Method 1: Periodogram Analysis
             # No parameters needed - periodogram_df() only takes df and folder
@@ -2526,7 +2526,7 @@ class AnalysisPanel(QWidget):
         # =====================================================================
         # CIRCACOMPARE
         # =====================================================================
-        elif module_text == "CircaCompare":
+        elif module_text == "CircaCompare (Parsons et al., 2020)":
             self._show_param("Period:")
             self._set_period_mode('range')
             self._show_param("Loss Function:")
@@ -2536,7 +2536,7 @@ class AnalysisPanel(QWidget):
         # =====================================================================
         # RHYTHM ANALYSIS
         # =====================================================================
-        elif module_text == "Rhythm Analysis":
+        elif module_text == "Classical Rhythm Analysis":
 
             # 1. JTK Cycle (Python-JTK)
             if method_text == "JTK Cycle":
@@ -2607,7 +2607,7 @@ class AnalysisPanel(QWidget):
         # =====================================================================
         # RHYTHMCOUNT
         # =====================================================================
-        elif module_text == "RhythmCount":
+        elif module_text == "RhythmCount (Velikajne et al., 2022)":
             self._show_param("Period:")
             self._set_period_mode('range')
 
@@ -2625,7 +2625,7 @@ class AnalysisPanel(QWidget):
                 self._show_param("Count Models:")
                 self._show_param("Components:")
                 self._set_row_visible_for_widget(self._criterium_combo, True)
-                self._update_criterium_options("RhythmCount", method_text)
+                self._update_criterium_options("RhythmCount (Velikajne et al., 2022)", method_text)
                 self._show_checkbox(self._rc_eval_order_check)
                 self._show_checkbox(self._rc_clean_data_check)
 
@@ -2641,7 +2641,7 @@ class AnalysisPanel(QWidget):
                 self._show_param("Count Models:")
                 self._show_param("Components:")
                 self._set_row_visible_for_widget(self._criterium_combo, True)
-                self._update_criterium_options("RhythmCount", method_text)
+                self._update_criterium_options("RhythmCount (Velikajne et al., 2022)", method_text)
                 self._show_checkbox(self._rc_eval_order_check)
                 self._set_row_visible_for_widget(self._bootstrap_size_spin, True)
                 self._show_param("Peak Tolerance:")
@@ -2650,7 +2650,7 @@ class AnalysisPanel(QWidget):
         # =====================================================================
         # AI CONSENSUS
         # =====================================================================
-        elif module_text == "AI Consensus":
+        elif module_text == "AI Consensus (RandomForest)":
             # AI Consensus exposes only Period (min, max).
             # n_harmonics is intentionally hidden: it has zero effect on the
             # consensus probability (harmonic features were dropped in v2).
@@ -2681,8 +2681,8 @@ class AnalysisPanel(QWidget):
         # Show comparison frame ONLY for pairwise comparison methods (user selects 2 specific conditions)
         # NOT for "Compare All", "Compare Conditions", or "Nonlinear Compare" (which use all conditions automatically)
         is_nonlinear_compare = "Nonlinear Compare" in method_text
-        is_circacompare_compare = "Compare Groups" in method_text and module_text == "CircaCompare"
-        is_rhythmcount_compare = method_text == "Compare Groups" and module_text == "RhythmCount"
+        is_circacompare_compare = "Compare Groups" in method_text and module_text == "CircaCompare (Parsons et al., 2020)"
+        is_rhythmcount_compare = method_text == "Compare Groups" and module_text == "RhythmCount (Velikajne et al., 2022)"
         is_pairwise_comparison = "Compare" in method_text and "Compare All" not in method_text and "Compare Conditions" not in method_text and not is_nonlinear_compare and not is_circacompare_compare and not is_rhythmcount_compare
         is_compare_all_or_conditions = "Compare All" in method_text or "Compare Conditions" in method_text or is_nonlinear_compare or is_circacompare_compare or is_rhythmcount_compare
 
@@ -2886,7 +2886,7 @@ class AnalysisPanel(QWidget):
             dataset_info = self._loader.get_dataset_info()
             has_subject_col = dataset_info.subject_column is not None
 
-        if module_name == "CosinorPy":  # CosinorPy - NEW REFACTORED METHODS
+        if module_name == "CosinorPy (Moškon, 2021)":  # CosinorPy - NEW REFACTORED METHODS
             methods = [
                 ("Periodogram Analysis", "Spectral analysis to identify dominant periods"),
                 ("Cosinor (Independent Data)", "Fit cosinor model to independent data"),
@@ -2902,12 +2902,12 @@ class AnalysisPanel(QWidget):
                 methods.insert(6, ("Nonlinear (Dependent Data)", "Nonlinear cosinor with damping/forcing (dependent)"))
                 methods.append(("Nonlinear Compare (Dependent)", "Compare nonlinear parameters (dependent data)"))
 
-        elif module_name == "CircaCompare":  # CircaCompare
+        elif module_name == "CircaCompare (Parsons et al., 2020)":  # CircaCompare
             methods = [
                 ("Single Fit", "Robust cosinor fitting - Parsons, Rex, et al. \"CircaCompare: a method to estimate and statistically support differences in mesor, amplitude and phase, between circadian rhythms.\" Bioinformatics 36.4 (2020): 1208-1212."),
                 ("Compare Groups", "Compare parameters between groups - Parsons, Rex, et al. \"CircaCompare: a method to estimate and statistically support differences in mesor, amplitude and phase, between circadian rhythms.\" Bioinformatics 36.4 (2020): 1208-1212.")
             ]
-        elif module_name == "Rhythm Analysis":  # Rhythm Analysis
+        elif module_name == "Classical Rhythm Analysis":  # Rhythm Analysis
             methods = [
                 ("JTK Cycle",
                  "Nonparametric rhythm detection using Kendall's tau correlation with triangle waveforms. "
@@ -2951,7 +2951,7 @@ class AnalysisPanel(QWidget):
                  "variability and hierarchical data structure. Uses likelihood ratio test for rhythm significance. "
                  "Suitable for: Dependent data with repeated measures and grouping factors (e.g., individual subjects).")
             ]
-        elif module_name == "RhythmCount":  # RhythmCount
+        elif module_name == "RhythmCount (Velikajne et al., 2022)":  # RhythmCount
             methods = [
                 ("Fit Single Model",
                  "Fit one specific count distribution (Poisson, Negative Binomial, etc.) with a "
@@ -2979,7 +2979,7 @@ class AnalysisPanel(QWidget):
                  "(conditions). For each group, selects the best model and computes bootstrap CIs "
                  "for rhythm parameters. Returns a per-group results table."),
             ]
-        elif module_name == "AI Consensus":  # AI Consensus
+        elif module_name == "AI Consensus (RandomForest)":  # AI Consensus
             methods = [
                 ("Consensus Rhythmicity Score",
                  "AI-powered meta-classifier that combines evidence from JTK_CYCLE, Cosinor, "
@@ -3002,7 +3002,7 @@ class AnalysisPanel(QWidget):
         # (period 20-28h matches training-window center; n_harmonics=2
         # matches training). Done once per session so the user's later
         # tweaks persist across module switches.
-        if (module_name == "AI Consensus"
+        if (module_name == "AI Consensus (RandomForest)"
                 and not getattr(self, '_ai_defaults_initialized', True)):
             self._period_min_spin.setValue(20.0)
             self._period_max_spin.setValue(28.0)
@@ -3073,8 +3073,8 @@ class AnalysisPanel(QWidget):
         is_compare_all = "Compare All" in method_text
         is_compare_conditions = "Compare Conditions" in method_text
         is_nonlinear_compare = "Nonlinear Compare" in method_text
-        is_circacompare_compare = "Compare Groups" in method_text and module_name == "CircaCompare"
-        is_rhythmcount_compare = method_text == "Compare Groups" and module_name == "RhythmCount"
+        is_circacompare_compare = "Compare Groups" in method_text and module_name == "CircaCompare (Parsons et al., 2020)"
+        is_rhythmcount_compare = method_text == "Compare Groups" and module_name == "RhythmCount (Velikajne et al., 2022)"
         # Pairwise uses 2 specific condition dropdowns; all others use ALL conditions
         is_pairwise_comparison = "Compare" in method_text and not is_compare_all and not is_compare_conditions and not is_nonlinear_compare and not is_circacompare_compare and not is_rhythmcount_compare
 
@@ -3231,39 +3231,39 @@ class AnalysisPanel(QWidget):
         # Map (module_name, method_name) to enum
         mapping = {
             # CosinorPy - New Refactored Methods
-            ("CosinorPy", "Periodogram Analysis"): AnalysisMethod.COSINORPY_PERIODOGRAM,
-            ("CosinorPy", "Cosinor (Independent Data)"): AnalysisMethod.COSINORPY_INDEPENDENT,
-            ("CosinorPy", "Cosinor (Dependent Data)"): AnalysisMethod.COSINORPY_DEPENDENT,
-            ("CosinorPy", "Compare Conditions (Independent)"): AnalysisMethod.COSINORPY_COMPARE_INDEPENDENT,
-            ("CosinorPy", "Compare Conditions (Dependent)"): AnalysisMethod.COSINORPY_COMPARE_DEPENDENT,
-            ("CosinorPy", "Nonlinear (Independent Data)"): AnalysisMethod.COSINORPY_NONLINEAR_INDEPENDENT,
-            ("CosinorPy", "Nonlinear (Dependent Data)"): AnalysisMethod.COSINORPY_NONLINEAR_DEPENDENT,
-            ("CosinorPy", "Nonlinear Compare (Independent)"): AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT,
-            ("CosinorPy", "Nonlinear Compare (Dependent)"): AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_DEPENDENT,
+            ("CosinorPy (Moškon, 2021)", "Periodogram Analysis"): AnalysisMethod.COSINORPY_PERIODOGRAM,
+            ("CosinorPy (Moškon, 2021)", "Cosinor (Independent Data)"): AnalysisMethod.COSINORPY_INDEPENDENT,
+            ("CosinorPy (Moškon, 2021)", "Cosinor (Dependent Data)"): AnalysisMethod.COSINORPY_DEPENDENT,
+            ("CosinorPy (Moškon, 2021)", "Compare Conditions (Independent)"): AnalysisMethod.COSINORPY_COMPARE_INDEPENDENT,
+            ("CosinorPy (Moškon, 2021)", "Compare Conditions (Dependent)"): AnalysisMethod.COSINORPY_COMPARE_DEPENDENT,
+            ("CosinorPy (Moškon, 2021)", "Nonlinear (Independent Data)"): AnalysisMethod.COSINORPY_NONLINEAR_INDEPENDENT,
+            ("CosinorPy (Moškon, 2021)", "Nonlinear (Dependent Data)"): AnalysisMethod.COSINORPY_NONLINEAR_DEPENDENT,
+            ("CosinorPy (Moškon, 2021)", "Nonlinear Compare (Independent)"): AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT,
+            ("CosinorPy (Moškon, 2021)", "Nonlinear Compare (Dependent)"): AnalysisMethod.COSINORPY_NONLINEAR_COMPARE_DEPENDENT,
             # CircaCompare
-            ("CircaCompare", "Single Fit"): AnalysisMethod.CIRCACOMPARE_SINGLE,
-            ("CircaCompare", "Compare Groups"): AnalysisMethod.CIRCACOMPARE_COMPARE,
+            ("CircaCompare (Parsons et al., 2020)", "Single Fit"): AnalysisMethod.CIRCACOMPARE_SINGLE,
+            ("CircaCompare (Parsons et al., 2020)", "Compare Groups"): AnalysisMethod.CIRCACOMPARE_COMPARE,
             # Rhythm Analysis
-            ("Rhythm Analysis", "JTK Cycle"): AnalysisMethod.RHYTHM_JTK,
-            ("Rhythm Analysis", "AR-JTK"): AnalysisMethod.RHYTHM_AR_JTK,
-            ("Rhythm Analysis", "Cosine-Kendall"): AnalysisMethod.RHYTHM_COSINE_KENDALL,
-            ("Rhythm Analysis", "Cosinor (OLS)"): AnalysisMethod.RHYTHM_COSINOR,
-            ("Rhythm Analysis", "Harmonic Cosinor"): AnalysisMethod.RHYTHM_HARMONIC,
-            ("Rhythm Analysis", "Fourier F24"): AnalysisMethod.RHYTHM_F24,
-            ("Rhythm Analysis", "Lomb-Scargle"): AnalysisMethod.RHYTHM_LOMB,
-            ("Rhythm Analysis", "Spectral Analysis (Periodogram)"): AnalysisMethod.RHYTHM_SPECTRAL,
-            ("Rhythm Analysis", "Wavelet (CWT)"): AnalysisMethod.RHYTHM_CWT,
-            ("Rhythm Analysis", "Linear Mixed Effects"): AnalysisMethod.RHYTHM_LME,
+            ("Classical Rhythm Analysis", "JTK Cycle"): AnalysisMethod.RHYTHM_JTK,
+            ("Classical Rhythm Analysis", "AR-JTK"): AnalysisMethod.RHYTHM_AR_JTK,
+            ("Classical Rhythm Analysis", "Cosine-Kendall"): AnalysisMethod.RHYTHM_COSINE_KENDALL,
+            ("Classical Rhythm Analysis", "Cosinor (OLS)"): AnalysisMethod.RHYTHM_COSINOR,
+            ("Classical Rhythm Analysis", "Harmonic Cosinor"): AnalysisMethod.RHYTHM_HARMONIC,
+            ("Classical Rhythm Analysis", "Fourier F24"): AnalysisMethod.RHYTHM_F24,
+            ("Classical Rhythm Analysis", "Lomb-Scargle"): AnalysisMethod.RHYTHM_LOMB,
+            ("Classical Rhythm Analysis", "Spectral Analysis (Periodogram)"): AnalysisMethod.RHYTHM_SPECTRAL,
+            ("Classical Rhythm Analysis", "Wavelet (CWT)"): AnalysisMethod.RHYTHM_CWT,
+            ("Classical Rhythm Analysis", "Linear Mixed Effects"): AnalysisMethod.RHYTHM_LME,
             # AI Consensus
-            ("AI Consensus", "Consensus Rhythmicity Score"): AnalysisMethod.CONSENSUS_AI,
+            ("AI Consensus (RandomForest)", "Consensus Rhythmicity Score"): AnalysisMethod.CONSENSUS_AI,
             # Locomotor Activity Analysis
             ("Locomotor Activity Analysis", "Activity Profile"): AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE,
             # RhythmCount
-            ("RhythmCount", "Fit Single Model"): AnalysisMethod.RHYTHMCOUNT_SINGLE,
-            ("RhythmCount", "Fit All Models"): AnalysisMethod.RHYTHMCOUNT_ALL_MODELS,
-            ("RhythmCount", "Fit Best Model (Auto Selection)"): AnalysisMethod.RHYTHMCOUNT_BEST_MODEL,
-            ("RhythmCount", "Parameter Confidence Intervals"): AnalysisMethod.RHYTHMCOUNT_PARAMETER_CIS,
-            ("RhythmCount", "Compare Groups"): AnalysisMethod.RHYTHMCOUNT_COMPARE_GROUPS,
+            ("RhythmCount (Velikajne et al., 2022)", "Fit Single Model"): AnalysisMethod.RHYTHMCOUNT_SINGLE,
+            ("RhythmCount (Velikajne et al., 2022)", "Fit All Models"): AnalysisMethod.RHYTHMCOUNT_ALL_MODELS,
+            ("RhythmCount (Velikajne et al., 2022)", "Fit Best Model (Auto Selection)"): AnalysisMethod.RHYTHMCOUNT_BEST_MODEL,
+            ("RhythmCount (Velikajne et al., 2022)", "Parameter Confidence Intervals"): AnalysisMethod.RHYTHMCOUNT_PARAMETER_CIS,
+            ("RhythmCount (Velikajne et al., 2022)", "Compare Groups"): AnalysisMethod.RHYTHMCOUNT_COMPARE_GROUPS,
         }
 
         return mapping.get((module_name, method), AnalysisMethod.COSINORPY_PERIODOGRAM)
@@ -3573,7 +3573,7 @@ class AnalysisPanel(QWidget):
         # --- AI Consensus: hide for DAM data (model trained on gene expression) ---
         ai_consensus_idx = None
         for i in range(self._module_combo.count()):
-            if self._module_combo.itemText(i) == "AI Consensus":
+            if self._module_combo.itemText(i) == "AI Consensus (RandomForest)":
                 ai_consensus_idx = i
                 break
 
@@ -3582,9 +3582,9 @@ class AnalysisPanel(QWidget):
                 self._module_combo.removeItem(ai_consensus_idx)
         else:
             if ai_consensus_idx is None:
-                # Re-insert AI Consensus at index 3 (after Rhythm Analysis)
-                insert_pos = min(3, self._module_combo.count())
-                self._module_combo.insertItem(insert_pos, "AI Consensus")
+                # Re-insert AI Consensus at index 4 (after Classical Rhythm Analysis)
+                insert_pos = min(4, self._module_combo.count())
+                self._module_combo.insertItem(insert_pos, "AI Consensus (RandomForest)")
 
         # --- Locomotor Activity Analysis: show for DAM and AWD data only ---
         has_laa = False
