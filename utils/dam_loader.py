@@ -892,7 +892,7 @@ class MultiDAMDataLoader:
 
     def get_conditions(self) -> List[str]:
         """Get list of conditions."""
-        return [e.condition_name for e in self._monitors if e.is_loaded]
+        return list(dict.fromkeys(e.condition_name for e in self._monitors if e.is_loaded))
 
     def get_timepoints(self) -> List[float]:
         """Get list of timepoints."""

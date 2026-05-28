@@ -591,7 +591,7 @@ class MultiAWDDataLoader:
         }
 
     def get_conditions(self) -> List[str]:
-        return [e.condition_name for e in self._files if e.is_loaded]
+        return list(dict.fromkeys(e.condition_name for e in self._files if e.is_loaded))
 
     def get_time_column(self) -> str:
         return self._time_col
