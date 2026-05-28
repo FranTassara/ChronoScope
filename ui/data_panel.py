@@ -2,7 +2,7 @@
 Data Panel
 ==========
 
-Panel for loading and configuring data sources (CSV or Rosbash dataset).
+Panel for loading and configuring data sources.
 """
 
 from typing import Optional, List, Dict, Any
@@ -63,9 +63,11 @@ class DataPanel(QWidget):
     """
     Panel for data loading and configuration.
     
-    Supports two data sources:
+    Supports four data sources:
     1. User CSV files with circadian expression data
     2. Preprocessed Rosbash scRNA-seq dataset (HDF5)
+    3. DAM monitor files
+    4. AWD files
     
     Signals:
         data_loaded: Emitted when data is successfully loaded
@@ -134,10 +136,10 @@ class DataPanel(QWidget):
         
         self._source_combo = QComboBox()
         self._source_combo.addItems([
-            "User CSV File",
-            "Rosbash scRNA-seq Dataset",
-            "DAM Monitor File",
-            "Running Wheel (.awd)"
+            "User custom CSV File",
+            "Drosophila Activity Monitor (DAM) File",
+            "Running Wheel (.awd)",
+            "scRNA-seq dataset (Ma et al., 2021 Rosbash Lab)"
         ])
         self._source_combo.currentIndexChanged.connect(self._on_source_changed)
         
@@ -435,8 +437,6 @@ class DataPanel(QWidget):
         zt_layout.addWidget(self._awd_lights_on)
         time_layout.addLayout(zt_layout)
 
-        layout.addWidget(time_group)
-
         # =====================================================================
         # Date Range Section
         # =====================================================================
@@ -462,7 +462,12 @@ class DataPanel(QWidget):
         date_range_layout.addWidget(self._awd_end_date)
 
         date_layout.addLayout(date_range_layout)
-        layout.addWidget(date_group)
+
+        # Place Time Settings and Date Range side by side
+        settings_row = QHBoxLayout()
+        settings_row.addWidget(time_group)
+        settings_row.addWidget(date_group)
+        layout.addLayout(settings_row)
 
         # =====================================================================
         # Summary Section
