@@ -702,12 +702,22 @@ class AnalysisWorker(QThread):
                 for cond in conditions:
                     n_subjects[cond] = df[df['condition'] == cond]['subject'].nunique()
 
+            # Per-fly normalization: divide each fly's activity at every bin by its
+            # total activity so that all flies contribute equally to the averaged profile.
+            normalize = params.get('viz_normalize', False)
+            if normalize and 'subject' in df.columns:
+                subject_totals = df.groupby('subject')['activity'].transform('sum')
+                df_plot = df.copy()
+                df_plot['activity'] = (df['activity'] / subject_totals.replace(0, np.nan)).fillna(0)
+            else:
+                df_plot = df
+
             self.progress.emit(25, "Computing mean activity by day and ZT...")
 
             # ===== ACTIVITY PROFILE HEATMAP =====
             profile_data = {}
             for cond in conditions:
-                cond_df = df[df['condition'] == cond]
+                cond_df = df_plot[df_plot['condition'] == cond]
                 grouped = cond_df.groupby(['day', 'zt'])['activity'].mean().reset_index()
                 grouped.columns = ['day', 'zt', 'mean']
                 pivot = grouped.pivot(index='day', columns='zt', values='mean').fillna(0)
@@ -722,7 +732,7 @@ class AnalysisWorker(QThread):
             # ===== DOUBLE-PLOTTED ACTOGRAM =====
             actogram_data = {}
             for cond in conditions:
-                cond_df = df[df['condition'] == cond]
+                cond_df = df_plot[df_plot['condition'] == cond]
                 grouped = cond_df.groupby(['day', 'zt'])['activity'].mean().reset_index()
                 days = sorted(grouped['day'].unique())
                 zt_times = sorted(grouped['zt'].unique())
@@ -764,7 +774,7 @@ class AnalysisWorker(QThread):
             # ===== ACTIVITY ONSET AND OFFSET PER DAY =====
             onset_data = {}
             for cond in conditions:
-                cond_df = df[df['condition'] == cond]
+                cond_df = df_plot[df_plot['condition'] == cond]
                 days_list, onset_times, offset_times = [], [], []
                 for day in sorted(cond_df['day'].unique()):
                     day_df = cond_df[cond_df['day'] == day]
@@ -791,7 +801,7 @@ class AnalysisWorker(QThread):
             # Compute on the DD phase if specified; otherwise all data.
             chi_sq_data = {}
             for cond in conditions:
-                cond_df = df[df['condition'] == cond]
+                cond_df = df_plot[df_plot['condition'] == cond]
                 # Per-condition mean series (average across subjects)
                 if 'subject' in cond_df.columns:
                     mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
@@ -841,7 +851,7 @@ class AnalysisWorker(QThread):
             # ===== IS / IV =====
             is_iv_data = {}
             for cond in conditions:
-                cond_df = df[df['condition'] == cond]
+                cond_df = df_plot[df_plot['condition'] == cond]
                 if 'subject' in cond_df.columns:
                     mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
                 else:
@@ -855,7 +865,7 @@ class AnalysisWorker(QThread):
             # ===== α / ρ + VARIABILITY =====
             alpha_rho_data = {}
             for cond in conditions:
-                cond_df = df[df['condition'] == cond]
+                cond_df = df_plot[df_plot['condition'] == cond]
                 if 'subject' in cond_df.columns:
                     mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
                 else:
@@ -1943,6 +1953,16 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("α/ρ threshold:", self._viz_threshold_combo)
 
+        self._viz_normalize_check = QCheckBox("Normalize each fly to its total activity")
+        self._viz_normalize_check.setChecked(False)
+        self._viz_normalize_check.setToolTip(
+            "Divide each fly's activity at every time bin by its total activity across the\n"
+            "entire recording. After normalization each fly contributes equally to the\n"
+            "averaged profile regardless of its absolute activity level.\n"
+            "Does NOT affect the Total Daily Activity chart (always shows raw counts)."
+        )
+        self._params_layout.addRow("Normalize:", self._viz_normalize_check)
+
         # Update visibility based on current method
         self._update_parameter_visibility()
 
@@ -2417,6 +2437,7 @@ class AnalysisPanel(QWidget):
             self._hide_param("LL ends day:")
             self._hide_param("τ search (h):")
             self._hide_param("α/ρ threshold:")
+            self._hide_checkbox(self._viz_normalize_check)
 
         # Reset AI Consensus-specific overrides: re-show period step (it
         # was potentially hidden for AI) and hide the AI info label.
@@ -2674,6 +2695,7 @@ class AnalysisPanel(QWidget):
             self._show_param("LL ends day:")
             self._show_param("τ search (h):")
             self._show_param("α/ρ threshold:")
+            self._show_checkbox(self._viz_normalize_check)
 
         # =====================================================================
         # COMPARISON FRAME VISIBILITY
@@ -3358,6 +3380,7 @@ class AnalysisPanel(QWidget):
             'viz_tau_min': self._viz_tau_min_spin.value() if hasattr(self, '_viz_tau_min_spin') else 18.0,
             'viz_tau_max': self._viz_tau_max_spin.value() if hasattr(self, '_viz_tau_max_spin') else 32.0,
             'viz_threshold': self._viz_threshold_combo.currentText() if hasattr(self, '_viz_threshold_combo') else 'mean',
+            'viz_normalize': self._viz_normalize_check.isChecked() if hasattr(self, '_viz_normalize_check') else False,
         }
         return params
 
