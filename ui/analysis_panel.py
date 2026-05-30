@@ -1953,11 +1953,11 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("α/ρ threshold:", self._viz_threshold_combo)
 
-        self._viz_normalize_check = QCheckBox("Normalize each fly to its total activity")
+        self._viz_normalize_check = QCheckBox("Normalize each subject to its total activity")
         self._viz_normalize_check.setChecked(False)
         self._viz_normalize_check.setToolTip(
-            "Divide each fly's activity at every time bin by its total activity across the\n"
-            "entire recording. After normalization each fly contributes equally to the\n"
+            "Divide each subject's activity at every time bin by its total activity across the\n"
+            "entire recording. After normalization each subject contributes equally to the\n"
             "averaged profile regardless of its absolute activity level.\n"
             "Does NOT affect the Total Daily Activity chart (always shows raw counts)."
         )
