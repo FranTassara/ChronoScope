@@ -1201,6 +1201,8 @@ class ResultsPanel(QWidget):
         has_rhythmcount_cis = any(r.get('method') == 'rhythmcount_parameter_cis' for r in self._results)
         has_rhythmcount = any(r.get('method') in RC_METHODS for r in self._results)
 
+        is_activity_profile = False
+
         # Determine columns based on result type
         if is_comparison:
             has_circacompare_compare = any(r.get('method') == 'circacompare_compare' for r in self._results)
@@ -1209,11 +1211,11 @@ class ResultsPanel(QWidget):
                 columns = ['variable', 'condition1', 'condition2', 'method', 'period',
                            'mesor_g0', 'mesor_g1', 'mesor_diff', 'mesor_diff_ci', 'sig_mesor',
                            'amplitude_g0', 'amplitude_g1', 'amplitude_diff', 'amplitude_diff_ci', 'sig_amplitude',
-                           'acrophase_g0_hours', 'acrophase_g1_hours', 'acrophase_diff_hours', 'acrophase_diff_ci', 'sig_acrophase']
+                           'acrophase_g0_hours', 'acrophase_g1_hours', 'acrophase_diff_hours', 'acrophase_diff_ci', 'acrophase_diff_ci_hours', 'sig_acrophase']
                 headers = ['Variable', 'Cond1', 'Cond2', 'Method', 'Period (h)',
                            'MESOR-1', 'MESOR-2', 'MESOR-Diff', 'CI (MESOR-Diff)', 'sig (MESOR)',
                            'Amp-1', 'Amp-2', 'Amp-Diff', 'CI (Amp-Diff)', 'sig (Amp)',
-                           'Acro-1 (h)', 'Acro-2 (h)', 'Acro-Diff (h)', 'CI (Acro-Diff, rad)', 'sig (Acro)']
+                           'Acro-1 (h)', 'Acro-2 (h)', 'Acro-Diff (h)', 'CI (Acro-Diff, rad)', 'CI (Acro-Diff, h)', 'sig (Acro)']
             else:
                 # CosinorPy / generic comparison table
                 columns = ['variable', 'condition1', 'condition2', 'method', 'n_components', 'period',
@@ -1498,6 +1500,17 @@ class ResultsPanel(QWidget):
                             value = details.get('classification', 'N/A')
                         except (ValueError, TypeError):
                             pass
+                elif col == 'acrophase_diff_ci_hours':
+                    ci_rad = result.get('acrophase_diff_ci')
+                    period = result.get('period', 24.0)
+                    import math as _math
+                    if isinstance(ci_rad, (tuple, list)) and len(ci_rad) == 2 and ci_rad[0] is not None and ci_rad[1] is not None:
+                        factor = period / (2 * _math.pi)
+                        lo_h = ci_rad[0] * factor
+                        hi_h = ci_rad[1] * factor
+                        value = f'[{lo_h:.3f}, {hi_h:.3f}]'
+                    else:
+                        value = 'N/A'
                 elif col == 'significant':
                     p_val = result.get('p_value')
                     value = 'Yes' if (p_val is not None and p_val < 0.05) else ('No' if p_val is not None else 'N/A')
