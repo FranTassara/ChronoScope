@@ -452,7 +452,9 @@ def load_biocycle_labels_xlsx(
     dataset_id: str,
     q_threshold: float = 0.01,
     q_non_rhythmic_threshold: float = 0.2,
-) -> Tuple[Set[str], Set[str], Set[str], Dict[str, float]]:
+    period_min: float = 0.0,
+    period_max: float = float('inf'),
+) -> Tuple[Set[str], Set[str], Set[str], Dict[str, float], Set[str]]:
     """
     Load BioCycle classification results from the RhythmicDB Excel export.
 
@@ -466,15 +468,22 @@ def load_biocycle_labels_xlsx(
         q_non_rhythmic_threshold: Q-value above which genes are labeled
             non-rhythmic (default 0.2). Genes between q_threshold and
             this value are excluded as ambiguous.
+        period_min: Minimum period (hours) to qualify as rhythmic (default 0.0).
+        period_max: Maximum period (hours) to qualify as rhythmic (default inf).
 
     Returns:
-        (circadian_genes, non_rhythmic_genes, ambiguous_genes, gene_q_values)
-        - circadian_genes: genes with q <= q_threshold
+        (circadian_genes, non_rhythmic_genes, ambiguous_genes, gene_q_values,
+         all_rhythmicdb_genes)
+        - circadian_genes: genes with q <= q_threshold AND period in [period_min, period_max]
         - non_rhythmic_genes: genes with q > q_non_rhythmic_threshold
-        - ambiguous_genes: genes in the gap (excluded from training)
+        - ambiguous_genes: genes in the gap or failing the period filter (excluded)
         - gene_q_values: {gene: best (lowest) q-value} for ALL genes; used
             downstream to assign provisional labels to ambiguous genes for
             holdout evaluation (label = 1 if q < midpoint, else 0).
+        - all_rhythmicdb_genes: set of ALL gene symbols present in this dataset
+            entry (regardless of q-value or period). Used when
+            non_rhythmic_from_absence=True to identify genes absent from
+            RhythmicDB as the non-rhythmic training class.
     """
     df = pd.read_excel(xlsx_path)
 
@@ -486,21 +495,33 @@ def load_biocycle_labels_xlsx(
             f"Dataset '{dataset_id}' not found. Available: {available}"
         )
 
-    # For genes with multiple probes, use the best (lowest) Q-value
-    gene_best_q = ds_data.groupby('Gene info')['Q-value'].min()
+    # For genes with multiple probes, use the best (lowest) Q-value row
+    # (preserves the Period associated with that best probe)
+    ds_best = ds_data.sort_values('Q-value').drop_duplicates('Gene info', keep='first')
+    ds_best = ds_best.set_index('Gene info')
+    gene_best_q = ds_best['Q-value']
+    all_rhythmicdb_genes = set(ds_best.index)
 
-    circadian = set(gene_best_q[gene_best_q <= q_threshold].index)
+    # Rhythmic: low q AND period in requested window
+    rhythmic_mask = gene_best_q <= q_threshold
+    if 'Period' in ds_best.columns:
+        rhythmic_mask = (
+            rhythmic_mask
+            & (ds_best['Period'] >= period_min)
+            & (ds_best['Period'] <= period_max)
+        )
+    circadian = set(gene_best_q[rhythmic_mask].index)
     non_rhythmic = set(gene_best_q[gene_best_q > q_non_rhythmic_threshold].index)
-    ambiguous = set(gene_best_q.index) - circadian - non_rhythmic
+    ambiguous = all_rhythmicdb_genes - circadian - non_rhythmic
 
     print(f"  BioCycle labels from {dataset_id}:")
     print(f"    Total unique genes: {len(gene_best_q)}")
-    print(f"    Circadian (q <= {q_threshold}): {len(circadian)}")
+    print(f"    Circadian (q<={q_threshold}, period {period_min}-{period_max}h): {len(circadian)}")
     print(f"    Non-rhythmic (q > {q_non_rhythmic_threshold}): {len(non_rhythmic)}")
     print(f"    Ambiguous (excluded): {len(ambiguous)}")
 
     gene_q_values = gene_best_q.to_dict()
-    return circadian, non_rhythmic, ambiguous, gene_q_values
+    return circadian, non_rhythmic, ambiguous, gene_q_values, all_rhythmicdb_genes
 
 
 # =============================================================================
@@ -665,6 +686,9 @@ def generate_from_geo(
     biocycle_dataset_id: Optional[str] = None,
     biocycle_q_threshold: float = 0.01,
     biocycle_q_non_rhythmic: float = 0.2,
+    biocycle_period_min: float = 0.0,
+    biocycle_period_max: float = float('inf'),
+    non_rhythmic_from_absence: bool = False,
     max_rhythmic: Optional[int] = None,
     max_non_rhythmic: Optional[int] = None,
     starting_id: int = 2000,
@@ -680,7 +704,20 @@ def generate_from_geo(
         biocycle_xlsx: Path to RhythmicDB BioCycle Excel file (optional)
         biocycle_dataset_id: RhythmicDB dataset ID to filter (e.g. 'E-GEOD-11516')
         biocycle_q_threshold: Q-value cutoff for rhythmic (default 0.01)
-        biocycle_q_non_rhythmic: Q-value above which -> non-rhythmic (default 0.2)
+        biocycle_q_non_rhythmic: Q-value above which -> non-rhythmic (default 0.2).
+            Ignored when non_rhythmic_from_absence=True.
+        biocycle_period_min: Min period (h) for the rhythmic class (default 0.0).
+        biocycle_period_max: Max period (h) for the rhythmic class (default inf).
+        non_rhythmic_from_absence: If True, label as non-rhythmic any gene present
+            in the expression matrix but ABSENT from RhythmicDB for this dataset.
+            This is the BioCycle-consistent criterion: RhythmicDB only contains genes
+            with BioCycle p<=0.05 / DNN>0.5, so genes not listed there have zero or
+            negligible evidence of rhythmicity. Genes that appear in RhythmicDB but
+            do not meet the rhythmic threshold (R class) are excluded from training
+            entirely (X class) — they are weak/borderline rhythmics and would add
+            label noise to either class.
+            When False (default), the classic q > biocycle_q_non_rhythmic criterion
+            is used (non-rhythmic = high-q genes within RhythmicDB).
         max_rhythmic: Cap on rhythmic instances (None = no cap)
         max_non_rhythmic: Cap on non-rhythmic instances (None = no cap)
         starting_id: Starting instance ID
@@ -690,6 +727,8 @@ def generate_from_geo(
             q_non_rhythmic]). Used for holdout evaluation on borderline
             cases. These instances are labeled provisionally based on the
             q-value midpoint: q <= midpoint => label 1, else 0.
+            When non_rhythmic_from_absence=True, the ambiguous holdout
+            contains all excluded RhythmicDB genes (X class).
 
     Returns:
         If return_ambiguous=False (default):
@@ -756,16 +795,31 @@ def generate_from_geo(
     # Load BioCycle labels if provided
     bc_ambiguous_genes: Set[str] = set()
     bc_gene_q_values: Dict[str, float] = {}
+    bc_all_rhythmicdb_genes: Set[str] = set()
     if biocycle_xlsx and biocycle_dataset_id and os.path.exists(biocycle_xlsx):
-        bc_circadian, bc_non_rhythmic, bc_ambiguous_genes, bc_gene_q_values = (
-            load_biocycle_labels_xlsx(
-                biocycle_xlsx, biocycle_dataset_id,
-                biocycle_q_threshold, biocycle_q_non_rhythmic,
-            )
+        (bc_circadian, bc_non_rhythmic, bc_ambiguous_genes,
+         bc_gene_q_values, bc_all_rhythmicdb_genes) = load_biocycle_labels_xlsx(
+            biocycle_xlsx, biocycle_dataset_id,
+            biocycle_q_threshold, biocycle_q_non_rhythmic,
+            biocycle_period_min, biocycle_period_max,
         )
         circadian_genes |= bc_circadian
-        non_rhythmic_genes |= bc_non_rhythmic
-        # Ambiguous genes are excluded from both training sets
+
+        if non_rhythmic_from_absence:
+            # N class = genes in the expression universe NOT in RhythmicDB.
+            # All genes that appear in RhythmicDB (any q, any period) are
+            # excluded: they carry some evidence of rhythmicity and would
+            # pollute the non-rhythmic class (X class — excluded from training).
+            universe_non_rhythmicdb = set(gene_expression.index) - bc_all_rhythmicdb_genes
+            non_rhythmic_genes |= universe_non_rhythmicdb
+            # Re-compute ambiguous genes = all RhythmicDB genes not in R class
+            bc_ambiguous_genes = bc_all_rhythmicdb_genes - circadian_genes
+            print(f"  non_rhythmic_from_absence=True:")
+            print(f"    N (not in RhythmicDB, in expr): {len(universe_non_rhythmicdb)}")
+            print(f"    X (in RhythmicDB, excluded):    {len(bc_ambiguous_genes)}")
+        else:
+            non_rhythmic_genes |= bc_non_rhythmic
+            # Ambiguous genes are excluded from both training sets
 
     # ------------------------------------------------------------------
     # Step 5: Generate training instances
@@ -818,19 +872,30 @@ def generate_from_geo(
                   " returning empty ambiguous holdout.")
             return metadata, dataframes, [], []
 
-        # Provisional labeling: midpoint of the q-value gap.
-        # Genes closer to q_threshold get label 1 (closer to "rhythmic");
-        # genes closer to q_non_rhythmic get label 0.
-        midpoint = (biocycle_q_threshold + biocycle_q_non_rhythmic) / 2.0
-        amb_rhythmic = {
-            g for g in bc_ambiguous_genes
-            if bc_gene_q_values.get(g, 1.0) <= midpoint
-        }
-        amb_non_rhythmic = bc_ambiguous_genes - amb_rhythmic
-
-        print(f"\n  Generating ambiguous holdout (midpoint q = {midpoint}):")
-        print(f"    Provisional rhythmic (q <= midpoint):     {len(amb_rhythmic)}")
-        print(f"    Provisional non-rhythmic (q > midpoint):  {len(amb_non_rhythmic)}")
+        if non_rhythmic_from_absence:
+            # X class = all RhythmicDB genes not in R.  Provisionally label by
+            # q-value: genes closest to the rhythmic threshold get label 1.
+            midpoint = biocycle_q_threshold * 5  # e.g. 0.05 for q_threshold=0.01
+            amb_rhythmic = {
+                g for g in bc_ambiguous_genes
+                if bc_gene_q_values.get(g, 1.0) <= midpoint
+            }
+            amb_non_rhythmic = bc_ambiguous_genes - amb_rhythmic
+            print(f"\n  Generating X-class holdout (non_rhythmic_from_absence mode):")
+            print(f"    Total X (excluded RhythmicDB genes): {len(bc_ambiguous_genes)}")
+            print(f"    Provisional rhythmic (q <= {midpoint}): {len(amb_rhythmic)}")
+            print(f"    Provisional non-rhythmic (q > {midpoint}): {len(amb_non_rhythmic)}")
+        else:
+            # Classic mode: provisional labeling by midpoint of the q-value gap.
+            midpoint = (biocycle_q_threshold + biocycle_q_non_rhythmic) / 2.0
+            amb_rhythmic = {
+                g for g in bc_ambiguous_genes
+                if bc_gene_q_values.get(g, 1.0) <= midpoint
+            }
+            amb_non_rhythmic = bc_ambiguous_genes - amb_rhythmic
+            print(f"\n  Generating ambiguous holdout (midpoint q = {midpoint}):")
+            print(f"    Provisional rhythmic (q <= midpoint):     {len(amb_rhythmic)}")
+            print(f"    Provisional non-rhythmic (q > midpoint):  {len(amb_non_rhythmic)}")
 
         # Use a distinct starting_id to avoid collisions with training data
         amb_start_id = starting_id + 50000

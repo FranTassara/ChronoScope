@@ -3,7 +3,7 @@ ChronoScope - CONSENSUS RHYTHMICITY SCORE (CRS-AI)
 MODEL TRAINING REPORT
 ================================================================================
 
-  Training date: 2026-05-26
+  Training date: 2026-06-01
 
 1. MODEL OVERVIEW
 --------------------------------------------------------------------------------
@@ -83,17 +83,17 @@ plus derived consensus metrics:
 
   Feature                        Importance   Description
   -----------------------------  ----------   ------------------------------------
-  cosinor_amplitude                  0.1732   Cosinor fitted amplitude (expression units)
-  cosinor_r_squared                  0.1657   Cosinor OLS goodness-of-fit (R-squared)
-  f24_score                          0.1219   Fourier F24 test score (24h periodicity statistic)
-  ls_power                           0.1151   Lomb-Scargle dominant spectral power
-  amplitude_relative                 0.1068   Amplitude relative to mesor (amplitude / |mean|)
-  ls_dominant_period                 0.0950   Lomb-Scargle dominant period (hours)
-  ls_p_value                         0.0711   Lomb-Scargle false alarm probability
-  cosinor_p_value                    0.0436   Cosinor OLS regression adjusted p-value
-  period_dev_24h                     0.0395   Min |period - 24h| across methods (circadian proximity)
-  jtk_p_value                        0.0346   JTK_CYCLE adjusted p-value (non-parametric rhythmicity test)
-  cosinor_period                     0.0335   Cosinor detected period (hours)
+  cosinor_amplitude                  0.1832   Cosinor fitted amplitude (expression units)
+  f24_score                          0.1739   Fourier F24 test score (24h periodicity statistic)
+  cosinor_r_squared                  0.1511   Cosinor OLS goodness-of-fit (R-squared)
+  amplitude_relative                 0.0982   Amplitude relative to mesor (amplitude / |mean|)
+  ls_dominant_period                 0.0928   Lomb-Scargle dominant period (hours)
+  ls_power                           0.0922   Lomb-Scargle dominant spectral power
+  ls_p_value                         0.0684   Lomb-Scargle false alarm probability
+  cosinor_p_value                    0.0400   Cosinor OLS regression adjusted p-value
+  period_dev_24h                     0.0352   Min |period - 24h| across methods (circadian proximity)
+  cosinor_period                     0.0339   Cosinor detected period (hours)
+  jtk_p_value                        0.0313   JTK_CYCLE adjusted p-value (non-parametric rhythmicity test)
 
   Feature completeness (NaN analysis):
     jtk_p_value                      0.0% NaN
@@ -179,19 +179,28 @@ plus derived consensus metrics:
                    → 1-2 instances per gene (control + SR)
       Cap:         800 positives + 800 negatives
 
-  5.3 BioCycle labeling criteria
+  5.3 BioCycle labeling criteria (BioCycle-consistent, v6)
 
     Source:        RhythmicDB (rhythmicdb.biocycle.org)
     Algorithm:     BioCycle (machine learning-based, independent of
                    JTK_CYCLE and Lomb-Scargle to avoid circular
                    reasoning with model features)
     Dataset ID:    E-GEOD-11516
-    Rhythmic:      Q-value <= 0.01 (FDR-corrected)
-    Non-rhythmic:  Q-value > 0.20 (FDR-corrected)
-    Excluded:      0.01 < Q-value <= 0.20 (ambiguous zone)
-    Rationale:     The ambiguity gap eliminates borderline genes
-                   that would introduce label noise. Only high-
-                   confidence classifications are used.
+    R (rhythmic):  Q-value <= 0.01 AND 20 <= Period <= 28 h
+    X (excluded):  Gene in RhythmicDB but not in R class
+                   (any q-value, or period outside 20-28 h)
+    N (non-rhythmic): Gene present in expression universe
+                   but ABSENT from RhythmicDB for E-GEOD-11516
+    Rationale:     RhythmicDB only lists genes with BioCycle
+                   p <= 0.05 / DNN score > 0.5, so any gene
+                   present there carries non-trivial rhythmicity
+                   evidence. The previous criterion (q > 0.20 =
+                   non-rhythmic) was wrong: those genes are weak
+                   rhythmics, not true negatives. Genes absent
+                   from RhythmicDB have zero or negligible
+                   evidence of rhythmicity and form a clean N
+                   class. Genes in X are excluded entirely to
+                   avoid label noise on both sides.
 
   5.4 Known gene labels (ground truth)
 
@@ -237,11 +246,11 @@ plus derived consensus metrics:
 
   Train/test split: 80/20 GroupShuffleSplit (random_state=42)
   Grouping:         by gene name (real) or unique ID (synthetic)
-  Total groups:     4681
-    Gene groups:    2985
+  Total groups:     4691
+    Gene groups:    2995
     Synthetic:      1696
-  Train set:        4531 samples (2404 rhythmic, 2127 non-rhythmic)
-  Test set:         1118 samples (641 rhythmic, 477 non-rhythmic)
+  Train set:        4532 samples (2392 rhythmic, 2140 non-rhythmic)
+  Test set:         1117 samples (653 rhythmic, 464 non-rhythmic)
 
   Rationale: GroupShuffleSplit prevents the same gene from
   appearing in both train and test sets. In prior versions
@@ -256,8 +265,8 @@ plus derived consensus metrics:
 
   6.1 Cross-validation (5-fold StratifiedGroupKFold, on training set)
 
-    ROC-AUC:   0.9214 +/- 0.0085
-    Per-fold:  0.9133, 0.9300, 0.9127, 0.9178, 0.9331
+    ROC-AUC:   0.9325 +/- 0.0089
+    Per-fold:  0.9260, 0.9497, 0.9258, 0.9295, 0.9312
 
   6.2 Holdout test set performance (high-confidence cases)
 
@@ -269,34 +278,34 @@ plus derived consensus metrics:
     (n=1000 resamples, 1000 valid; iterations with single-
     class resamples were skipped):
 
-    Accuracy:    0.8685  [95% CI 0.8488, 0.8873]
-    Precision:   0.8908
-    Recall:      0.8783
-    Specificity: 0.8553
-    F1 Score:    0.8845  [95% CI 0.8660, 0.9027]
-    ROC-AUC:     0.9354  [95% CI 0.9219, 0.9486]
-    MCC:         0.7320
-    Brier loss:  0.0993  [95% CI 0.0888, 0.1105]  (lower=better calibration)
+    Accuracy:    0.8827  [95% CI 0.8639, 0.9006]
+    Precision:   0.9065
+    Recall:      0.8913
+    Specificity: 0.8707
+    F1 Score:    0.8988  [95% CI 0.8814, 0.9155]
+    ROC-AUC:     0.9474  [95% CI 0.9348, 0.9604]
+    MCC:         0.7595
+    Brier loss:  0.0864  [95% CI 0.0754, 0.0972]  (lower=better calibration)
 
   6.3 Confusion matrix
 
                        Predicted
                    Non-rhythmic  Rhythmic
-    Actual NR          408           69
-    Actual R            78          563
+    Actual NR          404           60
+    Actual R            71          582
 
-    TP=563, FP=69, TN=408, FN=78
+    TP=582, FP=60, TN=404, FN=71
 
   6.4 Classification report
 
                   precision    recall  f1-score   support
     
-    Non-rhythmic       0.84      0.86      0.85       477
-        Rhythmic       0.89      0.88      0.88       641
+    Non-rhythmic       0.85      0.87      0.86       464
+        Rhythmic       0.91      0.89      0.90       653
     
-        accuracy                           0.87      1118
-       macro avg       0.87      0.87      0.87      1118
-    weighted avg       0.87      0.87      0.87      1118
+        accuracy                           0.88      1117
+       macro avg       0.88      0.88      0.88      1117
+    weighted avg       0.88      0.88      0.88      1117
     
 
   6.5 Ambiguous holdout (BioCycle borderline-q genes)
@@ -314,11 +323,11 @@ plus derived consensus metrics:
     bound on the model's confusion on hard cases — not as
     a direct comparison to 6.2.
 
-    N:                       2335
-    Accuracy (vs midpoint):  0.5927
-    AUROC (vs midpoint):     0.7047
-    Brier loss:              0.2946
-    % flagged borderline:    22.4%
+    N:                       4641
+    Accuracy (vs midpoint):  0.8052
+    AUROC (vs midpoint):     0.8449
+    Brier loss:              0.1491
+    % flagged borderline:    16.1%
       (probability in [0.30, 0.70])
 
     A high % flagged borderline is the desired behavior
@@ -343,33 +352,33 @@ plus derived consensus metrics:
 
   Rank   Feature                        Importance  Cumulative
   -----  -----------------------------  ----------  ----------
-  1      cosinor_amplitude                  0.1732      0.1732
-  2      cosinor_r_squared                  0.1657      0.3389
-  3      f24_score                          0.1219      0.4609
-  4      ls_power                           0.1151      0.5759
-  5      amplitude_relative                 0.1068      0.6827
-  6      ls_dominant_period                 0.0950      0.7777
-  7      ls_p_value                         0.0711      0.8488
-  8      cosinor_p_value                    0.0436      0.8923
-  9      period_dev_24h                     0.0395      0.9319
-  10     jtk_p_value                        0.0346      0.9665
-  11     cosinor_period                     0.0335      1.0000
+  1      cosinor_amplitude                  0.1832      0.1832
+  2      f24_score                          0.1739      0.3570
+  3      cosinor_r_squared                  0.1511      0.5081
+  4      amplitude_relative                 0.0982      0.6063
+  5      ls_dominant_period                 0.0928      0.6992
+  6      ls_power                           0.0922      0.7913
+  7      ls_p_value                         0.0684      0.8597
+  8      cosinor_p_value                    0.0400      0.8997
+  9      period_dev_24h                     0.0352      0.9349
+  10     cosinor_period                     0.0339      0.9687
+  11     jtk_p_value                        0.0313      1.0000
 
   7.2 Permutation importance (test-set ROC-AUC drop, n_repeats=10)
 
   Rank   Feature                         Mean AUROC drop       Std
   -----  -----------------------------  ----------------  --------
-  1      cosinor_amplitude                       +0.0701    0.0044
-  2      cosinor_r_squared                       +0.0374    0.0029
-  3      f24_score                               +0.0272    0.0034
-  4      ls_dominant_period                      +0.0267    0.0031
-  5      amplitude_relative                      +0.0171    0.0014
-  6      ls_power                                +0.0104    0.0018
-  7      period_dev_24h                          +0.0065    0.0013
-  8      ls_p_value                              +0.0049    0.0009
-  9      cosinor_period                          +0.0049    0.0015
-  10     cosinor_p_value                         +0.0022    0.0010
-  11     jtk_p_value                             +0.0014    0.0009
+  1      cosinor_amplitude                       +0.0730    0.0073
+  2      f24_score                               +0.0330    0.0030
+  3      cosinor_r_squared                       +0.0234    0.0028
+  4      ls_dominant_period                      +0.0169    0.0020
+  5      amplitude_relative                      +0.0135    0.0013
+  6      ls_power                                +0.0073    0.0015
+  7      period_dev_24h                          +0.0060    0.0013
+  8      ls_p_value                              +0.0031    0.0014
+  9      cosinor_period                          +0.0031    0.0005
+  10     cosinor_p_value                         +0.0023    0.0007
+  11     jtk_p_value                             +0.0019    0.0007
 
   Interpretation: a permutation-importance value of 0.05
   means shuffling that feature drops test ROC-AUC by 0.05
@@ -390,7 +399,7 @@ plus derived consensus metrics:
     Ambiguous holdout: core/models_meta_classifier/ambiguous_holdout_predictions.csv
     This report:      core/models_meta_classifier/training_report.txt
 
-  Model file size:    24263.2 KB
+  Model file size:    23641.0 KB
 
 9. RUNTIME PARAMETER OVERRIDE POLICY
 --------------------------------------------------------------------------------

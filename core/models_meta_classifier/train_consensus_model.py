@@ -172,7 +172,7 @@ def main():
         generate_from_GSE39445,
     )
 
-    biocycle_xlsx = str(training_data_dir / 'rhythmicdb_query_bioCycle.xlsx')
+    biocycle_xlsx = str(training_data_dir / 'rhythmicdb_query_BioCycle_allModels_noFilters.xlsx')
     geo_cache_dir = training_data_dir / 'data' / 'geo'
     n_real = 0
 
@@ -194,20 +194,27 @@ def main():
         print(f"  WARNING: GSE11923 failed: {e}")
 
     # Dataset 2: GSE11516 (mouse liver, 4h x 48h, 3 replicates)
-    # Labels: BioCycle from RhythmicDB with ambiguity gap
-    #   Rhythmic: q <= 0.01 | Non-rhythmic: q > 0.2 | Excluded: 0.01 < q <= 0.2
-    #   Capped at 800 per class to balance with synthetic data
+    # Labels: BioCycle-consistent criterion (non_rhythmic_from_absence=True)
+    #   R (rhythmic): gene in RhythmicDB with q<=0.01 AND 20<=period<=28h
+    #   X (excluded): gene in RhythmicDB but not in R (weak/borderline rhythmics)
+    #   N (non-rhythmic): gene in expression universe NOT in RhythmicDB at all
+    # Rationale: RhythmicDB contains only BioCycle p<=0.05 / DNN>0.5 genes, so
+    # any gene present there carries some rhythmicity evidence and must not be
+    # used as a non-rhythmic training example. Genes absent from RhythmicDB are
+    # the clean non-rhythmic class. Capped at 800 per class.
     ambiguous_metadata: list = []
     ambiguous_dataframes: list = []
     try:
-        print("\n  --- Dataset 2: GSE11516 (BioCycle labels) ---")
+        print("\n  --- Dataset 2: GSE11516 (BioCycle-consistent labels) ---")
         real2_meta, real2_dfs, amb_meta, amb_dfs = generate_from_geo(
             geo_accession='GSE11516',
             platform_id='GPL6880',
             biocycle_xlsx=biocycle_xlsx,
             biocycle_dataset_id='E-GEOD-11516',
             biocycle_q_threshold=0.01,
-            biocycle_q_non_rhythmic=0.2,
+            biocycle_period_min=20.0,
+            biocycle_period_max=28.0,
+            non_rhythmic_from_absence=True,
             max_rhythmic=800,
             max_non_rhythmic=800,
             starting_id=n_synth + 2000 + n_real,
@@ -801,18 +808,27 @@ def main():
         f.write("                   → 1-2 instances per gene (control + SR)\n")
         f.write("      Cap:         800 positives + 800 negatives\n\n")
 
-        f.write("  5.3 BioCycle labeling criteria\n\n")
+        f.write("  5.3 BioCycle labeling criteria (BioCycle-consistent, v6)\n\n")
         f.write("    Source:        RhythmicDB (rhythmicdb.biocycle.org)\n")
         f.write("    Algorithm:     BioCycle (machine learning-based, independent of\n")
         f.write("                   JTK_CYCLE and Lomb-Scargle to avoid circular\n")
         f.write("                   reasoning with model features)\n")
         f.write("    Dataset ID:    E-GEOD-11516\n")
-        f.write("    Rhythmic:      Q-value <= 0.01 (FDR-corrected)\n")
-        f.write("    Non-rhythmic:  Q-value > 0.20 (FDR-corrected)\n")
-        f.write("    Excluded:      0.01 < Q-value <= 0.20 (ambiguous zone)\n")
-        f.write("    Rationale:     The ambiguity gap eliminates borderline genes\n")
-        f.write("                   that would introduce label noise. Only high-\n")
-        f.write("                   confidence classifications are used.\n\n")
+        f.write("    R (rhythmic):  Q-value <= 0.01 AND 20 <= Period <= 28 h\n")
+        f.write("    X (excluded):  Gene in RhythmicDB but not in R class\n")
+        f.write("                   (any q-value, or period outside 20-28 h)\n")
+        f.write("    N (non-rhythmic): Gene present in expression universe\n")
+        f.write("                   but ABSENT from RhythmicDB for E-GEOD-11516\n")
+        f.write("    Rationale:     RhythmicDB only lists genes with BioCycle\n")
+        f.write("                   p <= 0.05 / DNN score > 0.5, so any gene\n")
+        f.write("                   present there carries non-trivial rhythmicity\n")
+        f.write("                   evidence. The previous criterion (q > 0.20 =\n")
+        f.write("                   non-rhythmic) was wrong: those genes are weak\n")
+        f.write("                   rhythmics, not true negatives. Genes absent\n")
+        f.write("                   from RhythmicDB have zero or negligible\n")
+        f.write("                   evidence of rhythmicity and form a clean N\n")
+        f.write("                   class. Genes in X are excluded entirely to\n")
+        f.write("                   avoid label noise on both sides.\n\n")
 
         f.write("  5.4 Known gene labels (ground truth)\n\n")
         f.write("    Mouse circadian genes (20): Core TTFL components confirmed\n")
