@@ -4908,9 +4908,10 @@ class AnalysisEngine:
                 # cosinor1.test_cosinor_pairs (pooled model) has a typo in the library:
                 # the column is 'CI(d_amplitde)' instead of 'CI(d_amplitude)'.
                 # We try the correct spelling first, then the typo as fallback.
-                amplitude_diff_ci = self._parse_ci(
-                    row.get('CI(d_amplitude)') or row.get('CI(d_amplitde)')
-                )
+                _ci_amp = row.get('CI(d_amplitude)')
+                if _ci_amp is None:
+                    _ci_amp = row.get('CI(d_amplitde)')
+                amplitude_diff_ci = self._parse_ci(_ci_amp)
                 acrophase_diff_ci = self._parse_ci(row.get('CI(d_acrophase)'))
                 mesor_diff_ci = self._parse_ci(row.get('CI(d_mesor)'))
 
