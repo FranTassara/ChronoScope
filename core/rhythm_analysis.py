@@ -1794,10 +1794,14 @@ def _compute_cwt(
     # Detrend the signal
     y_detrended = y - np.mean(y)
 
-    # For complex Morlet wavelet (cmor), the central frequency is approximately 1.0
-    # The scale relates to period as: scale ≈ (period / dt) / central_freq
-    # For cmor1.5-1.0: fb=1.5 (bandwidth), fc=1.0 (center frequency)
-    central_freq = 1.0
+    # Correct scale formula: scale = period * fc / dt
+    # (derived from pywt's T = scale * dt / fc, i.e. fc = scale * dt / T)
+    # Each wavelet has its own center frequency; cmor1.5-1.0 has fc=1.0,
+    # mexh has fc=0.25, etc. Using pywt.central_frequency avoids hardcoding.
+    try:
+        central_freq = pywt.central_frequency(wavelet)
+    except Exception:
+        central_freq = 1.0  # fallback for unknown wavelets
 
     # Calculate maximum analyzable period based on data length
     # CWT requires at least ~3 complete cycles of the target period for reliable results
@@ -1811,6 +1815,7 @@ def _compute_cwt(
 
     # Respect the user's minimum period, only limiting by physical constraint
     min_period = max(period_range[0], min_period_limit)
+
 
     if max_period < min_period:
         # Data is too short for any period in range
@@ -1838,8 +1843,8 @@ def _compute_cwt(
     if len(period_array) == 0:
         period_array = np.array([min_period])
 
-    scales = period_array / (central_freq * sampling_interval)
-    
+    scales = period_array * central_freq / sampling_interval
+
     # Perform CWT
     try:
         coef, freqs = pywt.cwt(y_detrended, scales, wavelet, sampling_period=sampling_interval)
@@ -1859,6 +1864,7 @@ def _compute_cwt(
     dominant_idx = np.argmax(global_power)
     dominant_period = period_array[dominant_idx]
     dominant_power = global_power[dominant_idx]
+
     
     # Period drift: find dominant period per timepoint
     dom_periods_over_time = period_array[np.argmax(power, axis=0)]

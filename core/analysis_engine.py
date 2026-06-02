@@ -2399,6 +2399,19 @@ class AnalysisEngine:
         msg = (f"FAP={fap:.4f} ({'significant' if is_significant else 'not significant'}, "
                f"α={alpha}), dominant period={result.dominant_period:.2f}h")
 
+        # Compute significance threshold in normalized-power units [0, 1].
+        # Invert the Zechmeister & Kürster (2009) FAP formula for alpha=0.05:
+        #   fap = 1 - (1 - p_single)^M,  p_single = (1 - W)^((N-3)/2)
+        # Solving for W at fap=0.05: p_single_thr = 1-(1-0.05)^(1/M),
+        #                             W_thr = 1 - p_single_thr^(2/(N-3))
+        power_threshold = None
+        N = len(times)
+        M = N
+        if N > 3:
+            p_single_thr = 1.0 - (1.0 - 0.05) ** (1.0 / M)
+            if 0.0 < p_single_thr < 1.0:
+                power_threshold = float(1.0 - p_single_thr ** (2.0 / (N - 3)))
+
         return AnalysisResult(
             variable=variable,
             condition=condition,
@@ -2409,6 +2422,7 @@ class AnalysisEngine:
             period=result.dominant_period,
             periods=result.periods,
             power_spectrum=result.power_spectrum,
+            threshold=power_threshold,
             times=times,
             values=values,
             success=True,

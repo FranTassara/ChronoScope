@@ -672,6 +672,7 @@ class AnalysisWorker(QThread):
             ld_end = int(params.get('viz_ld_end_day', 0))
             dd_end = int(params.get('viz_dd_end_day', 0))
             ll_end = int(params.get('viz_ll_end_day', 0))
+            dd_skip = int(params.get('viz_dd_skip_days', 1))
             tau_min = float(params.get('viz_tau_min', 18.0))
             tau_max = float(params.get('viz_tau_max', 32.0))
             threshold_method = params.get('viz_threshold', 'mean')
@@ -743,7 +744,7 @@ class AnalysisWorker(QThread):
                     row = [day_data.get(zt, 0) for zt in zt_times] + [next_day_data.get(zt, 0) for zt in zt_times]
                     double_plot_matrix.append(row)
                 actogram_data[cond] = {
-                    'days': days[:-1],
+                    'days': days,
                     'zt_times': zt_times,
                     'matrix': double_plot_matrix,
                 }
@@ -771,80 +772,159 @@ class AnalysisWorker(QThread):
 
             self.progress.emit(55, "Computing activity onset/offset times...")
 
-            # ===== ACTIVITY ONSET AND OFFSET PER DAY =====
+            # ===== ACTIVITY ONSET AND OFFSET PER DAY (per individual, mean ± SEM) =====
+            min_bins = max(1, int(params.get('viz_onset_min_duration', 3)))
+            threshold_k = float(params.get('viz_onset_threshold_k', 0.5))
+
             onset_data = {}
             for cond in conditions:
                 cond_df = df_plot[df_plot['condition'] == cond]
-                days_list, onset_times, offset_times = [], [], []
-                for day in sorted(cond_df['day'].unique()):
+
+                days_list = sorted(cond_df['day'].unique())
+                onset_means, onset_sems = [], []
+                offset_means, offset_sems = [], []
+
+                for day in days_list:
                     day_df = cond_df[cond_df['day'] == day]
-                    day_profile = day_df.groupby('zt')['activity'].mean().sort_index()
-                    if len(day_profile) > 0:
-                        threshold = day_profile.mean() + 0.5 * day_profile.std()
-                        above = day_profile[day_profile > threshold]
-                        onset_zt = float(above.index[0]) if len(above) > 0 else None
-                        offset_zt = float(above.index[-1]) if len(above) > 0 else None
+                    subjects = day_df['subject'].unique() if 'subject' in day_df.columns else [None]
+
+                    sub_onsets, sub_offsets = [], []
+                    for subj in subjects:
+                        sub_df = day_df[day_df['subject'] == subj] if subj is not None else day_df
+                        sub_profile = sub_df.groupby('zt')['activity'].mean().sort_index()
+                        if len(sub_profile) < 1:
+                            continue
+
+                        threshold = sub_profile.mean() + threshold_k * sub_profile.std()
+                        above = (sub_profile > threshold).values
+                        zt_idx = sub_profile.index.tolist()
+
+                        # Find runs of consecutive bins above threshold
+                        runs, i = [], 0
+                        while i < len(above):
+                            if above[i]:
+                                start = i
+                                while i < len(above) and above[i]:
+                                    i += 1
+                                runs.append((start, i - 1))
+                            else:
+                                i += 1
+
+                        valid_runs = [(s, e) for s, e in runs if (e - s + 1) >= min_bins]
+                        if valid_runs:
+                            sub_onsets.append(float(zt_idx[valid_runs[0][0]]))
+                            sub_offsets.append(float(zt_idx[valid_runs[-1][1]]))
+
+                    if sub_onsets:
+                        onset_means.append(float(np.mean(sub_onsets)))
+                        onset_sems.append(float(np.std(sub_onsets, ddof=1) / np.sqrt(len(sub_onsets))) if len(sub_onsets) > 1 else 0.0)
                     else:
-                        onset_zt = offset_zt = None
-                    days_list.append(day)
-                    onset_times.append(onset_zt)
-                    offset_times.append(offset_zt)
+                        onset_means.append(None)
+                        onset_sems.append(None)
+
+                    if sub_offsets:
+                        offset_means.append(float(np.mean(sub_offsets)))
+                        offset_sems.append(float(np.std(sub_offsets, ddof=1) / np.sqrt(len(sub_offsets))) if len(sub_offsets) > 1 else 0.0)
+                    else:
+                        offset_means.append(None)
+                        offset_sems.append(None)
+
                 onset_data[cond] = {
                     'days': days_list,
-                    'onset_times': onset_times,
-                    'offset_times': offset_times,
+                    'onset_times': onset_means,
+                    'onset_sem': onset_sems,
+                    'offset_times': offset_means,
+                    'offset_sem': offset_sems,
                 }
 
             self.progress.emit(65, "Computing chi-square periodogram...")
 
-            # ===== CHI-SQUARE PERIODOGRAM =====
-            # Compute on the DD phase if specified; otherwise all data.
+            # ===== CHI-SQUARE PERIODOGRAM (per individual, rhythmic filter) =====
+            import pandas as _pd
+            chi_alpha = float(params.get('viz_chi_alpha', 0.05))
+            dd_phase = lighting_phases.get('DD')
+
+            def _resample_30min(t, a):
+                """Resample to 30-min bins if finer resolution."""
+                if len(t) < 2:
+                    return t, a
+                native_bin = float(np.median(np.diff(t)[np.diff(t) > 0]))
+                if native_bin >= 0.5:
+                    return t, a
+                origin = _pd.Timestamp('2000-01-01')
+                idx_ts = origin + _pd.to_timedelta(t * 3600, unit='s')
+                s = _pd.Series(a, index=idx_ts).sort_index()
+                rs = s.resample('30min').mean().dropna()
+                return (rs.index - origin).total_seconds().values / 3600.0, rs.values
+
             chi_sq_data = {}
             for cond in conditions:
                 cond_df = df_plot[df_plot['condition'] == cond]
-                # Per-condition mean series (average across subjects)
-                if 'subject' in cond_df.columns:
-                    mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
+                subjects = cond_df['subject'].unique() if 'subject' in cond_df.columns else [None]
+
+                individual_results = []
+                for subj in subjects:
+                    sub_df = cond_df[cond_df['subject'] == subj] if subj is not None else cond_df
+                    t_s = sub_df.groupby('time')['activity'].mean().reset_index()['time'].values
+                    a_s = sub_df.groupby('time')['activity'].mean().reset_index()['activity'].values
+
+                    if dd_phase is not None:
+                        t_s, a_s = filter_days(t_s, a_s, dd_phase[0] + dd_skip, dd_phase[1])
+                    if len(t_s) < 10:
+                        t_s_orig = sub_df.groupby('time')['activity'].mean().reset_index()['time'].values
+                        a_s_orig = sub_df.groupby('time')['activity'].mean().reset_index()['activity'].values
+                        t_s, a_s = t_s_orig, a_s_orig
+
+                    t_s, a_s = _resample_30min(t_s, a_s)
+                    if len(t_s) < 3:
+                        continue
+
+                    r = chi_square_periodogram(t_s, a_s,
+                                               period_min=tau_min, period_max=tau_max,
+                                               period_step=0.1, alpha=chi_alpha)
+                    individual_results.append(r)
+
+                n_total = len(individual_results)
+                rhythmic = [r for r in individual_results
+                            if r['tau_qp'] is not None
+                            and r['significance'] is not None
+                            and r['tau_qp'] > r['significance']]
+                n_rhythmic = len(rhythmic)
+
+                if rhythmic and len(rhythmic[0]['periods']) > 0:
+                    qp_arrays = np.array([r['qp'] for r in rhythmic])
+                    qp_mean = qp_arrays.mean(axis=0)
+                    qp_sem = (qp_arrays.std(axis=0, ddof=1) / np.sqrt(n_rhythmic)
+                              if n_rhythmic > 1 else np.zeros_like(qp_mean))
+                    taus = [r['tau'] for r in rhythmic if r['tau'] is not None]
+                    tau_mean = float(np.mean(taus))
+                    tau_sem = (float(np.std(taus, ddof=1) / np.sqrt(len(taus)))
+                               if len(taus) > 1 else 0.0)
+                    periods = rhythmic[0]['periods']
+                    tau_qp_idx = int(np.argmin(np.abs(periods - tau_mean)))
+                    chi_sq_data[cond] = {
+                        'periods': periods,
+                        'qp': qp_mean,
+                        'qp_sem': qp_sem,
+                        'tau': tau_mean,
+                        'tau_sem': tau_sem,
+                        'tau_qp': float(qp_mean[tau_qp_idx]),
+                        'significance': rhythmic[0]['significance'],
+                        'n_rhythmic': n_rhythmic,
+                        'n_total': n_total,
+                        'phase_used': 'DD' if dd_phase else 'all',
+                    }
                 else:
-                    mean_series = cond_df.groupby('time')['activity'].mean().reset_index()
-
-                t_all = mean_series['time'].values
-                a_all = mean_series['activity'].values
-
-                # Select DD phase for τ estimation
-                dd_phase = lighting_phases.get('DD')
-                if dd_phase is not None:
-                    t_chi, a_chi = filter_days(t_all, a_all, dd_phase[0], dd_phase[1])
-                else:
-                    t_chi, a_chi = t_all, a_all
-
-                if len(t_chi) < 10:
-                    # Fallback: use all data
-                    t_chi, a_chi = t_all, a_all
-
-                # Auto-resample to ≥30 min bins for chi-sq (prevents very slow
-                # computation with fine-grained DAM data at 1-min resolution)
-                if len(t_chi) > 1:
-                    native_bin = float(np.median(np.diff(t_chi)[np.diff(t_chi) > 0]))
-                else:
-                    native_bin = 1.0
-                if native_bin < 0.5:  # < 30 min
-                    import pandas as _pd
-                    origin = _pd.Timestamp('2000-01-01')
-                    idx = origin + _pd.to_timedelta(t_chi * 3600, unit='s')
-                    s = _pd.Series(a_chi, index=idx).sort_index()
-                    rs = s.resample('30min').mean().dropna()
-                    t_chi = (rs.index - origin).total_seconds().values / 3600.0
-                    a_chi = rs.values
-
-                chi_result = chi_square_periodogram(
-                    t_chi, a_chi,
-                    period_min=tau_min,
-                    period_max=tau_max,
-                    period_step=0.1,
-                )
-                chi_result['phase_used'] = 'DD' if dd_phase and len(t_chi) >= 10 else 'all'
-                chi_sq_data[cond] = chi_result
+                    ref = individual_results[0] if individual_results else {}
+                    chi_sq_data[cond] = {
+                        'periods': ref.get('periods', np.array([])),
+                        'qp': ref.get('qp', np.array([])),
+                        'qp_sem': np.zeros_like(ref.get('qp', np.array([]))),
+                        'tau': None, 'tau_sem': None, 'tau_qp': None,
+                        'significance': ref.get('significance'),
+                        'n_rhythmic': 0, 'n_total': n_total,
+                        'phase_used': 'DD' if dd_phase else 'all',
+                    }
 
             self.progress.emit(75, "Computing IS/IV metrics...")
 
@@ -1716,7 +1796,7 @@ class AnalysisPanel(QWidget):
 
         # Sampling Interval (for CWT)
         self._sampling_interval_spin = QDoubleSpinBox()
-        self._sampling_interval_spin.setRange(0.1, 24.0)
+        self._sampling_interval_spin.setRange(0.0, 24.0)
         self._sampling_interval_spin.setValue(0.0)  # 0 = auto-detect
         self._sampling_interval_spin.setSingleStep(0.1)
         self._sampling_interval_spin.setDecimals(1)
@@ -1872,6 +1952,22 @@ class AnalysisPanel(QWidget):
         self._ai_consensus_info_label.setVisible(False)
         self._params_layout.addRow("", self._ai_consensus_info_label)
 
+        # CWT period-limit info label (hidden by default).
+        self._cwt_info_label = QLabel(
+            "ℹ Maximum analyzable period = data duration ÷ 3 "
+            "(requires ≥ 3 complete cycles to avoid edge effects). "
+            "E.g. a 48 h series → max ~16 h. For circadian rhythms "
+            "(18–32 h), at least 54–96 h of data are needed."
+        )
+        self._cwt_info_label.setWordWrap(True)
+        self._cwt_info_label.setStyleSheet(
+            "color: #555; font-style: italic; padding: 6px 8px; "
+            "background-color: #f3f6fb; border: 1px solid #c5d3e8; "
+            "border-radius: 4px;"
+        )
+        self._cwt_info_label.setVisible(False)
+        self._params_layout.addRow("", self._cwt_info_label)
+
         # One-time flag: set sensible AI defaults the first time the user
         # switches to the AI Consensus module in a session. After that,
         # whatever the user picks persists across module switches.
@@ -1904,7 +2000,16 @@ class AnalysisPanel(QWidget):
         self._viz_dd_end_spin.setSpecialValueText("end")
         self._viz_dd_end_spin.setToolTip("Last day of the DD (constant darkness) phase.\n0 = runs to end of recording.")
         _viz_dd_lay.addWidget(self._viz_dd_end_spin)
-        _viz_dd_lay.addWidget(QLabel("(0 = end)"))
+        _viz_dd_lay.addWidget(QLabel("(0 = end)   skip first"))
+        self._viz_dd_skip_spin = QSpinBox()
+        self._viz_dd_skip_spin.setRange(0, 14)
+        self._viz_dd_skip_spin.setValue(1)
+        self._viz_dd_skip_spin.setSuffix(" days")
+        self._viz_dd_skip_spin.setToolTip(
+            "Number of initial DD days to exclude from τ calculation.\n"
+            "Day 1 of DD is often a transition day and is excluded by default."
+        )
+        _viz_dd_lay.addWidget(self._viz_dd_skip_spin)
         _viz_dd_lay.addStretch()
         self._params_layout.addRow("DD ends day:", _viz_dd_w)
 
@@ -1940,6 +2045,19 @@ class AnalysisPanel(QWidget):
         self._viz_tau_max_spin.setDecimals(1)
         self._viz_tau_max_spin.setSuffix(" h")
         _viz_tau_lay.addWidget(self._viz_tau_max_spin)
+        _viz_tau_lay.addWidget(QLabel("   α="))
+        self._viz_chi_alpha_spin = QDoubleSpinBox()
+        self._viz_chi_alpha_spin.setRange(0.001, 0.1)
+        self._viz_chi_alpha_spin.setValue(0.05)
+        self._viz_chi_alpha_spin.setSingleStep(0.01)
+        self._viz_chi_alpha_spin.setDecimals(3)
+        self._viz_chi_alpha_spin.setToolTip(
+            "Significance level for rhythmicity classification.\n"
+            "An individual is considered rhythmic if its peak Qp exceeds\n"
+            "the chi² threshold at this alpha. Only rhythmic individuals\n"
+            "contribute to the reported τ mean ± SEM."
+        )
+        _viz_tau_lay.addWidget(self._viz_chi_alpha_spin)
         _viz_tau_lay.addStretch()
         self._params_layout.addRow("τ search (h):", _viz_tau_w)
 
@@ -1962,6 +2080,39 @@ class AnalysisPanel(QWidget):
             "Does NOT affect the Total Daily Activity chart (always shows raw counts)."
         )
         self._params_layout.addRow("Normalize:", self._viz_normalize_check)
+
+        _viz_onset_w = QWidget()
+        _viz_onset_lay = QHBoxLayout(_viz_onset_w)
+        _viz_onset_lay.setContentsMargins(0, 0, 0, 0)
+
+        self._viz_onset_min_duration_spin = QSpinBox()
+        self._viz_onset_min_duration_spin.setRange(1, 48)
+        self._viz_onset_min_duration_spin.setValue(3)
+        self._viz_onset_min_duration_spin.setSuffix(" bins")
+        self._viz_onset_min_duration_spin.setToolTip(
+            "Minimum number of consecutive bins above threshold required to define onset/offset.\n"
+            "1 = any single bin counts (no robustness filter).\n"
+            "Higher values ignore brief activity spikes."
+        )
+        _viz_onset_lay.addWidget(self._viz_onset_min_duration_spin)
+
+        _viz_onset_lay.addWidget(QLabel("  mean + k·σ  k="))
+
+        self._viz_onset_threshold_k_spin = QDoubleSpinBox()
+        self._viz_onset_threshold_k_spin.setRange(0.0, 3.0)
+        self._viz_onset_threshold_k_spin.setValue(0.5)
+        self._viz_onset_threshold_k_spin.setSingleStep(0.1)
+        self._viz_onset_threshold_k_spin.setDecimals(1)
+        self._viz_onset_threshold_k_spin.setToolTip(
+            "Threshold = mean + k · std of the individual's activity that day.\n"
+            "k=0: threshold is the daily mean.\n"
+            "k=0.5 (default): slightly above mean, tolerant of low-activity animals.\n"
+            "k=1–2: more conservative, only catches clear activity bouts."
+        )
+        _viz_onset_lay.addWidget(self._viz_onset_threshold_k_spin)
+        _viz_onset_lay.addStretch()
+
+        self._params_layout.addRow("Onset:", _viz_onset_w)
 
         # Update visibility based on current method
         self._update_parameter_visibility()
@@ -2438,6 +2589,7 @@ class AnalysisPanel(QWidget):
             self._hide_param("τ search (h):")
             self._hide_param("α/ρ threshold:")
             self._hide_checkbox(self._viz_normalize_check)
+            self._hide_param("Onset:")
 
         # Reset AI Consensus-specific overrides: re-show period step (it
         # was potentially hidden for AI) and hide the AI info label.
@@ -2448,6 +2600,8 @@ class AnalysisPanel(QWidget):
             self._period_step_spin.setVisible(True)
         if hasattr(self, '_ai_consensus_info_label'):
             self._set_row_visible_for_widget(self._ai_consensus_info_label, False)
+        if hasattr(self, '_cwt_info_label'):
+            self._set_row_visible_for_widget(self._cwt_info_label, False)
 
         # =====================================================================
         # COSINORPY - NEW REFACTORED METHODS
@@ -2611,6 +2765,7 @@ class AnalysisPanel(QWidget):
                 self._show_param("Wavelet Type:")
                 self._show_param("Sampling Interval:")
                 self._set_period_mode('range_no_step')
+                self._set_row_visible_for_widget(self._cwt_info_label, True)
 
             # 9. Spectral Analysis (Periodogram)
             elif method_text == "Spectral Analysis (Periodogram)":
@@ -2696,6 +2851,7 @@ class AnalysisPanel(QWidget):
             self._show_param("τ search (h):")
             self._show_param("α/ρ threshold:")
             self._show_checkbox(self._viz_normalize_check)
+            self._show_param("Onset:")
 
         # =====================================================================
         # COMPARISON FRAME VISIBILITY
@@ -3376,11 +3532,15 @@ class AnalysisPanel(QWidget):
             # Visualization parameters
             'viz_ld_end_day': self._viz_ld_end_spin.value() if hasattr(self, '_viz_ld_end_spin') else 0,
             'viz_dd_end_day': self._viz_dd_end_spin.value() if hasattr(self, '_viz_dd_end_spin') else 0,
+            'viz_dd_skip_days': self._viz_dd_skip_spin.value() if hasattr(self, '_viz_dd_skip_spin') else 1,
             'viz_ll_end_day': self._viz_ll_end_spin.value() if hasattr(self, '_viz_ll_end_spin') else 0,
             'viz_tau_min': self._viz_tau_min_spin.value() if hasattr(self, '_viz_tau_min_spin') else 18.0,
             'viz_tau_max': self._viz_tau_max_spin.value() if hasattr(self, '_viz_tau_max_spin') else 32.0,
+            'viz_chi_alpha': self._viz_chi_alpha_spin.value() if hasattr(self, '_viz_chi_alpha_spin') else 0.05,
             'viz_threshold': self._viz_threshold_combo.currentText() if hasattr(self, '_viz_threshold_combo') else 'mean',
             'viz_normalize': self._viz_normalize_check.isChecked() if hasattr(self, '_viz_normalize_check') else False,
+            'viz_onset_min_duration': self._viz_onset_min_duration_spin.value() if hasattr(self, '_viz_onset_min_duration_spin') else 3,
+            'viz_onset_threshold_k': self._viz_onset_threshold_k_spin.value() if hasattr(self, '_viz_onset_threshold_k_spin') else 0.5,
         }
         return params
 

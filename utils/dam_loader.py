@@ -246,14 +246,21 @@ class DAMDataLoader:
         threshold_minutes = self._config.death_threshold_hours * 60
         results = {}
 
+        # Restrict detection to the configured date range
+        data = self._raw_data
+        if self._config.start_datetime:
+            data = data[data['datetime'] >= self._config.start_datetime]
+        if self._config.end_datetime:
+            data = data[data['datetime'] <= self._config.end_datetime]
+
         for ch in range(1, self.N_CHANNELS + 1):
             col_idx = self.COL_FIRST_CHANNEL + ch - 1
-            if col_idx >= len(self._raw_data.columns):
+            if col_idx >= len(data.columns):
                 continue
 
             # Get activity data with timestamps
-            activity = self._raw_data[col_idx].values
-            timestamps = self._raw_data['datetime'].values
+            activity = data[col_idx].values
+            timestamps = data['datetime'].values
 
             # Find consecutive zeros
             is_alive = True

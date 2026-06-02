@@ -581,66 +581,71 @@ class PlotCanvas(FigureCanvas):
                 continue
 
             data = actogram_data[cond]
-            days = data['days']
-            matrix = np.array(data['matrix'])
+            days = data['days']   # full day list (n elements)
+            matrix = np.array(data['matrix'])  # n-1 rows
 
             if len(matrix) == 0:
                 ax.text(0.5, 0.5, f'No data for {cond}', ha='center', va='center')
                 continue
 
-            n_days = len(days)
+            n_rows = len(matrix)  # number of plot rows = len(days) - 1
             n_bins = len(matrix[0]) if len(matrix) > 0 else 0
             bin_width = 48.0 / n_bins if n_bins > 0 else 1
             max_val = np.max(matrix) if np.max(matrix) > 0 else 1
 
             # --- Row backgrounds (drawn first, zorder=0) ---
-            for i, day in enumerate(days):
-                y_bot = n_days - i - 1
-                y_top = n_days - i
-                phase = _day_phase(day)
+            # Row i: left half = days[i], right half = days[i+1] (always valid)
+            for i in range(n_rows):
+                y_bot = n_rows - i - 1
+                y_top = n_rows - i
+                phase = _day_phase(days[i])
+                next_phase = _day_phase(days[i + 1])
 
+                # Left half (0–24h): phase of current day
                 if phase == 'DD':
-                    # Uniform gray across the full 48h
-                    ax.axhspan(y_bot, y_top, color='#bbbbbb', alpha=0.35, zorder=0)
-
+                    ax.axhspan(y_bot, y_top, xmin=0/48, xmax=24/48, color='#bbbbbb', alpha=0.35, zorder=0)
                 elif phase == 'LL':
-                    # Uniform light yellow across the full 48h
-                    ax.axhspan(y_bot, y_top, color='#fff9c4', alpha=0.55, zorder=0)
-
-                else:
-                    # LD: alternating light (yellow) / dark (gray) every 12h
-                    # xmin/xmax are axis fractions (0–1 maps to 0–48 h)
+                    ax.axhspan(y_bot, y_top, xmin=0/48, xmax=24/48, color='#fff9c4', alpha=0.55, zorder=0)
+                else:  # LD
                     ax.axhspan(y_bot, y_top, xmin=0/48,  xmax=12/48, color='#fff176', alpha=0.45, zorder=0)
                     ax.axhspan(y_bot, y_top, xmin=12/48, xmax=24/48, color='#9e9e9e', alpha=0.30, zorder=0)
+
+                # Right half (24–48h): phase of next day
+                if next_phase == 'DD':
+                    ax.axhspan(y_bot, y_top, xmin=24/48, xmax=48/48, color='#bbbbbb', alpha=0.35, zorder=0)
+                elif next_phase == 'LL':
+                    ax.axhspan(y_bot, y_top, xmin=24/48, xmax=48/48, color='#fff9c4', alpha=0.55, zorder=0)
+                else:  # LD
                     ax.axhspan(y_bot, y_top, xmin=24/48, xmax=36/48, color='#fff176', alpha=0.45, zorder=0)
                     ax.axhspan(y_bot, y_top, xmin=36/48, xmax=48/48, color='#9e9e9e', alpha=0.30, zorder=0)
 
             # --- Activity bars ---
-            for i, day in enumerate(days):
+            for i in range(n_rows):
                 row = matrix[i]
                 for j, val in enumerate(row):
                     if val > 0:
                         x_pos = j * bin_width
                         height = 0.8 * (val / max_val)
-                        ax.bar(x_pos, height, width=bin_width, bottom=n_days - i - 1,
+                        ax.bar(x_pos, height, width=bin_width, bottom=n_rows - i - 1,
                                color='black', align='edge', linewidth=0, zorder=2)
 
             # --- Axes ---
+            row_days = days[:n_rows]  # day label for each row (left-half day)
             ax.set_xlim(0, 48)
-            ax.set_ylim(0, n_days)
-            ax.set_xlabel('Time (hours)')
+            ax.set_ylim(0, n_rows)
+            ax.set_xlabel('ZT (hours)')
             ax.set_ylabel('Day')
             ax.set_title(f'{cond}')
             ax.set_xticks([0, 6, 12, 18, 24, 30, 36, 42, 48])
-            ax.set_xticklabels(['0', '6', '12', '18', '24', '30', '36', '42', '48'])
+            ax.set_xticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24', 'ZT30', 'ZT36', 'ZT42', 'ZT48'])
 
-            if n_days <= 20:
-                ax.set_yticks([n_days - d for d in days])
-                ax.set_yticklabels([str(d) for d in days])
+            if n_rows <= 20:
+                ax.set_yticks([n_rows - i for i in range(n_rows)])
+                ax.set_yticklabels([str(d) for d in row_days])
             else:
-                tick_days = [d for d in days if d % 5 == 0 or d == 1]
-                ax.set_yticks([n_days - d for d in tick_days])
-                ax.set_yticklabels([str(d) for d in tick_days])
+                tick_indices = [i for i, d in enumerate(row_days) if d % 5 == 0 or d == row_days[0]]
+                ax.set_yticks([n_rows - i for i in tick_indices])
+                ax.set_yticklabels([str(row_days[i]) for i in tick_indices])
 
         self.fig.suptitle(title, fontsize=12, fontweight='bold')
         self.fig.tight_layout()
@@ -727,26 +732,36 @@ class PlotCanvas(FigureCanvas):
             data = onset_data[cond]
             days = data['days']
             onset_times = data['onset_times']
+            onset_sem = data.get('onset_sem', [0.0] * len(days))
             offset_times = data.get('offset_times', [None] * len(days))
+            offset_sem = data.get('offset_sem', [0.0] * len(days))
 
             color = colors[i]
 
-            # Plot onset (filled circles)
-            valid_onset = [(d, o) for d, o in zip(days, onset_times) if o is not None]
+            # Plot onset (filled circles, mean ± SEM)
+            valid_onset = [
+                (d, o, s) for d, o, s in zip(days, onset_times, onset_sem)
+                if o is not None
+            ]
             if valid_onset:
-                onset_days, onset_vals = zip(*valid_onset)
-                ax.scatter(onset_days, onset_vals, color=color, s=50, marker='o',
-                          label=f'{cond} onset', alpha=0.8)
-                ax.plot(onset_days, onset_vals, '-', color=color, linewidth=1, alpha=0.4)
+                onset_days, onset_vals, onset_errs = zip(*valid_onset)
+                ax.errorbar(onset_days, onset_vals, yerr=onset_errs,
+                            fmt='o-', color=color, markersize=5, linewidth=1,
+                            elinewidth=1, capsize=3, alpha=0.85,
+                            label=f'{cond} onset')
 
-            # Plot offset (open triangles)
-            valid_offset = [(d, o) for d, o in zip(days, offset_times) if o is not None]
+            # Plot offset (open triangles, mean ± SEM)
+            valid_offset = [
+                (d, o, s) for d, o, s in zip(days, offset_times, offset_sem)
+                if o is not None
+            ]
             if valid_offset:
-                offset_days, offset_vals = zip(*valid_offset)
-                ax.scatter(offset_days, offset_vals, color=color, s=50, marker='^',
-                          facecolors='none', edgecolors=color, linewidths=1.5,
-                          label=f'{cond} offset', alpha=0.8)
-                ax.plot(offset_days, offset_vals, '--', color=color, linewidth=1, alpha=0.4)
+                offset_days, offset_vals, offset_errs = zip(*valid_offset)
+                ax.errorbar(offset_days, offset_vals, yerr=offset_errs,
+                            fmt='^--', color=color, markersize=5, linewidth=1,
+                            elinewidth=1, capsize=3, alpha=0.85,
+                            markerfacecolor='none', markeredgewidth=1.5,
+                            label=f'{cond} offset')
 
         ax.set_xlabel('Day')
         ax.set_ylabel('Time (ZT)')
@@ -778,15 +793,20 @@ class PlotCanvas(FigureCanvas):
         ax = self.fig.add_subplot(111)
         any_plotted = False
 
+        sig_drawn = False
         for idx, cond in enumerate(conditions):
             if cond not in chi_sq_data:
                 continue
             res = chi_sq_data[cond]
             periods = res.get('periods')
             qp = res.get('qp')
+            qp_sem = res.get('qp_sem')
             tau = res.get('tau')
+            tau_sem = res.get('tau_sem')
             tau_qp = res.get('tau_qp')
             significance = res.get('significance')
+            n_rhythmic = res.get('n_rhythmic')
+            n_total = res.get('n_total')
 
             if periods is None or len(periods) == 0:
                 continue
@@ -794,21 +814,32 @@ class PlotCanvas(FigureCanvas):
             color = colors[idx % len(colors)]
             ax.plot(periods, qp, color=color, linewidth=1.5, label=cond)
 
+            if qp_sem is not None and np.any(qp_sem > 0):
+                ax.fill_between(periods, qp - qp_sem, qp + qp_sem,
+                                color=color, alpha=0.2)
+
             if tau is not None and tau_qp is not None:
                 ax.axvline(tau, color=color, linestyle='--', linewidth=1, alpha=0.7)
+                tau_label = f'τ = {tau:.2f}'
+                if tau_sem:
+                    tau_label += f' ± {tau_sem:.2f} h'
+                else:
+                    tau_label += ' h'
+                if n_rhythmic is not None and n_total is not None:
+                    tau_label += f'\nn = {n_rhythmic}/{n_total} rhythmic'
                 ax.annotate(
-                    f'τ={tau:.1f}h',
+                    tau_label,
                     xy=(tau, tau_qp),
                     xytext=(tau + 0.3, tau_qp),
-                    color=color,
-                    fontsize=8,
-                    va='center',
+                    color=color, fontsize=8, va='center',
                 )
 
-            # Draw significance threshold once (first condition that has it)
-            if significance is not None and not any_plotted:
+            if significance is not None and not sig_drawn:
                 ax.axhline(significance, color='red', linestyle=':', linewidth=1.0,
-                           label='p=0.05 threshold')
+                           label=f'p<{significance:.2f} (Qp threshold)')
+                ax.text(periods[-1], significance, f' {significance:.2f}',
+                        color='red', fontsize=7, va='bottom', ha='right')
+                sig_drawn = True
 
             phase_used = res.get('phase_used', 'all')
             if phase_used != 'all' and idx == 0:
@@ -2076,20 +2107,15 @@ class ResultsPanel(QWidget):
                           linewidth=2, label=f'Peak: {dominant_period:.2f}h')
 
             # Add significance threshold if available
-            if method == 'lomb_scargle':
-                fap = result.get('p_value')  # False Alarm Probability
-                if fap is not None and fap < 1.0:
-                    # Estimate threshold from FAP (simplified)
-                    # For Lomb-Scargle, power threshold ≈ -ln(FAP)
-                    threshold = -np.log(max(fap, 1e-10))
-                    ax.axhline(y=threshold, color='red', linestyle='--',
-                              linewidth=1, label=f'Threshold (FAP={fap:.3f})')
-
-            elif method == 'spectral_analysis':
-                threshold = result.get('threshold')
-                if threshold is not None:
-                    ax.axhline(y=threshold, color='red', linestyle='--',
-                              linewidth=1, label=f'Threshold (p=0.05)')
+            threshold = result.get('threshold')
+            if threshold is not None:
+                fap = result.get('p_value')
+                if method == 'lomb_scargle' and fap is not None:
+                    label = f'Threshold (FAP=0.05)'
+                else:
+                    label = 'Threshold (p=0.05)'
+                ax.axhline(y=threshold, color='red', linestyle='--',
+                          linewidth=1, label=label)
 
             ax.set_xlabel('Period (hours)', fontsize=10)
             ax.set_ylabel('Power', fontsize=10)
