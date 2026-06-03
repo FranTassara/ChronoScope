@@ -1,0 +1,371 @@
+{
+  "version": 1,
+  "skills": {
+    "adaptyv": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/adaptyv/SKILL.md",
+      "computedHash": "bbac65d131f2516bbb29aca9fd59b6b175fec50ee98900566fa6b371d28c8212"
+    },
+    "aeon": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/aeon/SKILL.md",
+      "computedHash": "c8bc92dc31915a6210fe2e80c46b0fbdc364c1a9682b41330eb787e2c6fa2d89"
+    },
+    "anndata": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/anndata/SKILL.md",
+      "computedHash": "293b6dca43a3c16ae75190c2b824cb20155bdd472527e65130c55a2696be5166"
+    },
+    "arboreto": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/arboreto/SKILL.md",
+      "computedHash": "2c38c529add0e75f41819946ae21b31d3d6e621ba01e03407b7f9a122b5b1e40"
+    },
+    "autoskill": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/autoskill/SKILL.md",
+      "computedHash": "4fba6be3d6320d0f437efe14ec2c4407b9160e564ee12a1c3c46d6c6f594361e"
+    },
+    "benchling-integration": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/benchling-integration/SKILL.md",
+      "computedHash": "624572560aa88a774589ab68af6f6648581bdaff9ebdcd8d5dc3c5acc1464434"
+    },
+    "bgpt-paper-search": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/bgpt-paper-search/SKILL.md",
+      "computedHash": "c4b4494156efe8177ca09a0dddb5f4ec2511246442d147767393cd82d88adf17"
+    },
+    "bulk-rnaseq": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/bulk-rnaseq/SKILL.md",
+      "computedHash": "0f166e48a54610041e2dc80e802b7234b6d7ed74e8f500013ea2d0a84fad4882"
+    },
+    "citation-management": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/citation-management/SKILL.md",
+      "computedHash": "dc99f541b5aff98dad5d7d3a041d2dcf9b41a16d5a4cd4ae0bcfec4fafa3e42f"
+    },
+    "dask": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/dask/SKILL.md",
+      "computedHash": "09cfbfe6ac062f10b1f5c9f8ab8f624c0a75e5d0966058098ae2b3ccb96916a7"
+    },
+    "database-lookup": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/database-lookup/SKILL.md",
+      "computedHash": "4f7d4c36ac1bb7927b35340c7db370b603bc9cec20ca0f2f17d64b844c7dd2e1"
+    },
+    "docx": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/docx/SKILL.md",
+      "computedHash": "2c6d19b1996556d98a7e3c4ea2c54c56637942b8bccbd1cb30765e48b8da53ba"
+    },
+    "exa-search": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/exa-search/SKILL.md",
+      "computedHash": "cda5c6edb6b07c90681cab05fd7d7b10decc9dc14caae93e4bf85fe3f5d250ba"
+    },
+    "exploratory-data-analysis": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/exploratory-data-analysis/SKILL.md",
+      "computedHash": "186c3a17ddf1135b430d96a067391693fe23769e58ff267776a445afa38e1b7f"
+    },
+    "generate-image": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/generate-image/SKILL.md",
+      "computedHash": "b660714d2a4d7bbe3b957e5f95a52d9dfe9605826ba67b8b6092398b5fac0da8"
+    },
+    "get-available-resources": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/get-available-resources/SKILL.md",
+      "computedHash": "5bb8b0215ca10db60b3d53e62eebdcafbbe747a0bc90c2aea4ae2b0f27655998"
+    },
+    "hugging-science": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/hugging-science/SKILL.md",
+      "computedHash": "ed3a422f1a595cd257ef0ab81ed76a33d37c021ca10c8d608d49b3b84b6537de"
+    },
+    "hypogenic": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/hypogenic/SKILL.md",
+      "computedHash": "559ce7736f6bfc190a62317b76c5b93c8fb8cc3db59789a8a4930f74c60574a9"
+    },
+    "hypothesis-generation": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/hypothesis-generation/SKILL.md",
+      "computedHash": "b1dd66bc9ba5e9201728f6184377ea078f5060bcf5fdd4f8ea53372f29f0ffc2"
+    },
+    "infographics": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/infographics/SKILL.md",
+      "computedHash": "4f69588b829ca6460dbd34702a1db088ef756118ea85aab8d79b58679f3bc426"
+    },
+    "latex-posters": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/latex-posters/SKILL.md",
+      "computedHash": "2b059776c7a2badf369605c8d42662fe2fc249fec9ba976be06d1377c782783b"
+    },
+    "literature-review": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/literature-review/SKILL.md",
+      "computedHash": "96f1e2d7eb4a63f6f5c333f7d31f4a08b02ec1cc264bd7445ec500e8970d4b05"
+    },
+    "markdown-mermaid-writing": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/markdown-mermaid-writing/SKILL.md",
+      "computedHash": "5893a8c56bae6329c06f31a584cc4bb915654155ee357d62c5ef3fbe43dfc9a8"
+    },
+    "market-research-reports": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/market-research-reports/SKILL.md",
+      "computedHash": "c44b1dec0eae964a507e65a0342da52dff42df8b8d563d38bd32f56ace3e59e7"
+    },
+    "markitdown": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/markitdown/SKILL.md",
+      "computedHash": "777fba00c6b5708066318d4be3e12fb01e2fa63121a0b94057c92268bf57d5e1"
+    },
+    "matchms": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/matchms/SKILL.md",
+      "computedHash": "ec171f591bfa2bd3b4c4f0fcfc4162acc08e1d6027f3a22340325e43e9360a49"
+    },
+    "matlab": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/matlab/SKILL.md",
+      "computedHash": "1f34707beb7b345023e422864cdf7f88bb78af1073ab8458d2d42d4f9a3c33a5"
+    },
+    "matplotlib": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/matplotlib/SKILL.md",
+      "computedHash": "74571affd42f1aa25ad37cc03a2434e8fea83060191304948a27e9b52dcbf129"
+    },
+    "modal": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/modal/SKILL.md",
+      "computedHash": "84dae19b52ae53c012fdaa8a8415913f74c5a1c4c400b5771881927466ae763c"
+    },
+    "networkx": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/networkx/SKILL.md",
+      "computedHash": "fe65a508f1de7034c02a9aff9648f3c7f3015a79a5ea591f2e58d1702f97f9df"
+    },
+    "open-notebook": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/open-notebook/SKILL.md",
+      "computedHash": "b2cb3798f7c90cd67bb0ba6f56ea2544f550196e799b83350d53390ba698a1fe"
+    },
+    "optimize-for-gpu": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/optimize-for-gpu/SKILL.md",
+      "computedHash": "9c3080dbd60e98edb620dfa4a922b26ef1dad3452041b338e1770920ee11e5bc"
+    },
+    "paper-lookup": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/paper-lookup/SKILL.md",
+      "computedHash": "76e45a206931b1ed1958dd32807ee1d3299c4f303f74e73e5a8ff45ad6969507"
+    },
+    "paperzilla": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/paperzilla/SKILL.md",
+      "computedHash": "dc7632ad0c13898d9d9bef1f23dec5a8e45ba6ea271de8b9b1b071ec61273b7e"
+    },
+    "parallel-web": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/parallel-web/SKILL.md",
+      "computedHash": "3b47d694d272479fb0ecf5190267b5a04ad8d0e3b9ba54cf33f129b1f8915a8f"
+    },
+    "pdf": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/pdf/SKILL.md",
+      "computedHash": "2a1ac9c85748d703db0718b661ff48da0c9dbac9f74b68ee155e8dc43dc55c2b"
+    },
+    "peer-review": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/peer-review/SKILL.md",
+      "computedHash": "2ea18f46d78991c0fac7511a4c24715e0b994c2b599a693803c7d960a49d2601"
+    },
+    "pptx": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/pptx/SKILL.md",
+      "computedHash": "fc343d76e0b81d0407f96f94eda2d55b1995c321297b39eba00556deccdc823f"
+    },
+    "pptx-posters": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/pptx-posters/SKILL.md",
+      "computedHash": "df0783ecc2fb0cb7808d24e7d2f6b5bd6416df916b730c2e7863a993c659c9a5"
+    },
+    "research-grants": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/research-grants/SKILL.md",
+      "computedHash": "00f029cb6da355c6a3413893ab3fc08fa2845750b751874850ee038778144db8"
+    },
+    "research-lookup": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/research-lookup/SKILL.md",
+      "computedHash": "1e2a5c118ef58a4a2c1f5e01d36209b8682579285b6615a39a09ccd0e29f97ab"
+    },
+    "scanpy": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scanpy/SKILL.md",
+      "computedHash": "f260ac9ab74517dbdb17dd1d4992217a2c22fad85a031dfbcb7df20cbb0c641e"
+    },
+    "scholar-evaluation": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scholar-evaluation/SKILL.md",
+      "computedHash": "88f12da38bbc5412cc272b0cf8c04391cff062fbeb74f28c5270f829669e5381"
+    },
+    "scientific-brainstorming": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scientific-brainstorming/SKILL.md",
+      "computedHash": "9aa9c698ed89c611434de8e7e9f5615a1d44539e2fbbec694cc953d21ccfa8ac"
+    },
+    "scientific-critical-thinking": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scientific-critical-thinking/SKILL.md",
+      "computedHash": "99a1d1b452a580e2ba881ea242584caecca92e1f8843109a76594af9474a03c7"
+    },
+    "scientific-schematics": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scientific-schematics/SKILL.md",
+      "computedHash": "1fb5f74a5b08c2f45f78a2e53c9971d8c80f37b19fc5c982083c9388708a52b7"
+    },
+    "scientific-slides": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scientific-slides/SKILL.md",
+      "computedHash": "09fec59b25ddc24fb96a2135ec9131cfe6c69dd0012a2780f4fc8f0a06520aae"
+    },
+    "scientific-visualization": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scientific-visualization/SKILL.md",
+      "computedHash": "d52b157161f945df8fb03ebed38c1b081f18f74c4d8226fad35009a39cf0bbd7"
+    },
+    "scientific-writing": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scientific-writing/SKILL.md",
+      "computedHash": "83273e41aa69d8e4d478eeeeb60d6cfa5222a807172c3838123427d6d185684b"
+    },
+    "scikit-bio": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scikit-bio/SKILL.md",
+      "computedHash": "caa8dbc47d5f35f39a0c4d96df70bdd8340d48b678d1aebf204a3c4c7294ad8a"
+    },
+    "scikit-learn": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scikit-learn/SKILL.md",
+      "computedHash": "d7c4a68073295e985f50ea9e842cc403ebf8715c43b2b6de077740ac84354e67"
+    },
+    "scikit-survival": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/scikit-survival/SKILL.md",
+      "computedHash": "7607947e1a87be5cfdba65b2e8274d9711d9c8fc24234ccd7085f3f1b352affa"
+    },
+    "seaborn": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/seaborn/SKILL.md",
+      "computedHash": "f088c3aca2378d0c93385f6c1749cad026e5226c94c0bad5cf4cb87db1a11929"
+    },
+    "statistical-analysis": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/statistical-analysis/SKILL.md",
+      "computedHash": "b40aea74f02c4a0fef28abfae6bbe4578b681cb6c78a4082ec808d825047f998"
+    },
+    "statsmodels": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/statsmodels/SKILL.md",
+      "computedHash": "c7f94fb334e785976397a9c48e5c8d0db134d86aaa5489c232ee4d3c9ad2c729"
+    },
+    "sympy": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/sympy/SKILL.md",
+      "computedHash": "21fb7ebbe789cd091ebb718c2283854a1c03e0b692bf70163a1ee568953cd7d2"
+    },
+    "torch-geometric": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/torch-geometric/SKILL.md",
+      "computedHash": "f5c83305281164150ac326fc1af8fc6ce621b3e505785df461675cd0c3edb8a0"
+    },
+    "umap-learn": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/umap-learn/SKILL.md",
+      "computedHash": "426d1b7fc34c1bdd0f2977b1d802e4e2c45b23dabe344feecda36cd0dc0c92dc"
+    },
+    "venue-templates": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/venue-templates/SKILL.md",
+      "computedHash": "a6e1758c132c76540a3f9b78f640a3505eacbdd6949ce4acadaa076bfad58f87"
+    },
+    "xlsx": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/xlsx/SKILL.md",
+      "computedHash": "71ae4743abb2eb5e76ca351a34b7f2a098da164affa1cc58bd2df6b7fc3129b0"
+    },
+    "zarr-python": {
+      "source": "K-Dense-AI/scientific-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/zarr-python/SKILL.md",
+      "computedHash": "3d4aa35473ada16cbbabaf985a4115258cdd8a5dbe5d099fc074fefe04be8192"
+    }
+  }
+}
