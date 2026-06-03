@@ -312,12 +312,14 @@ class DataPanel(QWidget):
         self._dam_start_date = QDateEdit()
         self._dam_start_date.setCalendarPopup(True)
         self._dam_start_date.setEnabled(False)
+        self._dam_start_date.dateChanged.connect(self._update_dam_preview)
         date_range_layout.addWidget(self._dam_start_date)
 
         date_range_layout.addWidget(QLabel("End:"))
         self._dam_end_date = QDateEdit()
         self._dam_end_date.setCalendarPopup(True)
         self._dam_end_date.setEnabled(False)
+        self._dam_end_date.dateChanged.connect(self._update_dam_preview)
         date_range_layout.addWidget(self._dam_end_date)
 
         date_layout.addLayout(date_range_layout)
@@ -456,12 +458,14 @@ class DataPanel(QWidget):
         self._awd_start_date = QDateEdit()
         self._awd_start_date.setCalendarPopup(True)
         self._awd_start_date.setEnabled(False)
+        self._awd_start_date.dateChanged.connect(self._update_awd_preview)
         date_range_layout.addWidget(self._awd_start_date)
 
         date_range_layout.addWidget(QLabel("End:"))
         self._awd_end_date = QDateEdit()
         self._awd_end_date.setCalendarPopup(True)
         self._awd_end_date.setEnabled(False)
+        self._awd_end_date.dateChanged.connect(self._update_awd_preview)
         date_range_layout.addWidget(self._awd_end_date)
 
         date_layout.addLayout(date_range_layout)
@@ -605,6 +609,7 @@ class DataPanel(QWidget):
         use_all = state == Qt.Checked
         self._dam_start_date.setEnabled(not use_all)
         self._dam_end_date.setEnabled(not use_all)
+        self._update_dam_preview()
 
     def _update_dam_preview(self):
         """Update DAM preview summary."""
@@ -874,6 +879,7 @@ class DataPanel(QWidget):
         use_all = state == Qt.Checked
         self._awd_start_date.setEnabled(not use_all)
         self._awd_end_date.setEnabled(not use_all)
+        self._update_awd_preview()
 
     def _update_awd_preview(self):
         """Update the AWD data summary label."""

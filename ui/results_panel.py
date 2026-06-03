@@ -538,6 +538,7 @@ class PlotCanvas(FigureCanvas):
         conditions: list,
         title: str = "Actogram (Double-Plotted)",
         lighting_phases: dict = None,
+        lights_on_hour: int = 0,
     ):
         """
         Plot double-plotted actogram.
@@ -590,54 +591,95 @@ class PlotCanvas(FigureCanvas):
 
             n_rows = len(matrix)  # number of plot rows = len(days) - 1
             n_bins = len(matrix[0]) if len(matrix) > 0 else 0
-            bin_width = 48.0 / n_bins if n_bins > 0 else 1
+            n_bins_per_day = n_bins // 2
+            bin_width = 24.0 / n_bins_per_day if n_bins_per_day > 0 else 1
             max_val = np.max(matrix) if np.max(matrix) > 0 else 1
 
+            # Light-phase boundaries in clock time (assumes 12 h photoperiod)
+            lon = lights_on_hour          # e.g. 8
+            loff = lights_on_hour + 12    # e.g. 20
+
+            def _ld_shade(ax, y_bot, y_top, x_offset):
+                """Draw LD shading for one 24-h half, starting at x_offset."""
+                if loff <= 24:
+                    # Normal: dark | light | dark within a single day
+                    if lon > 0:
+                        ax.axhspan(y_bot, y_top,
+                                   xmin=(x_offset)/48, xmax=(x_offset+lon)/48,
+                                   color='#9e9e9e', alpha=0.30, zorder=0)
+                    ax.axhspan(y_bot, y_top,
+                               xmin=(x_offset+lon)/48, xmax=(x_offset+loff)/48,
+                               color='#fff176', alpha=0.45, zorder=0)
+                    if loff < 24:
+                        ax.axhspan(y_bot, y_top,
+                                   xmin=(x_offset+loff)/48, xmax=(x_offset+24)/48,
+                                   color='#9e9e9e', alpha=0.30, zorder=0)
+                else:
+                    # Wrapped: lights on after noon, light crosses midnight
+                    # light 0..(loff-24), dark (loff-24)..lon, light lon..24
+                    wrap = loff - 24
+                    ax.axhspan(y_bot, y_top,
+                               xmin=(x_offset)/48, xmax=(x_offset+wrap)/48,
+                               color='#fff176', alpha=0.45, zorder=0)
+                    ax.axhspan(y_bot, y_top,
+                               xmin=(x_offset+wrap)/48, xmax=(x_offset+lon)/48,
+                               color='#9e9e9e', alpha=0.30, zorder=0)
+                    ax.axhspan(y_bot, y_top,
+                               xmin=(x_offset+lon)/48, xmax=(x_offset+24)/48,
+                               color='#fff176', alpha=0.45, zorder=0)
+
             # --- Row backgrounds (drawn first, zorder=0) ---
-            # Row i: left half = days[i], right half = days[i+1] (always valid)
             for i in range(n_rows):
                 y_bot = n_rows - i - 1
                 y_top = n_rows - i
                 phase = _day_phase(days[i])
                 next_phase = _day_phase(days[i + 1])
 
-                # Left half (0–24h): phase of current day
+                # Left half (clock 0–24): phase of current day
                 if phase == 'DD':
-                    ax.axhspan(y_bot, y_top, xmin=0/48, xmax=24/48, color='#bbbbbb', alpha=0.35, zorder=0)
+                    ax.axhspan(y_bot, y_top, xmin=0/48, xmax=24/48,
+                               color='#bbbbbb', alpha=0.35, zorder=0)
                 elif phase == 'LL':
-                    ax.axhspan(y_bot, y_top, xmin=0/48, xmax=24/48, color='#fff9c4', alpha=0.55, zorder=0)
-                else:  # LD
-                    ax.axhspan(y_bot, y_top, xmin=0/48,  xmax=12/48, color='#fff176', alpha=0.45, zorder=0)
-                    ax.axhspan(y_bot, y_top, xmin=12/48, xmax=24/48, color='#9e9e9e', alpha=0.30, zorder=0)
+                    ax.axhspan(y_bot, y_top, xmin=0/48, xmax=24/48,
+                               color='#fff9c4', alpha=0.55, zorder=0)
+                else:
+                    _ld_shade(ax, y_bot, y_top, x_offset=0)
 
-                # Right half (24–48h): phase of next day
+                # Right half (clock 24–48): phase of next day
                 if next_phase == 'DD':
-                    ax.axhspan(y_bot, y_top, xmin=24/48, xmax=48/48, color='#bbbbbb', alpha=0.35, zorder=0)
+                    ax.axhspan(y_bot, y_top, xmin=24/48, xmax=48/48,
+                               color='#bbbbbb', alpha=0.35, zorder=0)
                 elif next_phase == 'LL':
-                    ax.axhspan(y_bot, y_top, xmin=24/48, xmax=48/48, color='#fff9c4', alpha=0.55, zorder=0)
-                else:  # LD
-                    ax.axhspan(y_bot, y_top, xmin=24/48, xmax=36/48, color='#fff176', alpha=0.45, zorder=0)
-                    ax.axhspan(y_bot, y_top, xmin=36/48, xmax=48/48, color='#9e9e9e', alpha=0.30, zorder=0)
+                    ax.axhspan(y_bot, y_top, xmin=24/48, xmax=48/48,
+                               color='#fff9c4', alpha=0.55, zorder=0)
+                else:
+                    _ld_shade(ax, y_bot, y_top, x_offset=24)
 
-            # --- Activity bars ---
+            # --- Activity bars (shifted to clock time) ---
             for i in range(n_rows):
                 row = matrix[i]
                 for j, val in enumerate(row):
                     if val > 0:
-                        x_pos = j * bin_width
+                        if j < n_bins_per_day:
+                            zt = j * bin_width
+                            x_pos = (zt + lights_on_hour) % 24
+                        else:
+                            zt = (j - n_bins_per_day) * bin_width
+                            x_pos = (zt + lights_on_hour) % 24 + 24
                         height = 0.8 * (val / max_val)
-                        ax.bar(x_pos, height, width=bin_width, bottom=n_rows - i - 1,
+                        ax.bar(x_pos, height, width=bin_width,
+                               bottom=n_rows - i - 1,
                                color='black', align='edge', linewidth=0, zorder=2)
 
             # --- Axes ---
             row_days = days[:n_rows]  # day label for each row (left-half day)
             ax.set_xlim(0, 48)
             ax.set_ylim(0, n_rows)
-            ax.set_xlabel('ZT (hours)')
+            ax.set_xticks([0, 6, 12, 18, 24, 30, 36, 42, 48])
+            ax.set_xticklabels(['0', '6', '12', '18', '24', '30', '36', '42', '48'])
+            ax.set_xlabel('Time (h)')
             ax.set_ylabel('Day')
             ax.set_title(f'{cond}')
-            ax.set_xticks([0, 6, 12, 18, 24, 30, 36, 42, 48])
-            ax.set_xticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24', 'ZT30', 'ZT36', 'ZT42', 'ZT48'])
 
             if n_rows <= 20:
                 ax.set_yticks([n_rows - i for i in range(n_rows)])
@@ -827,11 +869,14 @@ class PlotCanvas(FigureCanvas):
                     tau_label += ' h'
                 if n_rhythmic is not None and n_total is not None:
                     tau_label += f'\nn = {n_rhythmic}/{n_total} rhythmic'
-                ax.annotate(
-                    tau_label,
-                    xy=(tau, tau_qp),
-                    xytext=(tau + 0.3, tau_qp),
-                    color=color, fontsize=8, va='center',
+                y_anchor = 0.97 - idx * 0.14
+                ax.text(
+                    0.98, y_anchor, tau_label,
+                    transform=ax.transAxes,
+                    fontsize=8, color=color,
+                    va='top', ha='right',
+                    bbox=dict(boxstyle='round,pad=0.25', facecolor='white',
+                              alpha=0.75, edgecolor=color, linewidth=0.8),
                 )
 
             if significance is not None and not sig_drawn:
@@ -1230,6 +1275,7 @@ class ResultsPanel(QWidget):
         RC_METHODS = {'rhythmcount_single', 'rhythmcount_all_models', 'rhythmcount_best_model',
                       'rhythmcount_parameter_cis', 'rhythmcount_compare_groups'}
         has_rhythmcount_cis = any(r.get('method') == 'rhythmcount_parameter_cis' for r in self._results)
+        has_rhythmcount_compare_groups = any(r.get('method') == 'rhythmcount_compare_groups' for r in self._results)
         has_rhythmcount = any(r.get('method') in RC_METHODS for r in self._results)
 
         is_activity_profile = False
@@ -1344,6 +1390,14 @@ class ResultsPanel(QWidget):
                 if any(r.get('best_model') is not None for r in self._results):
                     columns.append('best_model')
                     headers.append('Best Fit')
+            # For RhythmCount: Compare Groups
+            elif has_rhythmcount_compare_groups:
+                columns = ['_group', 'variable', 'period', 'count_model', 'n_components',
+                           'amplitude', 'amplitude_CIs', 'mesor', 'mesor_CIs',
+                           'peaks', 'heights', 'llr_pvalue', 'AIC', 'BIC', 'prsquared']
+                headers = ['Group', 'Variable', 'Period (h)', 'Model', 'N',
+                           'Amplitude', 'CI(Amplitude)', 'MESOR', 'CI(MESOR)',
+                           'Peaks (h)', 'Peak Heights', 'p (LRT)', 'AIC', 'BIC', 'McFadden R²']
             # For RhythmCount: Parameter Confidence Intervals
             elif has_rhythmcount_cis:
                 columns = ['variable', 'condition', 'method', 'period', 'n_components',
@@ -1505,6 +1559,77 @@ class ResultsPanel(QWidget):
                     for i in range(len(conditions_list))
                 )
                 self._results_table.setColumnHidden(j, all_na)
+            return
+
+        # ---------------------------------------------------------------
+        # RhythmCount Compare Groups: expand results_table_json per group
+        # ---------------------------------------------------------------
+        if has_rhythmcount_compare_groups:
+            import json as _json_rc
+            _KNOWN_RC_COLS = {
+                'count_model', 'n_components', 'amplitude', 'mesor', 'peaks', 'heights',
+                'llr_pvalue', 'RSS', 'AIC', 'BIC', 'log_likelihood', 'logs', 'resid',
+                'resid_mean', 'resid_std', 'prsquared', 'est_mean', 'est_std', 'Y_est',
+                'data_mean', 'data_std', 'X_test', 'Y_test',
+                'amplitude_CIs', 'mesor_CIs', 'peaks_CIs', 'heights_CIs',
+            }
+            expanded_rows = []
+            for r in self._get_filtered_results():
+                if r.get('method') != 'rhythmcount_compare_groups':
+                    continue
+                table_json = r.get('results_table_json')
+                if not table_json:
+                    continue
+                try:
+                    group_data = _json_rc.loads(table_json)
+                except Exception:
+                    continue
+                group_col = next(
+                    (k for k in (group_data[0].keys() if group_data else []) if k not in _KNOWN_RC_COLS),
+                    'group'
+                )
+                for grow in group_data:
+                    expanded_rows.append({
+                        '_group': grow.get(group_col, 'N/A'),
+                        'variable': r.get('variable', ''),
+                        'period': r.get('period', ''),
+                        'count_model': grow.get('count_model', 'N/A'),
+                        'n_components': grow.get('n_components', 'N/A'),
+                        'amplitude': grow.get('amplitude'),
+                        'amplitude_CIs': grow.get('amplitude_CIs', 'N/A'),
+                        'mesor': grow.get('mesor'),
+                        'mesor_CIs': grow.get('mesor_CIs', 'N/A'),
+                        'peaks': grow.get('peaks', 'N/A'),
+                        'heights': grow.get('heights', 'N/A'),
+                        'llr_pvalue': grow.get('llr_pvalue'),
+                        'AIC': grow.get('AIC'),
+                        'BIC': grow.get('BIC'),
+                        'prsquared': grow.get('prsquared'),
+                    })
+            self._results_table.setRowCount(len(expanded_rows))
+            for i, row_data in enumerate(expanded_rows):
+                for j, col in enumerate(columns):
+                    val = row_data.get(col, 'N/A')
+                    if isinstance(val, float):
+                        if math.isnan(val):
+                            cell = 'N/A'
+                        elif col in ('llr_pvalue',):
+                            cell = f'{val:.2e}' if val < 0.001 else f'{val:.4f}'
+                        else:
+                            cell = f'{val:.3f}'
+                    elif val is None:
+                        cell = 'N/A'
+                    else:
+                        cell = str(val)
+                    item = QTableWidgetItem(cell)
+                    if col == 'llr_pvalue':
+                        try:
+                            pv = float(cell)
+                            if pv < 0.05:
+                                item.setBackground(QColor(144, 238, 144))
+                        except (ValueError, TypeError):
+                            pass
+                    self._results_table.setItem(i, j, item)
             return
 
         # Apply filter
@@ -1734,6 +1859,14 @@ class ResultsPanel(QWidget):
             self._viz_tabs.setTabText(3, "Feature Importance")
             return
 
+        # RhythmCount Compare Groups
+        if method == 'rhythmcount_compare_groups':
+            self._viz_tabs.setTabVisible(2, True)
+            self._viz_tabs.setTabText(2, "Group Comparison")
+            self._bar_param_container.setVisible(False)
+            self._viz_tabs.setCurrentIndex(2)
+            return
+
         # LME and other text-only methods
         if method in TEXT_ONLY_METHODS:
             # Show: Summary only
@@ -1773,6 +1906,9 @@ class ResultsPanel(QWidget):
             is_iv_data = result.get('is_iv_data', {})
             alpha_rho_data = result.get('alpha_rho_data', {})
             lighting_phases = result.get('lighting_phases', None)
+            lights_on_hour = result.get('lights_on_hour', 0)
+            actogram_type = result.get('actogram_type', 'population')
+            rep_tau_info = result.get('rep_tau_info', {})
             conditions = result.get('conditions', [])
             n_days = result.get('n_days', 1)
 
@@ -1798,11 +1934,20 @@ class ResultsPanel(QWidget):
                 conditions=conditions,
                 title=f"Daily Activity Profile (mean ± SEM, n={n_days} days)"
             )
+            if actogram_type == 'individual' and rep_tau_info:
+                rep_lines = [
+                    f"{cond}: subj={info.get('subject','?')}, τ={info.get('tau', 0):.2f}h (group median {info.get('median_tau', 0):.2f}h, n={info.get('n_subjects','?')})"
+                    for cond, info in rep_tau_info.items() if info
+                ]
+                actogram_title = "Actogram – Individual (median τ)\n" + " | ".join(rep_lines)
+            else:
+                actogram_title = "Actogram (Double-Plotted, population mean)"
             self._bar_canvas.plot_actogram(
                 actogram_data=actogram_data,
                 conditions=conditions,
-                title="Actogram (Double-Plotted)",
+                title=actogram_title,
                 lighting_phases=lighting_phases,
+                lights_on_hour=lights_on_hour,
             )
             self._period_canvas.plot_total_activity(
                 total_activity_data=total_activity_data,
@@ -1890,6 +2035,13 @@ class ResultsPanel(QWidget):
             return
 
         # =====================================================================
+        # RHYTHMCOUNT COMPARE GROUPS
+        # =====================================================================
+        if method == 'rhythmcount_compare_groups':
+            self._update_fit_plot(self._results[0])
+            return
+
+        # =====================================================================
         # COSINOR METHODS (including comparisons)
         # =====================================================================
         # Update bar plot
@@ -1950,6 +2102,11 @@ class ResultsPanel(QWidget):
         # Text-only methods (LME)
         if method in TEXT_ONLY_METHODS:
             self._plot_lme_result(result)
+            return
+
+        # RhythmCount Compare Groups
+        if method == 'rhythmcount_compare_groups':
+            self._plot_rhythmcount_compare_groups(result)
             return
 
         # Default: Cosinor fit for all cosinor-based methods
@@ -2198,6 +2355,119 @@ class ResultsPanel(QWidget):
 
         self._fit_canvas.fig.tight_layout()
         self._fit_canvas.draw()
+
+    def _plot_rhythmcount_compare_groups(self, result: Dict):
+        """Bar chart comparing amplitude and MESOR across groups."""
+        import json as _json_rc
+        self._bar_canvas.clear()
+        fig = self._bar_canvas.fig
+        fig.clear()
+
+        table_json = result.get('results_table_json')
+        variable = result.get('variable', '')
+        period = result.get('period', 24.0)
+
+        if not table_json:
+            ax = fig.add_subplot(111)
+            ax.text(0.5, 0.5, 'No group data available', ha='center', va='center',
+                    transform=ax.transAxes, fontsize=12)
+            ax.axis('off')
+            self._bar_canvas.draw()
+            return
+
+        try:
+            group_data = _json_rc.loads(table_json)
+        except Exception:
+            group_data = []
+
+        if not group_data:
+            ax = fig.add_subplot(111)
+            ax.text(0.5, 0.5, 'No group data to plot', ha='center', va='center',
+                    transform=ax.transAxes, fontsize=12)
+            ax.axis('off')
+            self._bar_canvas.draw()
+            return
+
+        _KNOWN_RC_COLS = {
+            'count_model', 'n_components', 'amplitude', 'mesor', 'peaks', 'heights',
+            'llr_pvalue', 'RSS', 'AIC', 'BIC', 'log_likelihood', 'logs', 'resid',
+            'resid_mean', 'resid_std', 'prsquared', 'est_mean', 'est_std', 'Y_est',
+            'data_mean', 'data_std', 'X_test', 'Y_test',
+            'amplitude_CIs', 'mesor_CIs', 'peaks_CIs', 'heights_CIs',
+        }
+        group_col = next(
+            (k for k in group_data[0].keys() if k not in _KNOWN_RC_COLS),
+            'group'
+        )
+
+        groups = [str(row.get(group_col, f'G{i}')) for i, row in enumerate(group_data)]
+        amplitudes = []
+        mesors = []
+        amp_lo, amp_hi, mes_lo, mes_hi = [], [], [], []
+
+        for row in group_data:
+            amp = row.get('amplitude')
+            mes = row.get('mesor')
+            amplitudes.append(float(amp) if amp is not None else 0.0)
+            mesors.append(float(mes) if mes is not None else 0.0)
+
+            def _parse_ci(val):
+                if val is None:
+                    return None, None
+                if isinstance(val, (list, tuple)) and len(val) == 2:
+                    return float(val[0]), float(val[1])
+                if isinstance(val, str):
+                    import re
+                    nums = re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', val)
+                    if len(nums) >= 2:
+                        return float(nums[0]), float(nums[1])
+                return None, None
+
+            a_lo, a_hi = _parse_ci(row.get('amplitude_CIs'))
+            m_lo, m_hi = _parse_ci(row.get('mesor_CIs'))
+            amp_lo.append(a_lo)
+            amp_hi.append(a_hi)
+            mes_lo.append(m_lo)
+            mes_hi.append(m_hi)
+
+        x = np.arange(len(groups))
+        width = 0.35
+        colors_amp = ['#4878D0', '#6ACC65', '#D65F5F', '#B47CC7', '#C4AD66']
+        colors_mes = ['#85C0F9', '#A6E194', '#F1A340', '#D5A6DC', '#E8D5A3']
+
+        ax1 = fig.add_subplot(121)
+        for idx in range(len(groups)):
+            c = colors_amp[idx % len(colors_amp)]
+            bar = ax1.bar(x[idx], amplitudes[idx], width, color=c, label=groups[idx])
+            if amp_lo[idx] is not None and amp_hi[idx] is not None:
+                ax1.errorbar(x[idx], (amp_lo[idx] + amp_hi[idx]) / 2,
+                             yerr=[[(amp_lo[idx] + amp_hi[idx]) / 2 - amp_lo[idx]],
+                                   [amp_hi[idx] - (amp_lo[idx] + amp_hi[idx]) / 2]],
+                             fmt='none', color='black', capsize=4)
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(groups, rotation=30, ha='right')
+        ax1.set_ylabel('Amplitude')
+        ax1.set_title('Amplitude by Group')
+        ax1.legend(fontsize='small')
+
+        ax2 = fig.add_subplot(122)
+        for idx in range(len(groups)):
+            c = colors_mes[idx % len(colors_mes)]
+            ax2.bar(x[idx], mesors[idx], width, color=c, label=groups[idx])
+            if mes_lo[idx] is not None and mes_hi[idx] is not None:
+                ax2.errorbar(x[idx], (mes_lo[idx] + mes_hi[idx]) / 2,
+                             yerr=[[(mes_lo[idx] + mes_hi[idx]) / 2 - mes_lo[idx]],
+                                   [mes_hi[idx] - (mes_lo[idx] + mes_hi[idx]) / 2]],
+                             fmt='none', color='black', capsize=4)
+        ax2.set_xticks(x)
+        ax2.set_xticklabels(groups, rotation=30, ha='right')
+        ax2.set_ylabel('MESOR')
+        ax2.set_title('MESOR by Group')
+        ax2.legend(fontsize='small')
+
+        fig.suptitle(f'{variable} — Group Comparison (Period={period}h)', fontsize=11)
+        fig.tight_layout()
+        self._bar_canvas.draw()
 
     def _plot_lme_result(self, result: Dict):
         """Plot Linear Mixed Effects results (text summary)."""
@@ -2706,7 +2976,13 @@ class ResultsPanel(QWidget):
         """Export current plot to file."""
         # Get current canvas
         tab_idx = self._viz_tabs.currentIndex()
-        canvases = [self._fit_canvas, self._polar_canvas, self._bar_canvas, self._period_canvas, self._onset_canvas]
+        canvases = [
+            self._fit_canvas, self._polar_canvas, self._bar_canvas,
+            self._period_canvas, self._onset_canvas, self._chisq_canvas,
+        ]
+        if tab_idx >= len(canvases):
+            QMessageBox.warning(self, "Export Error", "No exportable canvas for this tab.")
+            return
         canvas = canvases[tab_idx]
         
         filepath, _ = QFileDialog.getSaveFileName(

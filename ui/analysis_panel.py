@@ -713,6 +713,68 @@ class AnalysisWorker(QThread):
             else:
                 df_plot = df
 
+            actogram_type = params.get('viz_actogram_type', 'population')
+            _loader_cfg = (getattr(self.loader, '_config', None) or
+                           getattr(self.loader, '_shared_config', None))
+            lights_on_hour = int(getattr(_loader_cfg, 'lights_on_hour', 0))
+            chi_alpha = float(params.get('viz_chi_alpha', 0.05))
+            dd_phase = lighting_phases.get('DD')
+
+            import pandas as _pd
+
+            def _resample_30min(t, a):
+                if len(t) < 2:
+                    return t, a
+                native_bin = float(np.median(np.diff(t)[np.diff(t) > 0]))
+                if native_bin >= 0.5:
+                    return t, a
+                origin = _pd.Timestamp('2000-01-01')
+                idx_ts = origin + _pd.to_timedelta(t * 3600, unit='s')
+                s = _pd.Series(a, index=idx_ts).sort_index()
+                rs = s.resample('30min').mean().dropna()
+                return (rs.index - origin).total_seconds().values / 3600.0, rs.values
+
+            # For individual actogram: find the subject closest to the group median τ
+            rep_subjects = {}   # cond -> representative subject label
+            rep_tau_info = {}   # cond -> {'subject', 'tau', 'median_tau'}
+            if actogram_type == 'individual' and 'subject' in df.columns:
+                self.progress.emit(20, "Finding representative individual per condition...")
+                for cond in conditions:
+                    cond_df = df_plot[df_plot['condition'] == cond]
+                    subjects = cond_df['subject'].unique()
+                    subj_tau = {}
+                    for subj in subjects:
+                        sub_df = cond_df[cond_df['subject'] == subj]
+                        t_s = sub_df.groupby('time')['activity'].mean().reset_index()['time'].values
+                        a_s = sub_df.groupby('time')['activity'].mean().reset_index()['activity'].values
+                        if dd_phase is not None:
+                            t_s, a_s = filter_days(t_s, a_s, dd_phase[0] + dd_skip, dd_phase[1])
+                        if len(t_s) < 10:
+                            t_s = sub_df.groupby('time')['activity'].mean().reset_index()['time'].values
+                            a_s = sub_df.groupby('time')['activity'].mean().reset_index()['activity'].values
+                        t_s, a_s = _resample_30min(t_s, a_s)
+                        if len(t_s) < 3:
+                            continue
+                        r = chi_square_periodogram(t_s, a_s,
+                                                   period_min=tau_min, period_max=tau_max,
+                                                   period_step=0.1, alpha=chi_alpha)
+                        if r['tau'] is not None:
+                            subj_tau[subj] = r['tau']
+                    if subj_tau:
+                        taus_list = list(subj_tau.values())
+                        median_tau = float(np.median(taus_list))
+                        rep_subj = min(subj_tau.keys(), key=lambda s: abs(subj_tau[s] - median_tau))
+                        rep_subjects[cond] = rep_subj
+                        rep_tau_info[cond] = {
+                            'subject': rep_subj,
+                            'tau': subj_tau[rep_subj],
+                            'median_tau': median_tau,
+                            'n_subjects': len(subj_tau),
+                        }
+                    else:
+                        rep_subjects[cond] = None
+                        rep_tau_info[cond] = {}
+
             self.progress.emit(25, "Computing mean activity by day and ZT...")
 
             # ===== ACTIVITY PROFILE HEATMAP =====
@@ -733,8 +795,16 @@ class AnalysisWorker(QThread):
             # ===== DOUBLE-PLOTTED ACTOGRAM =====
             actogram_data = {}
             for cond in conditions:
-                cond_df = df_plot[df_plot['condition'] == cond]
-                grouped = cond_df.groupby(['day', 'zt'])['activity'].mean().reset_index()
+                if (actogram_type == 'individual'
+                        and cond in rep_subjects
+                        and rep_subjects[cond] is not None):
+                    use_df = df_plot[
+                        (df_plot['condition'] == cond) &
+                        (df_plot['subject'] == rep_subjects[cond])
+                    ]
+                else:
+                    use_df = df_plot[df_plot['condition'] == cond]
+                grouped = use_df.groupby(['day', 'zt'])['activity'].mean().reset_index()
                 days = sorted(grouped['day'].unique())
                 zt_times = sorted(grouped['zt'].unique())
                 double_plot_matrix = []
@@ -840,23 +910,6 @@ class AnalysisWorker(QThread):
             self.progress.emit(65, "Computing chi-square periodogram...")
 
             # ===== CHI-SQUARE PERIODOGRAM (per individual, rhythmic filter) =====
-            import pandas as _pd
-            chi_alpha = float(params.get('viz_chi_alpha', 0.05))
-            dd_phase = lighting_phases.get('DD')
-
-            def _resample_30min(t, a):
-                """Resample to 30-min bins if finer resolution."""
-                if len(t) < 2:
-                    return t, a
-                native_bin = float(np.median(np.diff(t)[np.diff(t) > 0]))
-                if native_bin >= 0.5:
-                    return t, a
-                origin = _pd.Timestamp('2000-01-01')
-                idx_ts = origin + _pd.to_timedelta(t * 3600, unit='s')
-                s = _pd.Series(a, index=idx_ts).sort_index()
-                rs = s.resample('30min').mean().dropna()
-                return (rs.index - origin).total_seconds().values / 3600.0, rs.values
-
             chi_sq_data = {}
             for cond in conditions:
                 cond_df = df_plot[df_plot['condition'] == cond]
@@ -972,6 +1025,9 @@ class AnalysisWorker(QThread):
                 'is_iv_data': is_iv_data,
                 'alpha_rho_data': alpha_rho_data,
                 'lighting_phases': lighting_phases,
+                'lights_on_hour': lights_on_hour,
+                'actogram_type': actogram_type,
+                'rep_tau_info': rep_tau_info,
                 'n_days': n_days,
                 'n_subjects': n_subjects,
                 'method': 'Activity Profile',
@@ -2081,6 +2137,15 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("Normalize:", self._viz_normalize_check)
 
+        self._viz_actogram_type_combo = QComboBox()
+        self._viz_actogram_type_combo.addItems(["Population (mean)", "Individual (median τ)"])
+        self._viz_actogram_type_combo.setToolTip(
+            "Population: actogram shows mean activity across all subjects.\n"
+            "Individual: τ is estimated per subject via chi-sq periodogram;\n"
+            "the subject whose τ is closest to the group median is shown."
+        )
+        self._params_layout.addRow("Actogram:", self._viz_actogram_type_combo)
+
         _viz_onset_w = QWidget()
         _viz_onset_lay = QHBoxLayout(_viz_onset_w)
         _viz_onset_lay.setContentsMargins(0, 0, 0, 0)
@@ -2589,6 +2654,7 @@ class AnalysisPanel(QWidget):
             self._hide_param("τ search (h):")
             self._hide_param("α/ρ threshold:")
             self._hide_checkbox(self._viz_normalize_check)
+            self._hide_param("Actogram:")
             self._hide_param("Onset:")
 
         # Reset AI Consensus-specific overrides: re-show period step (it
@@ -2851,6 +2917,7 @@ class AnalysisPanel(QWidget):
             self._show_param("τ search (h):")
             self._show_param("α/ρ threshold:")
             self._show_checkbox(self._viz_normalize_check)
+            self._show_param("Actogram:")
             self._show_param("Onset:")
 
         # =====================================================================
@@ -3539,6 +3606,7 @@ class AnalysisPanel(QWidget):
             'viz_chi_alpha': self._viz_chi_alpha_spin.value() if hasattr(self, '_viz_chi_alpha_spin') else 0.05,
             'viz_threshold': self._viz_threshold_combo.currentText() if hasattr(self, '_viz_threshold_combo') else 'mean',
             'viz_normalize': self._viz_normalize_check.isChecked() if hasattr(self, '_viz_normalize_check') else False,
+            'viz_actogram_type': ('individual' if (hasattr(self, '_viz_actogram_type_combo') and self._viz_actogram_type_combo.currentIndex() == 1) else 'population'),
             'viz_onset_min_duration': self._viz_onset_min_duration_spin.value() if hasattr(self, '_viz_onset_min_duration_spin') else 3,
             'viz_onset_threshold_k': self._viz_onset_threshold_k_spin.value() if hasattr(self, '_viz_onset_threshold_k_spin') else 0.5,
         }

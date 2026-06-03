@@ -175,8 +175,8 @@ def calculate_confidence_intervals(df, n_components, count_model, repetitions=20
 
 
 def evaluate_rhythm_params(X, Y, period=24):
-    X = X[:period * 10]
-    Y = Y[:period * 10]
+    X = X[:int(period) * 10]
+    Y = Y[:int(period) * 10]
     m = min(Y)
     M = max(Y)
     A = M - m
@@ -330,10 +330,10 @@ def calculate_confidence_intervals_parameters(df, n_components, count_model, all
         if i == 0:
             amplitude = np.array(df_result['amplitude'])
             mesor = np.array(df_result['mesor'])
-            peaks = np.empty((repetitions, period))
+            peaks = np.empty((repetitions, int(period)))
             peaks[:] = np.nan
             peaks = hlp.add_to_table(peaks, df_result['peaks'], i)
-            heights = np.empty((repetitions, period))
+            heights = np.empty((repetitions, int(period)))
             heights[:] = np.nan
             heights = hlp.add_to_table(heights, df_result['heights'], i)
 
