@@ -1047,12 +1047,12 @@ class DataPanel(QWidget):
         self._rosbash_panel.setVisible(index == 3)
     
     def _browse_csv(self):
-        """Open file dialog to select CSV file."""
+        """Open file dialog to select CSV or Excel file."""
         filepath, _ = QFileDialog.getOpenFileName(
             self,
-            "Select CSV File",
+            "Select Data File",
             "",
-            "CSV Files (*.csv);;TSV Files (*.tsv);;All Files (*)"
+            "Data Files (*.csv *.tsv *.xlsx *.xls);;CSV Files (*.csv);;TSV Files (*.tsv);;Excel Files (*.xlsx *.xls);;All Files (*)"
         )
         
         if filepath:
@@ -1075,10 +1075,12 @@ class DataPanel(QWidget):
             self._h5_load_btn.setEnabled(True)
     
     def _preview_csv(self, filepath: str):
-        """Preview CSV file and populate column combos."""
+        """Preview CSV or Excel file and populate column combos."""
         try:
-            # Quick load for preview
-            df = pd.read_csv(filepath, nrows=100)
+            if filepath.lower().endswith((".xlsx", ".xls")):
+                df = pd.read_excel(filepath, nrows=100)
+            else:
+                df = pd.read_csv(filepath, nrows=100)
             
             # Update column combos
             columns = df.columns.tolist()
@@ -1175,8 +1177,12 @@ class DataPanel(QWidget):
             self._progress_bar.setValue(30)
             
             loader = CircadianDataLoader()
-            loader.load_csv(filepath)
-            
+            if filepath.lower().endswith((".xlsx", ".xls")):
+                df_excel = pd.read_excel(filepath)
+                loader.load_dataframe(df_excel, filepath)
+            else:
+                loader.load_csv(filepath)
+
             # Apply user column selections
             loader.set_time_column(self._time_col_combo.currentText())
 
