@@ -3193,9 +3193,11 @@ class AnalysisEngine:
                 )
 
             elif per_type == 'lombscargle':
-                # Lomb-Scargle can handle uneven sampling
+                # Lomb-Scargle can handle uneven sampling.
+                # signal.lombscargle expects angular frequencies (rad/hr), not cycles/hr.
                 min_per = 2
-                f = np.linspace(1/max_per, 1/min_per, 1000)
+                f_cycles = np.linspace(1/max_per, 1/min_per, 1000)
+                f = 2 * np.pi * f_cycles  # angular frequencies passed to lombscargle
                 Y_proc = Y - np.mean(Y) if detrending else Y
                 Pxx_den = signal.lombscargle(X, Y_proc, f)
                 Y_u = Y_proc  # For significance calculation
@@ -3208,7 +3210,11 @@ class AnalysisEngine:
                 )
 
             # Convert frequency to period
-            if f[0] == 0:
+            if per_type == 'lombscargle':
+                # f is in rad/hr; period = 2π / ω
+                per = 2 * np.pi / f
+                Pxx = Pxx_den
+            elif f[0] == 0:
                 per = 1 / f[1:]
                 Pxx = Pxx_den[1:]
             else:
@@ -3925,6 +3931,7 @@ class AnalysisEngine:
         else:
             period_list = [float(period)]
         random_effect = parameters.get('random_effect', 'replicate')
+        requested_fixed = parameters.get('fixed_effects', [])
 
         try:
             # Filter data for this condition
@@ -3955,6 +3962,12 @@ class AnalysisEngine:
             values = df[variable].values.astype(float)
             groups = df[random_effect].values
 
+            # Build fixed-effects DataFrame: columns must exist, not be the random
+            # effect, the time column, or the variable being analysed
+            excluded = {random_effect, time_col, condition_col, variable}
+            valid_fixed = [c for c in requested_fixed if c in df.columns and c not in excluded]
+            fixed_effects_data = df[valid_fixed].reset_index(drop=True) if valid_fixed else None
+
             if len(times) < 5:
                 return AnalysisResult(
                     variable=variable, condition=condition,
@@ -3970,6 +3983,8 @@ class AnalysisEngine:
                     message=f"LME requires at least 2 groups for random effect. "
                             f"Found only {len(unique_groups)} unique value(s) in '{random_effect}' column."
                 )
+
+            fixed_str = f", covariates={valid_fixed}" if valid_fixed else ""
 
             def _make_result(lme_res, p):
                 return AnalysisResult(
@@ -3987,12 +4002,13 @@ class AnalysisEngine:
                     residual_var=lme_res.residual_var,
                     times=times, values=values,
                     success=True,
-                    message=f"Random effect: {random_effect} ({len(unique_groups)} groups), period={p:.2f}h"
+                    message=f"Random effect: {random_effect} ({len(unique_groups)} groups), period={p:.2f}h{fixed_str}"
                 )
 
             if len(period_list) == 1:
                 result = _fit_lme_model(
-                    times=times, values=values, random_groups=groups, period=period_list[0]
+                    times=times, values=values, random_groups=groups, period=period_list[0],
+                    fixed_effects_data=fixed_effects_data,
                 )
                 if result is None:
                     return AnalysisResult(
@@ -4006,7 +4022,8 @@ class AnalysisEngine:
             for p in period_list:
                 try:
                     r = _fit_lme_model(
-                        times=times, values=values, random_groups=groups, period=p
+                        times=times, values=values, random_groups=groups, period=p,
+                        fixed_effects_data=fixed_effects_data,
                     )
                     if r is not None:
                         per_period.append((p, r))

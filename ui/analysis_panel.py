@@ -1335,9 +1335,21 @@ class AnalysisPanel(QWidget):
         scroll.setWidgetResizable(True)
         # scroll.setMaximumHeight(250)  # Commented to allow dynamic resizing
         
+        # Wrap the form-layout widget in a container with a stretch at the bottom.
+        # Without this, QScrollArea (setWidgetResizable=True) resizes _params_widget
+        # to fill the viewport and QFormLayout distributes the extra space between
+        # visible rows, making them spread out instead of staying compact at the top.
+        _scroll_content = QWidget()
+        _scroll_vbox = QVBoxLayout(_scroll_content)
+        _scroll_vbox.setContentsMargins(0, 0, 0, 0)
+        _scroll_vbox.setSpacing(0)
+
         self._params_widget = QWidget()
         self._params_layout = QFormLayout(self._params_widget)
-        scroll.setWidget(self._params_widget)
+
+        _scroll_vbox.addWidget(self._params_widget)
+        _scroll_vbox.addStretch(1)
+        scroll.setWidget(_scroll_content)
         
         layout.addWidget(scroll)
         
@@ -1875,17 +1887,11 @@ class AnalysisPanel(QWidget):
         self._params_layout.addRow("", self._detrending_check)
 
         # LME Parameters
-        # Dependent Variable (for LME)
-        self._dependent_var_combo = QComboBox()
-        self._dependent_var_combo.setToolTip(
-            "Dependent variable for Linear Mixed Effects model"
-        )
-        self._params_layout.addRow("Dependent Variable:", self._dependent_var_combo)
-
         # Fixed Effects (for LME) - Using QListWidget for multi-select
         self._fixed_effects_list = QListWidget()
         self._fixed_effects_list.setSelectionMode(QAbstractItemView.MultiSelection)
         self._fixed_effects_list.setMaximumHeight(80)
+        self._fixed_effects_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._fixed_effects_list.setToolTip(
             "Select fixed effects (e.g., Genotype, Treatment).\n"
             "Hold Ctrl to select multiple."
@@ -2635,7 +2641,6 @@ class AnalysisPanel(QWidget):
         self._hide_param("Wavelet Type:")
         self._hide_param("Sampling Interval:")
         self._hide_checkbox(self._detrending_check)
-        self._hide_param("Dependent Variable:")
         self._hide_param("Fixed Effects:")
         self._hide_param("Random Effect:")
         # RhythmCount parameters
@@ -2843,8 +2848,9 @@ class AnalysisPanel(QWidget):
             # 10. Linear Mixed Effects (Cosinor-based)
             elif method_text == "Linear Mixed Effects":
                 self._show_param("Period:")
-                self._set_period_mode('single')
+                self._set_period_mode('range')
                 self._show_param("Random Effect:")
+                self._show_param("Fixed Effects:")
 
         # =====================================================================
         # RHYTHMCOUNT
@@ -3583,7 +3589,6 @@ class AnalysisPanel(QWidget):
             'sampling_interval': None if self._sampling_interval_spin.value() == 0.0 else self._sampling_interval_spin.value(),
             'detrending': self._detrending_check.isChecked(),
             # LME parameters
-            'dependent_variable': self._dependent_var_combo.currentText(),
             'fixed_effects': fixed_effects,
             'random_effect': self._random_effect_combo.currentText(),
             # RhythmCount parameters
@@ -3749,16 +3754,12 @@ class AnalysisPanel(QWidget):
             # Get potential grouping columns (non-numeric or categorical)
             grouping_cols = [col for col in all_columns if col not in variable_cols and col not in [time_col, condition_col]]
 
-            # Populate dependent variable combobox (typically numeric variables)
-            self._dependent_var_combo.clear()
-            for var in variable_cols:
-                self._dependent_var_combo.addItem(var)
-
-            # Populate fixed effects list (can include time, condition, and other grouping variables)
+            # Populate fixed effects list: condition + other grouping columns.
+            # Time is excluded (already transformed to cos/sin inside the model).
             self._fixed_effects_list.clear()
-            potential_fixed_effects = [time_col, condition_col] + grouping_cols
+            potential_fixed_effects = ([condition_col] if condition_col else []) + grouping_cols
             for effect in potential_fixed_effects:
-                if effect:  # Skip None values
+                if effect:
                     self._fixed_effects_list.addItem(effect)
 
             # Populate random effect combobox (typically grouping variables like Subject, Replicate, etc.)

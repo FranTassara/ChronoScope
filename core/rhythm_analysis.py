@@ -1912,7 +1912,8 @@ def _fit_lme_model(
     times: np.ndarray,
     values: np.ndarray,
     random_groups: np.ndarray,
-    period: float = 24.0
+    period: float = 24.0,
+    fixed_effects_data: Optional[pd.DataFrame] = None,
 ) -> LMEResult:
     """
     Fit Cosinor Linear Mixed Effects model for circadian rhythm detection.
@@ -1920,13 +1921,20 @@ def _fit_lme_model(
     Uses cosinor transformation (cos/sin of time) as fixed effects to detect
     rhythmicity while accounting for repeated measures via random effects.
 
-    Model: y ~ cos(2πt/T) + sin(2πt/T) + (1|group)
+    Base model : y ~ cos(2πt/T) + sin(2πt/T) + (1|group)
+    With covariates: y ~ cos(2πt/T) + sin(2πt/T) + cov1 + cov2 + ... + (1|group)
+
+    The LRT always tests rhythm significance (cos + sin), so the p-value is
+    unaffected by the presence of additional fixed-effect covariates.
 
     Args:
         times: Time values in hours
         values: Measurement values
         random_groups: Grouping variable for random effects (e.g., subject ID)
         period: Target period in hours (default 24.0)
+        fixed_effects_data: Optional DataFrame whose columns are added as fixed
+            effects covariates (e.g., genotype, batch). Column names that are
+            not valid Python identifiers are sanitised automatically.
 
     Returns:
         LMEResult object with cosinor parameters
@@ -1941,6 +1949,14 @@ def _fit_lme_model(
         'group': random_groups
     })
 
+    # Add optional fixed-effect covariates
+    covariate_terms = []
+    if fixed_effects_data is not None and len(fixed_effects_data.columns) > 0:
+        for col in fixed_effects_data.columns:
+            safe = col.replace(' ', '_').replace('-', '_').replace('.', '_')
+            df[safe] = fixed_effects_data[col].values
+            covariate_terms.append(safe)
+
     # Remove any rows with NaN
     df = df.dropna()
 
@@ -1953,25 +1969,34 @@ def _fit_lme_model(
     import warnings as _warnings
 
     def _fit_with_fallback(model):
-        """Try fitting with lbfgs, falling back to powell/bfgs/nm on failure."""
+        """Try fitting with lbfgs, falling back to powell/bfgs/nm on failure.
+
+        lbfgs can return a result with llf=+inf without raising an exception when
+        the random-effects variance hits a boundary. Reject such results and continue
+        to the next optimizer.
+        """
         for method in ('lbfgs', 'powell', 'bfgs', 'nm'):
             try:
                 with _warnings.catch_warnings():
                     _warnings.simplefilter("ignore")
-                    return model.fit(method=method, maxiter=2000)
+                    r = model.fit(method=method, maxiter=2000)
+                if np.isfinite(r.llf):
+                    return r
             except Exception:
                 continue
         raise RuntimeError("LME model failed to converge with all available optimizers "
                            "(lbfgs, powell, bfgs, nm). Try a different grouping variable "
                            "or check that the data has sufficient between-group variability.")
 
-    # Fit full model with cosinor terms
-    formula = "y ~ cos_t + sin_t"
+    # Build formula: cosinor terms + optional covariates (same in full and null)
+    covariate_str = (" + " + " + ".join(covariate_terms)) if covariate_terms else ""
+    formula      = "y ~ cos_t + sin_t" + covariate_str
+    null_formula = "y ~ 1"             + covariate_str
+
     model = smf.mixedlm(formula, df, groups=df['group'])
     result = _fit_with_fallback(model)
 
-    # Fit null model (no rhythm) for likelihood ratio test
-    null_formula = "y ~ 1"
+    # Fit null model (no rhythm, same covariates) for likelihood ratio test
     null_model = smf.mixedlm(null_formula, df, groups=df['group'])
     null_result = _fit_with_fallback(null_model)
 

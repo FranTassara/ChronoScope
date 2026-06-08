@@ -19,19 +19,6 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
-# NumPy 2.0 compatibility patch
-# CosinorPy uses deprecated numpy types, so we need to add them back
-import numpy as np
-if not hasattr(np, 'float'):
-    np.float = np.float64
-if not hasattr(np, 'int'):
-    np.int = np.int64
-if not hasattr(np, 'bool'):
-    np.bool = np.bool_
-if not hasattr(np, 'complex'):
-    np.complex = np.complex128
-
-
 def check_dependencies():
     """Check that all required dependencies are installed."""
     missing = []
