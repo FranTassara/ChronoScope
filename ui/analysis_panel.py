@@ -82,6 +82,14 @@ class AnalysisConfig:
     parameters: Dict[str, Any]
     compare_conditions: Optional[tuple] = None  # (condition1, condition2)
     clusters: Optional[List[str]] = None  # For Rosbash data: list of selected clusters
+    # Typed fields for Kendall-tau methods (JTK / AR-JTK / Cosine-Kendall).
+    # Mirrored from parameters dict for type-safe programmatic access.
+    # See: Hutchison et al. (2015) PLoS Comput. Biol. 11: e1004094
+    asymmetry_search: bool = False      # True → search range [asymmetry_min, asymmetry_max]
+    asymmetry_min: float = 0.2          # Lower bound of asymmetry search range
+    asymmetry_max: float = 0.8          # Upper bound of asymmetry search range
+    pvalue_method: str = "analytical"   # "analytical" | "empirical"
+    n_permutations: int = 0             # Permutations for empirical p-value (0 = analytical)
 
 
 class AnalysisWorker(QThread):
@@ -1800,6 +1808,17 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("Asymmetry:", self._asymmetry_spin)
 
+        # Asymmetry search range toggle (for JTK and AR-JTK)
+        self._asymmetry_search_check = QCheckBox("Search range (0.2 – 0.8, step 0.1)")
+        self._asymmetry_search_check.setChecked(False)
+        self._asymmetry_search_check.setToolTip(
+            "When checked, tests asymmetries 0.2–0.8 in steps of 0.1 to find\n"
+            "the best-fit waveform shape, following Hutchison et al. (2015).\n"
+            "When unchecked, uses the fixed asymmetry value above."
+        )
+        self._asymmetry_search_check.toggled.connect(self._on_asymmetry_search_toggled)
+        self._params_layout.addRow("", self._asymmetry_search_check)
+
         # AR Order/Lag (for AR-JTK)
         self._ar_lag_spin = QSpinBox()
         self._ar_lag_spin.setRange(1, 3)
@@ -1832,6 +1851,31 @@ class AnalysisPanel(QWidget):
             "Default 0.5h."
         )
         self._params_layout.addRow("Resolution:", self._resolution_spin)
+
+        # P-value method (for JTK, AR-JTK, Cosine-Kendall)
+        self._pvalue_method_combo = QComboBox()
+        self._pvalue_method_combo.addItems(["Analytical (faster)", "Empirical (permutation)"])
+        self._pvalue_method_combo.setToolTip(
+            "P-value estimation method:\n"
+            "- Analytical: Uses Kendall tau distribution (fast, standard).\n"
+            "  May be anti-conservative for small sample sizes.\n"
+            "- Empirical: Permutation-based null distribution\n"
+            "  (Hutchison et al., 2015). More accurate but slower."
+        )
+        self._pvalue_method_combo.currentTextChanged.connect(self._on_pvalue_method_changed)
+        self._params_layout.addRow("P-value method:", self._pvalue_method_combo)
+
+        # Permutations for empirical p-values (JTK / AR-JTK / Cosine-Kendall)
+        self._jtk_permutations_spin = QSpinBox()
+        self._jtk_permutations_spin.setRange(100, 10000)
+        self._jtk_permutations_spin.setValue(1000)
+        self._jtk_permutations_spin.setSingleStep(100)
+        self._jtk_permutations_spin.setToolTip(
+            "Number of permutations for empirical p-value estimation.\n"
+            "More permutations = more precise p-values but slower.\n"
+            "Recommended: 1000 (default)."
+        )
+        self._params_layout.addRow("Permutations:", self._jtk_permutations_spin)
 
         # N Periods (for Lomb-Scargle oversampling)
         self._n_periods_spin = QSpinBox()
@@ -2633,9 +2677,12 @@ class AnalysisPanel(QWidget):
         self._set_row_visible_for_widget(self._period_multi_cond_info, False)
         # Hide Rhythm Analysis specific parameters
         self._hide_param("Asymmetry:")
+        self._hide_checkbox(self._asymmetry_search_check)
         self._hide_param("AR Lag:")
         self._hide_checkbox(self._prewhiten_check)
         self._hide_param("Resolution:")
+        self._set_row_visible_for_widget(self._pvalue_method_combo, False)
+        self._set_row_visible_for_widget(self._jtk_permutations_spin, False)
         self._hide_param("Oversampling:")
         self._hide_param("Significance Level:")
         self._hide_param("Wavelet Type:")
@@ -2788,21 +2835,34 @@ class AnalysisPanel(QWidget):
             if method_text == "JTK Cycle":
                 self._show_param("Period:")
                 self._set_period_mode('range')
-                self._show_param("Asymmetry:")
+                self._show_checkbox(self._asymmetry_search_check)
+                if not self._asymmetry_search_check.isChecked():
+                    self._show_param("Asymmetry:")
+                self._set_row_visible_for_widget(self._pvalue_method_combo, True)
+                if 'Empirical' in self._pvalue_method_combo.currentText():
+                    self._set_row_visible_for_widget(self._jtk_permutations_spin, True)
 
             # 2. AR-JTK
             elif method_text == "AR-JTK":
                 self._show_param("Period:")
                 self._set_period_mode('range')
-                self._show_param("Asymmetry:")
+                self._show_checkbox(self._asymmetry_search_check)
+                if not self._asymmetry_search_check.isChecked():
+                    self._show_param("Asymmetry:")
                 self._show_param("AR Lag:")
                 self._show_checkbox(self._prewhiten_check)
+                self._set_row_visible_for_widget(self._pvalue_method_combo, True)
+                if 'Empirical' in self._pvalue_method_combo.currentText():
+                    self._set_row_visible_for_widget(self._jtk_permutations_spin, True)
 
             # 3. Cosine-Kendall
             elif method_text == "Cosine-Kendall":
                 self._show_param("Period:")
                 self._set_period_mode('range')
                 self._show_param("Resolution:")
+                self._set_row_visible_for_widget(self._pvalue_method_combo, True)
+                if 'Empirical' in self._pvalue_method_combo.currentText():
+                    self._set_row_visible_for_widget(self._jtk_permutations_spin, True)
 
             # 4. Cosinor (OLS)
             elif method_text == "Cosinor (OLS)":
@@ -3267,6 +3327,18 @@ class AnalysisPanel(QWidget):
         desc = self._method_combo.currentData()
         self._method_desc.setText(desc or "")
         self._update_parameter_visibility()
+
+    def _on_asymmetry_search_toggled(self, checked: bool):
+        """Show fixed asymmetry spinbox only when search range is not selected."""
+        if checked:
+            self._hide_param("Asymmetry:")
+        else:
+            self._show_param("Asymmetry:")
+
+    def _on_pvalue_method_changed(self, text: str):
+        """Show JTK permutations spinner only when empirical p-values are selected."""
+        show = 'Empirical' in text
+        self._set_row_visible_for_widget(self._jtk_permutations_spin, show)
     
     def _select_all_items(self, list_widget: QListWidget):
         """Select all items in a list widget."""
@@ -3400,7 +3472,13 @@ class AnalysisPanel(QWidget):
             conditions=selected_conds,
             parameters=params,
             compare_conditions=compare_conditions,
-            clusters=selected_clusters
+            clusters=selected_clusters,
+            # Typed mirror of Kendall-tau method parameters
+            asymmetry_search=params.get('asymmetry_search', False),
+            asymmetry_min=0.2,
+            asymmetry_max=0.8,
+            pvalue_method=params.get('pvalue_method', 'analytical'),
+            n_permutations=params.get('jtk_n_permutations', 0)
         )
         
         # Start worker
@@ -3578,6 +3656,9 @@ class AnalysisPanel(QWidget):
             'period2': self._period_cond2_spin.value(),
             # Rhythm Analysis specific parameters
             'asymmetry': self._asymmetry_spin.value(),
+            'asymmetry_search': self._asymmetry_search_check.isChecked(),
+            'pvalue_method': 'empirical' if 'Empirical' in self._pvalue_method_combo.currentText() else 'analytical',
+            'jtk_n_permutations': self._jtk_permutations_spin.value(),
             'ar_lag': self._ar_lag_spin.value(),
             'prewhiten': self._prewhiten_check.isChecked(),
             'resolution': self._resolution_spin.value(),

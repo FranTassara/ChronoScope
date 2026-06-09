@@ -234,6 +234,7 @@ class JTKResult:
     method: str
     # Keep adj_p_value as alias for backward compatibility (points to bh_p_value)
     adj_p_value: float = None
+    pvalue_method: str = "analytical"
 
     def __post_init__(self):
         # For backward compatibility, adj_p_value defaults to bh_p_value
@@ -272,7 +273,8 @@ class JTKResult:
             'tau': self.tau,
             'lag': self.lag,
             'n_tests': self.n_tests,
-            'method': self.method
+            'method': self.method,
+            'pvalue_method': self.pvalue_method
         }
 
 
@@ -670,7 +672,9 @@ def _run_discrete_jtk(
     series: pd.Series,
     period_range: List[float] = None,
     lag_range: Optional[np.ndarray] = None,
-    asymmetries: List[float] = None
+    asymmetries: List[float] = None,
+    n_permutations: int = 0,
+    seed: int = 42
 ) -> JTKResult:
     """
     Run JTK using triangle templates aligned to actual timepoints.
@@ -680,6 +684,13 @@ def _run_discrete_jtk(
         period_range: List of periods to test
         lag_range: Array of lag values to test (default: 0 to period)
         asymmetries: List of asymmetry values to test
+        n_permutations: Number of permutations for empirical p-value estimation.
+            0 (default) uses analytical Kendall tau p-values. When > 0, the
+            null distribution of the maximum |tau| across all templates is
+            built by permuting the data, following Hutchison et al. (2015).
+            The empirical p-value already accounts for multiple template
+            comparisons, so bonf_p_value and bh_p_value equal p_value.
+        seed: RNG seed for permutations (default 42 for reproducibility).
 
     Returns:
         JTKResult object with best-fit parameters including both Bonferroni
@@ -743,6 +754,44 @@ def _run_discrete_jtk(
         else (best_lag + best_asym * best_per) % best_per
     )
 
+    # Empirical p-value via permutation (Hutchison et al., 2015, PLoS Comput. Biol.)
+    # Null distribution: max |tau| across all templates under permuted data.
+    # This accounts for the maximisation over templates without further correction.
+    if n_permutations > 0:
+        rng = np.random.default_rng(seed)
+        null_max_abs_tau = np.empty(n_permutations)
+        for i in range(n_permutations):
+            perm_y = rng.permutation(y)
+            perm_max = 0.0
+            for period in period_range:
+                lags = lag_range if lag_range is not None else np.arange(0, period, 1)
+                for asym in asymmetries:
+                    for lag in lags:
+                        ref = _generate_triangle_template_time(times, period, lag, asym)
+                        tau_p, _ = kendalltau(perm_y, ref)
+                        abs_tau_p = abs(tau_p)
+                        if abs_tau_p > perm_max:
+                            perm_max = abs_tau_p
+            null_max_abs_tau[i] = perm_max
+
+        # Phipson & Smyth (2010) +1 correction for non-zero minimum p-value
+        p_emp = min(1.0, (np.sum(null_max_abs_tau >= abs(best_tau)) + 1) / (n_permutations + 1))
+
+        return JTKResult(
+            p_value=round(p_emp, 6),
+            bonf_p_value=round(p_emp, 6),
+            bh_p_value=round(p_emp, 6),
+            period=round(best_per, 2),
+            amplitude=round(amp, 4),
+            acrophase=round(acrophase, 2),
+            asymmetry=round(best_asym, 2),
+            tau=round(best_tau, 2),
+            lag=round(best_lag, 2),
+            n_tests=n_tests,
+            method='Python-JTK',
+            pvalue_method='empirical'
+        )
+
     return JTKResult(
         p_value=round(best_p, 6),
         bonf_p_value=round(bonf_p, 6),
@@ -754,7 +803,8 @@ def _run_discrete_jtk(
         tau=round(best_tau, 2),
         lag=round(best_lag, 2),
         n_tests=n_tests,
-        method='Python-JTK'
+        method='Python-JTK',
+        pvalue_method='analytical'
     )
 
 
@@ -901,7 +951,9 @@ def _run_ar_jtk(
     asymmetries: List[float] = None,
     ar_lag: int = 1,
     ljungbox_lag: int = 10,
-    force_prewhiten: bool = False
+    force_prewhiten: bool = False,
+    n_permutations: int = 0,
+    seed: int = 42
 ) -> Tuple[JTKResult, bool]:
     """
     Run JTK with autoregressive noise handling.
@@ -916,6 +968,9 @@ def _run_ar_jtk(
         force_prewhiten: If True, skip Ljung-Box test and always apply AR
             pre-whitening. If False (default), pre-whitening is applied only
             when autocorrelation is detected.
+        n_permutations: Passed through to _run_discrete_jtk for empirical
+            p-value estimation (Hutchison et al., 2015). 0 = analytical.
+        seed: RNG seed for permutations (default 42).
 
     Returns:
         Tuple of (JTKResult, ar_applied_flag)
@@ -925,9 +980,10 @@ def _run_ar_jtk(
     if asymmetries is None:
         asymmetries = [0.5]
     
-    # Initial JTK
+    # Initial JTK (empirical p-values propagated; used directly if no AR applied)
     temp_res = _run_discrete_jtk(series, period_range=period_range,
-                                  lag_range=lag_range, asymmetries=asymmetries)
+                                  lag_range=lag_range, asymmetries=asymmetries,
+                                  n_permutations=n_permutations, seed=seed)
     
     if temp_res.period is None:
         return temp_res, False
@@ -954,9 +1010,10 @@ def _run_ar_jtk(
     # Reconstruct whitened rank-series
     r_pw = template_rank + e_pw
 
-    # JTK on reconstructed prewhitened series
+    # JTK on reconstructed prewhitened series (empirical p-values on whitened data)
     jtk_res = _run_discrete_jtk(r_pw, period_range=period_range,
-                                 lag_range=lag_range, asymmetries=asymmetries)
+                                 lag_range=lag_range, asymmetries=asymmetries,
+                                 n_permutations=n_permutations, seed=seed)
 
     # Update method and recalculate amplitude from original data
     amp = (np.percentile(series.values, 90) - np.percentile(series.values, 10)) / 2
@@ -978,7 +1035,8 @@ def _run_ar_jtk(
         tau=temp_res.tau,
         lag=temp_res.lag,
         n_tests=jtk_res.n_tests,
-        method='AR-JTK'
+        method='AR-JTK',
+        pvalue_method=jtk_res.pvalue_method
     ), True
 
 
@@ -989,7 +1047,9 @@ def _run_ar_jtk(
 def _run_cosine_kendall(
     series: pd.Series,
     period_range: List[float] = None,
-    interval: float = 1.0
+    interval: float = 1.0,
+    n_permutations: int = 0,
+    seed: int = 42
 ) -> JTKResult:
     """
     Run Cosine-Kendall nonparametric rhythm detection.
@@ -1002,6 +1062,9 @@ def _run_cosine_kendall(
         interval: Lag sweep step size in hours for the acrophase search.
             Smaller values give finer resolution (more accurate acrophase) but
             are slower. Default 0.5h.
+        n_permutations: Number of permutations for empirical p-value estimation
+            (Hutchison et al., 2015). 0 (default) uses analytical p-values.
+        seed: RNG seed for permutations (default 42 for reproducibility).
 
     Returns:
         JTKResult object with both Bonferroni and BH corrections
@@ -1058,6 +1121,40 @@ def _run_cosine_kendall(
     # Correct lag when tau < 0 (cosine has opposite correlation)
     corrected_lag = (best_lag + best_per / 2) % best_per if best_tau < 0 else best_lag
 
+    # Empirical p-value via permutation (Hutchison et al., 2015, PLoS Comput. Biol.)
+    if n_permutations > 0:
+        rng = np.random.default_rng(seed)
+        null_max_abs_tau = np.empty(n_permutations)
+        for i in range(n_permutations):
+            perm_y = rng.permutation(y)
+            perm_max = 0.0
+            for period in period_range:
+                for lag in np.arange(0, period, interval):
+                    radians = 2 * np.pi * (t - lag) / period
+                    ref_ranked = pd.Series(np.cos(radians)).rank().values
+                    tau_p, _ = kendalltau(perm_y, ref_ranked)
+                    abs_tau_p = abs(tau_p)
+                    if abs_tau_p > perm_max:
+                        perm_max = abs_tau_p
+            null_max_abs_tau[i] = perm_max
+
+        p_emp = min(1.0, (np.sum(null_max_abs_tau >= abs(best_tau)) + 1) / (n_permutations + 1))
+
+        return JTKResult(
+            p_value=round(p_emp, 6),
+            bonf_p_value=round(p_emp, 6),
+            bh_p_value=round(p_emp, 6),
+            period=round(best_per, 2),
+            amplitude=round(amp, 4),
+            acrophase=round(corrected_lag, 2),
+            asymmetry=0.5,
+            tau=round(best_tau, 2),
+            lag=round(best_lag, 2),
+            n_tests=n_tests,
+            method='Cosine-Kendall',
+            pvalue_method='empirical'
+        )
+
     return JTKResult(
         p_value=round(best_p, 6),
         bonf_p_value=round(bonf_p, 6),
@@ -1069,7 +1166,8 @@ def _run_cosine_kendall(
         tau=round(best_tau, 2),
         lag=round(best_lag, 2),
         n_tests=n_tests,
-        method='Cosine-Kendall'
+        method='Cosine-Kendall',
+        pvalue_method='analytical'
     )
 
 
@@ -2342,31 +2440,36 @@ class RhythmAnalyzer:
         condition: str,
         period_range: Optional[List[float]] = None,
         lag_range: Optional[np.ndarray] = None,
-        asymmetries: Optional[List[float]] = None
+        asymmetries: Optional[List[float]] = None,
+        n_permutations: int = 0,
+        seed: int = 42
     ) -> JTKResult:
         """
         Run Python-JTK cycle analysis.
-        
+
         Args:
             variable: Variable name to analyze
             condition: Condition to analyze
             period_range: List of periods to test (default: class period_range)
             lag_range: Array of lag values (default: 0 to period)
             asymmetries: List of waveform asymmetries (default: [0.5])
-        
+            n_permutations: Permutations for empirical p-value (0 = analytical).
+            seed: RNG seed for permutations (default 42).
+
         Returns:
             JTKResult object
         """
         times, values = self._get_data_for_analysis(variable, condition)
         series = pd.Series(values, index=times)
-        
+
         if period_range is None:
             # Use integer periods for discrete JTK
             period_range = [int(p) for p in self.period_range if p == int(p)]
             if not period_range:
                 period_range = DefaultPeriodRanges.CIRCADIAN_INT
-        
-        return _run_discrete_jtk(series, period_range, lag_range, asymmetries)
+
+        return _run_discrete_jtk(series, period_range, lag_range, asymmetries,
+                                  n_permutations=n_permutations, seed=seed)
     
     def run_ar_jtk(
         self,
@@ -2376,11 +2479,13 @@ class RhythmAnalyzer:
         lag_range: Optional[np.ndarray] = None,
         asymmetries: Optional[List[float]] = None,
         ar_lag: int = 1,
-        ljungbox_lag: int = 10
+        ljungbox_lag: int = 10,
+        n_permutations: int = 0,
+        seed: int = 42
     ) -> Tuple[JTKResult, bool]:
         """
         Run AR-JTK analysis with autoregressive noise handling.
-        
+
         Args:
             variable: Variable name to analyze
             condition: Condition to analyze
@@ -2389,49 +2494,57 @@ class RhythmAnalyzer:
             asymmetries: List of waveform asymmetries
             ar_lag: AR model lag for prewhitening
             ljungbox_lag: Lag for Ljung-Box autocorrelation test
-        
+            n_permutations: Permutations for empirical p-value (0 = analytical).
+            seed: RNG seed for permutations (default 42).
+
         Returns:
             Tuple of (JTKResult, bool indicating if AR was applied)
         """
         times, values = self._get_data_for_analysis(variable, condition)
         series = pd.Series(values, index=times)
-        
+
         if period_range is None:
             period_range = [int(p) for p in self.period_range if p == int(p)]
             if not period_range:
                 period_range = DefaultPeriodRanges.CIRCADIAN_INT
-        
-        return _run_ar_jtk(series, period_range, lag_range, asymmetries, ar_lag, ljungbox_lag)
+
+        return _run_ar_jtk(series, period_range, lag_range, asymmetries, ar_lag,
+                            ljungbox_lag, n_permutations=n_permutations, seed=seed)
     
     def run_cosine_kendall(
         self,
         variable: str,
         condition: str,
         period_range: Optional[List[float]] = None,
-        interval: Optional[float] = None
+        interval: Optional[float] = None,
+        n_permutations: int = 0,
+        seed: int = 42
     ) -> JTKResult:
         """
         Run Cosine-Kendall nonparametric analysis.
-        
+
         Args:
             variable: Variable name to analyze
             condition: Condition to analyze
             period_range: List of periods to test
-            interval: Time interval between samples (auto-detected if None)
-        
+            interval: Lag sweep step size in hours (auto-detected if None)
+            n_permutations: Permutations for empirical p-value (0 = analytical).
+            seed: RNG seed for permutations (default 42).
+
         Returns:
             JTKResult object (method = 'Cosine-Kendall')
         """
         times, values = self._get_data_for_analysis(variable, condition)
         series = pd.Series(values, index=times)
-        
+
         if period_range is None:
             period_range = self.period_range
-        
+
         if interval is None:
             interval = np.median(np.diff(np.sort(times)))
-        
-        return _run_cosine_kendall(series, period_range, interval)
+
+        return _run_cosine_kendall(series, period_range, interval,
+                                    n_permutations=n_permutations, seed=seed)
     
     def run_cosinor(
         self,

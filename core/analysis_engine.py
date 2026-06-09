@@ -2180,9 +2180,16 @@ class AnalysisEngine:
         else:
             period_range = list(range(20, 29))  # Default circadian range
 
-        # Get asymmetry parameter (default: 0.5 for symmetric)
-        asymmetry = parameters.get('asymmetry', 0.5)
-        asymmetries = [asymmetry] if asymmetry else [0.5]
+        # Build asymmetries list: search range (eJTK) or fixed single value
+        if parameters.get('asymmetry_search', False):
+            asymmetries = [round(v, 1) for v in np.arange(0.2, 0.85, 0.1)]
+        else:
+            asymmetry = parameters.get('asymmetry', 0.5)
+            asymmetries = [asymmetry] if asymmetry else [0.5]
+
+        # Empirical p-value parameters (Hutchison et al., 2015)
+        pvalue_method = parameters.get('pvalue_method', 'analytical')
+        n_permutations = parameters.get('jtk_n_permutations', 1000) if pvalue_method == 'empirical' else 0
 
         # Create series with time as index
         series = pd.Series(values, index=times)
@@ -2190,6 +2197,7 @@ class AnalysisEngine:
         show_all = len(period_range) > 1
 
         if show_all:
+            # Period sweep: analytical p-values only (empirical would be too slow)
             per_period = _run_discrete_jtk_all_periods(
                 series, period_range=period_range, asymmetries=asymmetries
             )
@@ -2223,7 +2231,8 @@ class AnalysisEngine:
         result = _run_discrete_jtk(
             series,
             period_range=period_range,
-            asymmetries=asymmetries
+            asymmetries=asymmetries,
+            n_permutations=n_permutations
         )
 
         if result is None:
@@ -3299,13 +3308,20 @@ class AnalysisEngine:
         else:
             period_range = list(range(20, 29))  # Default circadian range
 
-        # Get asymmetry parameter (default: 0.5 for symmetric)
-        asymmetry = parameters.get('asymmetry', 0.5)
-        asymmetries = [asymmetry] if asymmetry else [0.5]
+        # Build asymmetries list: search range (eJTK) or fixed single value
+        if parameters.get('asymmetry_search', False):
+            asymmetries = [round(v, 1) for v in np.arange(0.2, 0.85, 0.1)]
+        else:
+            asymmetry = parameters.get('asymmetry', 0.5)
+            asymmetries = [asymmetry] if asymmetry else [0.5]
 
         ar_lag = parameters.get('ar_lag', 1)
         ljungbox_lag = parameters.get('ljungbox_lag', 10)
         prewhiten = parameters.get('prewhiten', False)
+
+        # Empirical p-value parameters (Hutchison et al., 2015)
+        pvalue_method = parameters.get('pvalue_method', 'analytical')
+        n_permutations = parameters.get('jtk_n_permutations', 1000) if pvalue_method == 'empirical' else 0
 
         try:
             # AR-JTK requires a proper time series (one value per timepoint).
@@ -3326,7 +3342,8 @@ class AnalysisEngine:
                 asymmetries=asymmetries,
                 ar_lag=ar_lag,
                 ljungbox_lag=ljungbox_lag,
-                force_prewhiten=prewhiten
+                force_prewhiten=prewhiten,
+                n_permutations=n_permutations
             )
 
             if result is None:
@@ -3434,11 +3451,16 @@ class AnalysisEngine:
         # Get resolution/interval parameter
         interval = parameters.get('resolution', parameters.get('interval', 1.0))
 
+        # Empirical p-value parameters (Hutchison et al., 2015)
+        pvalue_method = parameters.get('pvalue_method', 'analytical')
+        n_permutations = parameters.get('jtk_n_permutations', 1000) if pvalue_method == 'empirical' else 0
+
         try:
             # Create series with time as index
             series = pd.Series(values, index=times)
 
-            result = _run_cosine_kendall(series, period_range=period_range, interval=interval)
+            result = _run_cosine_kendall(series, period_range=period_range, interval=interval,
+                                         n_permutations=n_permutations)
 
             if result is None:
                 return AnalysisResult(
