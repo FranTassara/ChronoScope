@@ -17,7 +17,7 @@ statsmodels>=0.14.0
 matplotlib>=3.7.0
 
 # Circadian Analysis
-git+https://github.com/FranTassara/CosinorPy.git@fix/numpy-deprecations#egg=CosinorPy
+git+https://github.com/mmoskon/CosinorPy.git#egg=CosinorPy
 seaborn>=0.13.0
 
 # Optional: Wavelet Analysis
