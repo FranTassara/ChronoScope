@@ -90,6 +90,7 @@ class AnalysisConfig:
     asymmetry_max: float = 0.8          # Upper bound of asymmetry search range
     pvalue_method: str = "analytical"   # "analytical" | "empirical"
     n_permutations: int = 0             # Permutations for empirical p-value (0 = analytical)
+    preprocessing: Optional[Any] = None  # PreprocessingConfig from core.preprocessing
 
 
 class AnalysisWorker(QThread):
@@ -131,6 +132,20 @@ class AnalysisWorker(QThread):
                 data = None  # Will be handled in _run_single_analysis
                 time_col = 'time'
                 condition_col = 'condition'
+
+            # Apply preprocessing pipeline (operates on a copy; original loader data unchanged)
+            preproc_cfg = self.config.preprocessing
+            if data is not None and preproc_cfg is not None:
+                if preproc_cfg.remove_outliers or preproc_cfg.detrend or preproc_cfg.smooth:
+                    self.progress.emit(0, "Applying preprocessing...")
+                    from core.preprocessing import apply_preprocessing
+                    data, _ = apply_preprocessing(
+                        data,
+                        self.config.variables,
+                        preproc_cfg,
+                        time_col=time_col,
+                        condition_col=condition_col,
+                    )
 
             # TODO: Auto-period detection needs to be reimplemented for refactored architecture
             # The old periodogram method signature is incompatible with the new refactored version
@@ -1111,9 +1126,19 @@ class AnalysisPanel(QWidget):
         data_group = self._create_data_selection()
         layout.addWidget(data_group)
         
-        # Parameter configuration (stacked widget for different methods)
+        # Preprocessing (collapsible, left) + Analysis Parameters (right) side by side
+        middle_widget = QWidget()
+        middle_layout = QHBoxLayout(middle_widget)
+        middle_layout.setContentsMargins(0, 0, 0, 0)
+        middle_layout.setSpacing(8)
+
+        preproc_group = self._create_preprocessing_section()
+        middle_layout.addWidget(preproc_group)
+
         params_group = self._create_parameters_section()
-        layout.addWidget(params_group, 2)
+        middle_layout.addWidget(params_group, 1)
+
+        layout.addWidget(middle_widget, 2)
         
         # Run controls
         run_group = self._create_run_controls()
@@ -1366,6 +1391,274 @@ class AnalysisPanel(QWidget):
         
         return group
     
+    # ------------------------------------------------------------------
+    # Preprocessing section
+    # ------------------------------------------------------------------
+
+    def _create_preprocessing_section(self) -> QGroupBox:
+        """Create Preprocessing group (left of Analysis Parameters).
+
+        Each filter (outlier removal, detrending, smoothing) has its own
+        enable checkbox plus the relevant sub-controls, which are
+        enabled/disabled together with their parent checkbox.
+        """
+        group = QGroupBox("Preprocessing")
+        group.setFixedWidth(230)
+
+        outer = QVBoxLayout(group)
+        outer.setContentsMargins(6, 6, 6, 6)
+        outer.setSpacing(10)
+
+        # ── Outlier removal ──────────────────────────────────────────
+        self._preproc_outlier_check = QCheckBox("Remove outliers")
+        self._preproc_outlier_check.setToolTip(
+            "Mark and remove data points that deviate significantly\n"
+            "from the rest of the series before analysis."
+        )
+        outer.addWidget(self._preproc_outlier_check)
+
+        self._preproc_outlier_params = QWidget()
+        self._preproc_outlier_params.setEnabled(False)
+        outlier_form = QFormLayout(self._preproc_outlier_params)
+        outlier_form.setContentsMargins(16, 0, 0, 0)
+        outlier_form.setSpacing(4)
+
+        self._preproc_outlier_combo = QComboBox()
+        self._preproc_outlier_combo.addItems(["IQR", "Z-score"])
+        self._preproc_outlier_combo.setToolTip(
+            "IQR: flags points outside Q1 − k×IQR and Q3 + k×IQR.\n"
+            "Z-score: flags points with |z| > threshold."
+        )
+        outlier_form.addRow("Method:", self._preproc_outlier_combo)
+
+        self._preproc_outlier_thresh_spin = QDoubleSpinBox()
+        self._preproc_outlier_thresh_spin.setRange(0.1, 10.0)
+        self._preproc_outlier_thresh_spin.setSingleStep(0.5)
+        self._preproc_outlier_thresh_spin.setValue(1.5)
+        self._preproc_outlier_thresh_spin.setDecimals(1)
+        self._preproc_outlier_thresh_spin.setToolTip(
+            "IQR: multiplier k (1.5 = mild, 3.0 = extreme).\n"
+            "Z-score: number of standard deviations."
+        )
+        outlier_form.addRow("Threshold:", self._preproc_outlier_thresh_spin)
+
+        outer.addWidget(self._preproc_outlier_params)
+        self._preproc_outlier_check.toggled.connect(self._preproc_outlier_params.setEnabled)
+        self._preproc_outlier_combo.currentIndexChanged.connect(self._on_outlier_method_changed)
+
+        outer.addWidget(self._make_separator())
+
+        # ── Detrending ───────────────────────────────────────────────
+        self._preproc_detrend_check = QCheckBox("Detrend")
+        self._preproc_detrend_check.setToolTip(
+            "Remove slow non-rhythmic trends from the signal.\n"
+            "Uncorrected trends can inflate amplitude estimates\n"
+            "and shift the estimated acrophase."
+        )
+        outer.addWidget(self._preproc_detrend_check)
+
+        self._preproc_detrend_params = QWidget()
+        self._preproc_detrend_params.setEnabled(False)
+        detrend_form = QFormLayout(self._preproc_detrend_params)
+        detrend_form.setContentsMargins(16, 0, 0, 0)
+        detrend_form.setSpacing(4)
+
+        self._preproc_detrend_combo = QComboBox()
+        self._preproc_detrend_combo.addItems(["Moving average", "Linear", "Polynomial"])
+        self._preproc_detrend_combo.setToolTip(
+            "Moving average: subtracts a centered rolling mean —\n"
+            "  best for slowly drifting baselines.\n"
+            "Linear: subtracts a least-squares line —\n"
+            "  suitable for steady linear drift.\n"
+            "Polynomial: subtracts a polynomial fit —\n"
+            "  use for curved, non-linear trends."
+        )
+        detrend_form.addRow("Method:", self._preproc_detrend_combo)
+
+        self._preproc_detrend_window_spin = QDoubleSpinBox()
+        self._preproc_detrend_window_spin.setRange(1.0, 240.0)
+        self._preproc_detrend_window_spin.setSingleStep(1.0)
+        self._preproc_detrend_window_spin.setValue(24.0)
+        self._preproc_detrend_window_spin.setDecimals(1)
+        self._preproc_detrend_window_spin.setSuffix(" h")
+        self._preproc_detrend_window_spin.setToolTip(
+            "Centered moving-average window in hours.\n"
+            "Set to one full period (e.g. 24 h) to remove slow\n"
+            "trends while preserving the circadian oscillation."
+        )
+        self._preproc_detrend_window_label = QLabel("Window:")
+        detrend_form.addRow(self._preproc_detrend_window_label,
+                            self._preproc_detrend_window_spin)
+
+        self._preproc_detrend_poly_spin = QSpinBox()
+        self._preproc_detrend_poly_spin.setRange(1, 5)
+        self._preproc_detrend_poly_spin.setValue(2)
+        self._preproc_detrend_poly_spin.setToolTip(
+            "Degree of the polynomial used to model the trend.\n"
+            "2 = quadratic (most common), 3 = cubic."
+        )
+        self._preproc_detrend_poly_label = QLabel("Degree:")
+        self._preproc_detrend_poly_label.setVisible(False)
+        self._preproc_detrend_poly_spin.setVisible(False)
+        detrend_form.addRow(self._preproc_detrend_poly_label,
+                            self._preproc_detrend_poly_spin)
+
+        outer.addWidget(self._preproc_detrend_params)
+        self._preproc_detrend_check.toggled.connect(self._preproc_detrend_params.setEnabled)
+        self._preproc_detrend_combo.currentIndexChanged.connect(self._on_detrend_method_changed)
+
+        outer.addWidget(self._make_separator())
+
+        # ── Smoothing ────────────────────────────────────────────────
+        self._preproc_smooth_check = QCheckBox("Smooth")
+        self._preproc_smooth_check.setToolTip(
+            "Reduce high-frequency noise while preserving the\n"
+            "shape and timing of the circadian oscillation."
+        )
+        outer.addWidget(self._preproc_smooth_check)
+
+        self._preproc_smooth_params = QWidget()
+        self._preproc_smooth_params.setEnabled(False)
+        smooth_form = QFormLayout(self._preproc_smooth_params)
+        smooth_form.setContentsMargins(16, 0, 0, 0)
+        smooth_form.setSpacing(4)
+
+        self._preproc_smooth_combo = QComboBox()
+        self._preproc_smooth_combo.addItems(["Moving average", "Savitzky-Golay", "Butterworth"])
+        self._preproc_smooth_combo.setToolTip(
+            "Moving average: simple rolling mean — fast,\n"
+            "  but slightly flattens peaks and troughs.\n"
+            "Savitzky-Golay: polynomial fit per window —\n"
+            "  better preserves peak height and shape.\n"
+            "Butterworth: zero-phase low-pass filter —\n"
+            "  principled frequency-domain approach; set\n"
+            "  the cutoff as the shortest period to keep."
+        )
+        smooth_form.addRow("Method:", self._preproc_smooth_combo)
+
+        # Window — shown for Moving average and Savitzky-Golay
+        self._preproc_smooth_window_label = QLabel("Window:")
+        self._preproc_smooth_window_spin = QSpinBox()
+        self._preproc_smooth_window_spin.setRange(3, 51)
+        self._preproc_smooth_window_spin.setSingleStep(2)
+        self._preproc_smooth_window_spin.setValue(3)
+        self._preproc_smooth_window_spin.setSuffix(" pts")
+        self._preproc_smooth_window_spin.setToolTip(
+            "Window size in number of samples.\n"
+            "Larger windows produce stronger smoothing.\n"
+            "Savitzky-Golay requires an odd value (enforced automatically)."
+        )
+        smooth_form.addRow(self._preproc_smooth_window_label, self._preproc_smooth_window_spin)
+
+        # Order — shown only for Butterworth
+        self._preproc_bw_order_label = QLabel("Order:")
+        self._preproc_bw_order_spin = QSpinBox()
+        self._preproc_bw_order_spin.setRange(1, 8)
+        self._preproc_bw_order_spin.setValue(4)
+        self._preproc_bw_order_spin.setToolTip(
+            "Filter order. Higher order = steeper rolloff,\n"
+            "but risk of ringing artifacts at low order and\n"
+            "numerical instability at very high order.\n"
+            "4 is a good default for most circadian data."
+        )
+        self._preproc_bw_order_label.setVisible(False)
+        self._preproc_bw_order_spin.setVisible(False)
+        smooth_form.addRow(self._preproc_bw_order_label, self._preproc_bw_order_spin)
+
+        # Cutoff — shown only for Butterworth
+        self._preproc_bw_cutoff_label = QLabel("Cutoff:")
+        self._preproc_bw_cutoff_spin = QDoubleSpinBox()
+        self._preproc_bw_cutoff_spin.setRange(1.0, 48.0)
+        self._preproc_bw_cutoff_spin.setSingleStep(1.0)
+        self._preproc_bw_cutoff_spin.setValue(12.0)
+        self._preproc_bw_cutoff_spin.setDecimals(1)
+        self._preproc_bw_cutoff_spin.setSuffix(" h")
+        self._preproc_bw_cutoff_spin.setToolTip(
+            "Low-pass cutoff expressed as a period in hours.\n"
+            "Oscillations shorter than this value are attenuated.\n"
+            "Example: 12 h removes ultradian noise while keeping\n"
+            "the 24 h circadian rhythm intact."
+        )
+        self._preproc_bw_cutoff_label.setVisible(False)
+        self._preproc_bw_cutoff_spin.setVisible(False)
+        smooth_form.addRow(self._preproc_bw_cutoff_label, self._preproc_bw_cutoff_spin)
+
+        outer.addWidget(self._preproc_smooth_params)
+        self._preproc_smooth_check.toggled.connect(self._preproc_smooth_params.setEnabled)
+        self._preproc_smooth_combo.currentIndexChanged.connect(self._on_smooth_method_changed)
+
+        outer.addStretch(1)
+        return group
+
+    @staticmethod
+    def _make_separator() -> QFrame:
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        return sep
+
+    def _on_outlier_method_changed(self, index: int) -> None:
+        """Adjust default threshold when the outlier method combo changes."""
+        # IQR default 1.5, Z-score default 3.0
+        defaults = [1.5, 3.0]
+        self._preproc_outlier_thresh_spin.setValue(defaults[index])
+
+    def _on_smooth_method_changed(self, index: int) -> None:
+        """Show/hide smooth sub-parameters based on selected method."""
+        # 0=Moving average, 1=Savitzky-Golay, 2=Butterworth
+        is_butterworth = (index == 2)
+        self._preproc_smooth_window_label.setVisible(not is_butterworth)
+        self._preproc_smooth_window_spin.setVisible(not is_butterworth)
+        self._preproc_bw_order_label.setVisible(is_butterworth)
+        self._preproc_bw_order_spin.setVisible(is_butterworth)
+        self._preproc_bw_cutoff_label.setVisible(is_butterworth)
+        self._preproc_bw_cutoff_spin.setVisible(is_butterworth)
+
+    def _on_detrend_method_changed(self, index: int) -> None:
+        """Show/hide detrend sub-parameters based on selected method."""
+        # 0=Moving average, 1=Linear, 2=Polynomial
+        show_window = (index == 0)
+        show_poly = (index == 2)
+        self._preproc_detrend_window_label.setVisible(show_window)
+        self._preproc_detrend_window_spin.setVisible(show_window)
+        self._preproc_detrend_poly_label.setVisible(show_poly)
+        self._preproc_detrend_poly_spin.setVisible(show_poly)
+
+    def _get_preprocessing_config(self):
+        """Return a PreprocessingConfig built from the current UI state."""
+        from core.preprocessing import (
+            PreprocessingConfig, OutlierMethod, DetrendMethod, SmoothMethod,
+        )
+
+        _outlier_methods = [OutlierMethod.IQR, OutlierMethod.ZSCORE]
+        _detrend_methods = [
+            DetrendMethod.MOVING_AVERAGE,
+            DetrendMethod.LINEAR,
+            DetrendMethod.POLYNOMIAL,
+        ]
+        _smooth_methods = [
+            SmoothMethod.MOVING_AVERAGE,
+            SmoothMethod.SAVITZKY_GOLAY,
+            SmoothMethod.BUTTERWORTH,
+        ]
+
+        return PreprocessingConfig(
+            remove_outliers=self._preproc_outlier_check.isChecked(),
+            outlier_method=_outlier_methods[self._preproc_outlier_combo.currentIndex()],
+            outlier_threshold=self._preproc_outlier_thresh_spin.value(),
+
+            detrend=self._preproc_detrend_check.isChecked(),
+            detrend_method=_detrend_methods[self._preproc_detrend_combo.currentIndex()],
+            detrend_window=self._preproc_detrend_window_spin.value(),
+            detrend_poly_degree=self._preproc_detrend_poly_spin.value(),
+
+            smooth=self._preproc_smooth_check.isChecked(),
+            smooth_method=_smooth_methods[self._preproc_smooth_combo.currentIndex()],
+            smooth_window=self._preproc_smooth_window_spin.value(),
+            butterworth_order=self._preproc_bw_order_spin.value(),
+            butterworth_cutoff=self._preproc_bw_cutoff_spin.value(),
+        )
+
     def _create_run_controls(self) -> QGroupBox:
         """Create run controls group."""
         group = QGroupBox("Run Analysis")
@@ -3478,7 +3771,8 @@ class AnalysisPanel(QWidget):
             asymmetry_min=0.2,
             asymmetry_max=0.8,
             pvalue_method=params.get('pvalue_method', 'analytical'),
-            n_permutations=params.get('jtk_n_permutations', 0)
+            n_permutations=params.get('jtk_n_permutations', 0),
+            preprocessing=self._get_preprocessing_config(),
         )
         
         # Start worker
