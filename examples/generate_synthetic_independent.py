@@ -18,6 +18,14 @@ Variables generated
   multi_harmonic    24 h + 12 h harmonics    → multi-component test
   arrhythmic        pure noise               → negative control
 
+  --- Preprocessing test variables ---
+  trend_drift       24 h rhythm + linear drift (+7 units over 48 h)
+                    → enable Detrend to recover the clean rhythm
+  with_outliers     24 h rhythm + 3 extreme spikes (rep 0 only)
+                    → enable Outlier removal to eliminate them
+  high_freq_noise   24 h rhythm + 4 h oscillation superimposed
+                    → enable Smoothing (Butterworth cutoff 6 h) to suppress it
+
 Conditions
 ----------
   control    baseline phase (acrophase at ZT6)
@@ -46,6 +54,7 @@ CONDITIONS   = {
 
 PERIOD_24 = 2 * np.pi / 24
 PERIOD_12 = 2 * np.pi / 12
+PERIOD_4  = 2 * np.pi / 4   # 4 h — used for high-frequency noise component
 
 
 def cosinor(t, mesor, amp, period_rad, acrophase, noise_sd):
@@ -54,21 +63,55 @@ def cosinor(t, mesor, amp, period_rad, acrophase, noise_sd):
     return signal + RNG.normal(0, noise_sd, size=len(t))
 
 
-def build_variables(t, phase_shift, amp_factor):
-    """Return dict of variable_name → array of values for one replicate series."""
+def build_variables(t, phase_shift, amp_factor, rep=0):
+    """Return dict of variable_name → array of values for one replicate series.
+
+    rep is used only for with_outliers: extreme spikes are injected exclusively
+    in rep 0 so that outlier detection operates on a realistic single-replicate
+    artefact rather than a systematic shift visible in every replicate.
+    """
     phi = phase_shift
     a   = amp_factor
-    return {
-        "circadian_pure": cosinor(t, 10.0, 2.0 * a, PERIOD_24, np.pi / 4 + phi, 0.3),
-        "circadian_noisy": cosinor(t, 8.0, 1.5 * a, PERIOD_24, np.pi / 4 + phi, 1.2),
-        "ultradian_12h": cosinor(t, 15.0, 1.8 * a, PERIOD_12, np.pi / 2 + phi, 0.5),
-        "multi_harmonic": (
+
+    # ----------------------------------------------------------------
+    # Existing variables — keep these first to preserve the RNG sequence
+    # ----------------------------------------------------------------
+    result = {
+        "circadian_pure":  cosinor(t, 10.0, 2.0 * a, PERIOD_24, np.pi / 4 + phi, 0.3),
+        "circadian_noisy": cosinor(t, 8.0,  1.5 * a, PERIOD_24, np.pi / 4 + phi, 1.2),
+        "ultradian_12h":   cosinor(t, 15.0, 1.8 * a, PERIOD_12, np.pi / 2 + phi, 0.5),
+        "multi_harmonic":  (
             cosinor(t, 18.0, 2.0 * a, PERIOD_24, np.pi / 4 + phi, 0.0)
-            + cosinor(t, 0.0,  1.0 * a, PERIOD_12, np.pi / 2 + phi, 0.0)
+            + cosinor(t, 0.0, 1.0 * a, PERIOD_12, np.pi / 2 + phi, 0.0)
             + RNG.normal(0, 0.6, size=len(t))
         ),
-        "arrhythmic": RNG.normal(14.0, 1.0, size=len(t)),
+        "arrhythmic":      RNG.normal(14.0, 1.0, size=len(t)),
     }
+
+    # ----------------------------------------------------------------
+    # Preprocessing test variables (appended after existing ones)
+    # ----------------------------------------------------------------
+
+    # trend_drift: 24 h rhythm starting at low mesor + linear drift of +0.15/h
+    # → after 48 h the baseline rises ~7 units; Detrend (linear or MA 24 h) removes it
+    trend_base = cosinor(t, 5.0, 2.0 * a, PERIOD_24, np.pi / 4 + phi, 0.3)
+    result["trend_drift"] = trend_base + 0.15 * t
+
+    # with_outliers: clean 24 h rhythm; rep 0 carries 3 extreme spikes
+    # Spikes: +12 at t=6 h (index 3), −10 at t=22 h (index 11), +15 at t=40 h (index 20)
+    outlier_sig = cosinor(t, 10.0, 2.0 * a, PERIOD_24, np.pi / 4 + phi, 0.3)
+    if rep == 0:
+        outlier_sig[ 3] += 12.0   # t= 6 h — spike up
+        outlier_sig[11] -= 10.0   # t=22 h — spike down
+        outlier_sig[20] += 15.0   # t=40 h — large spike up
+    result["with_outliers"] = outlier_sig
+
+    # high_freq_noise: 24 h rhythm + 4 h sinusoidal oscillation (amplitude 1.2)
+    # → rapid fluctuations clearly visible; Butterworth (cutoff 6 h) or MA (3 pts) suppresses them
+    hf_base = cosinor(t, 10.0, 2.0 * a, PERIOD_24, np.pi / 4 + phi, 0.2)
+    result["high_freq_noise"] = hf_base + 1.2 * np.sin(PERIOD_4 * t)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +120,7 @@ def build_variables(t, phase_shift, amp_factor):
 rows = []
 for condition, params in CONDITIONS.items():
     for rep in range(N_REPLICATES):
-        variables = build_variables(TIMEPOINTS, params["phase_shift"], params["amp_factor"])
+        variables = build_variables(TIMEPOINTS, params["phase_shift"], params["amp_factor"], rep=rep)
         for i, t in enumerate(TIMEPOINTS):
             row = {"time": t, "condition": condition}
             for var_name, values in variables.items():
