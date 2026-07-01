@@ -121,6 +121,27 @@ class PlotCanvas(FigureCanvas):
         self.style = style
         self.fig.set_size_inches(style.fig_width, style.fig_height)
         self.fig.set_dpi(style.screen_dpi)
+
+    def export_figure(self, filepath, format: Optional[str] = None, **savefig_kwargs):
+        """
+        Save the figure at the configured export size/DPI.
+
+        Qt's Expanding size policy makes the embedded FigureCanvasQTAgg resize the
+        figure to fill whatever screen space it's given, overriding fig_width/
+        fig_height on every resize event. To make the "Figure size" setting actually
+        take effect, we force it right before saving and restore the on-screen size
+        immediately after.
+        """
+        screen_size = self.fig.get_size_inches()
+        self.fig.set_size_inches(self.style.fig_width, self.style.fig_height)
+        try:
+            if format is not None:
+                self.fig.savefig(filepath, format=format, dpi=self.style.export_dpi, **savefig_kwargs)
+            else:
+                self.fig.savefig(filepath, dpi=self.style.export_dpi, **savefig_kwargs)
+        finally:
+            self.fig.set_size_inches(*screen_size)
+            self.draw_idle()
     
     def plot_cosinor_fit(
         self,
@@ -3039,7 +3060,7 @@ class ResultsPanel(QWidget):
         
         if filepath:
             try:
-                canvas.fig.savefig(filepath, format=format, dpi=self._plot_style.export_dpi, bbox_inches='tight')
+                canvas.export_figure(filepath, format=format, bbox_inches='tight')
                 QMessageBox.information(self, "Export Complete", f"Plot exported to {filepath}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", str(e))
@@ -3053,12 +3074,11 @@ class ResultsPanel(QWidget):
                 from pathlib import Path
                 dir_path = Path(directory)
                 
-                export_dpi = self._plot_style.export_dpi
-                self._fit_canvas.fig.savefig(dir_path / "cosinor_fit.png", dpi=export_dpi)
-                self._polar_canvas.fig.savefig(dir_path / "phase_plot.png", dpi=export_dpi)
-                self._bar_canvas.fig.savefig(dir_path / "parameter_comparison.png", dpi=export_dpi)
-                self._period_canvas.fig.savefig(dir_path / "periodogram.png", dpi=export_dpi)
-                self._onset_canvas.fig.savefig(dir_path / "activity_onset.png", dpi=export_dpi)
+                self._fit_canvas.export_figure(dir_path / "cosinor_fit.png")
+                self._polar_canvas.export_figure(dir_path / "phase_plot.png")
+                self._bar_canvas.export_figure(dir_path / "parameter_comparison.png")
+                self._period_canvas.export_figure(dir_path / "periodogram.png")
+                self._onset_canvas.export_figure(dir_path / "activity_onset.png")
                 
                 QMessageBox.information(
                     self, "Export Complete",

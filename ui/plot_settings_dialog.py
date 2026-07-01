@@ -83,7 +83,11 @@ class PlotSettingsDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # --- Figure group ---
-        fig_group = QGroupBox("Figure")
+        # Note: width/height only take effect on exported images. The on-screen
+        # canvas always fills whatever space the tab/splitter gives it (Qt
+        # overrides the figure size to match the widget on every resize), so
+        # these fields can't change how big the live preview looks.
+        fig_group = QGroupBox("Figure (applies to exported images)")
         fig_form = QFormLayout(fig_group)
 
         self._width_spin = QDoubleSpinBox()
@@ -91,14 +95,14 @@ class PlotSettingsDialog(QDialog):
         self._width_spin.setSingleStep(0.5)
         self._width_spin.setSuffix(" cm")
         self._width_spin.setValue(_in_to_cm(self._style.fig_width))
-        fig_form.addRow("Width:", self._width_spin)
+        fig_form.addRow("Export width:", self._width_spin)
 
         self._height_spin = QDoubleSpinBox()
         self._height_spin.setRange(_in_to_cm(2.0), _in_to_cm(20.0))
         self._height_spin.setSingleStep(0.5)
         self._height_spin.setSuffix(" cm")
         self._height_spin.setValue(_in_to_cm(self._style.fig_height))
-        fig_form.addRow("Height:", self._height_spin)
+        fig_form.addRow("Export height:", self._height_spin)
 
         self._screen_dpi_spin = QSpinBox()
         self._screen_dpi_spin.setRange(50, 300)
