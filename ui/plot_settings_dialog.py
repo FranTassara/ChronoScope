@@ -21,6 +21,16 @@ from ui.plot_style import PlotStyle, DEFAULTS
 CONDITION_PALETTES = ["tab10", "Set1", "Set2", "Dark2", "Paired"]
 HEATMAP_CMAPS = ["YlOrRd", "viridis", "plasma", "coolwarm", "magma"]
 
+CM_PER_INCH = 2.54
+
+
+def _in_to_cm(value_in: float) -> float:
+    return value_in * CM_PER_INCH
+
+
+def _cm_to_in(value_cm: float) -> float:
+    return value_cm / CM_PER_INCH
+
 
 class _ColorButton(QPushButton):
     """A small button that shows a color swatch and opens a QColorDialog on click."""
@@ -77,16 +87,18 @@ class PlotSettingsDialog(QDialog):
         fig_form = QFormLayout(fig_group)
 
         self._width_spin = QDoubleSpinBox()
-        self._width_spin.setRange(2.0, 20.0)
+        self._width_spin.setRange(_in_to_cm(2.0), _in_to_cm(20.0))
         self._width_spin.setSingleStep(0.5)
-        self._width_spin.setValue(self._style.fig_width)
-        fig_form.addRow("Width (in):", self._width_spin)
+        self._width_spin.setSuffix(" cm")
+        self._width_spin.setValue(_in_to_cm(self._style.fig_width))
+        fig_form.addRow("Width:", self._width_spin)
 
         self._height_spin = QDoubleSpinBox()
-        self._height_spin.setRange(2.0, 20.0)
+        self._height_spin.setRange(_in_to_cm(2.0), _in_to_cm(20.0))
         self._height_spin.setSingleStep(0.5)
-        self._height_spin.setValue(self._style.fig_height)
-        fig_form.addRow("Height (in):", self._height_spin)
+        self._height_spin.setSuffix(" cm")
+        self._height_spin.setValue(_in_to_cm(self._style.fig_height))
+        fig_form.addRow("Height:", self._height_spin)
 
         self._screen_dpi_spin = QSpinBox()
         self._screen_dpi_spin.setRange(50, 300)
@@ -158,8 +170,8 @@ class PlotSettingsDialog(QDialog):
     def get_style(self) -> PlotStyle:
         """Build a PlotStyle from the current widget values."""
         return PlotStyle(
-            fig_width=self._width_spin.value(),
-            fig_height=self._height_spin.value(),
+            fig_width=_cm_to_in(self._width_spin.value()),
+            fig_height=_cm_to_in(self._height_spin.value()),
             screen_dpi=self._screen_dpi_spin.value(),
             export_dpi=self._export_dpi_spin.value(),
             primary_color=self._primary_btn.color(),
@@ -172,8 +184,8 @@ class PlotSettingsDialog(QDialog):
 
     def _reset_defaults(self):
         d = DEFAULTS
-        self._width_spin.setValue(d.fig_width)
-        self._height_spin.setValue(d.fig_height)
+        self._width_spin.setValue(_in_to_cm(d.fig_width))
+        self._height_spin.setValue(_in_to_cm(d.fig_height))
         self._screen_dpi_spin.setValue(d.screen_dpi)
         self._export_dpi_spin.setValue(d.export_dpi)
         self._primary_btn.set_color(d.primary_color)
