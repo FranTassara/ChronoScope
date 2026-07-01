@@ -12,9 +12,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QTabWidget, QFrame, QFileDialog,
-    QMessageBox, QScrollArea, QSizePolicy, QMenu, QToolButton
+    QMessageBox, QScrollArea, QSizePolicy, QMenu, QToolButton, QDialog
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSettings
 from PySide6.QtGui import QAction, QColor
 
 import pandas as pd
@@ -25,6 +25,9 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+
+from ui.plot_style import PlotStyle
+from ui.plot_settings_dialog import PlotSettingsDialog
 
 
 # =============================================================================
@@ -96,21 +99,28 @@ COMPARISON_METHODS = {
 class PlotCanvas(FigureCanvas):
     """Matplotlib canvas widget for embedding plots."""
     
-    def __init__(self, parent=None, width=5, height=4, dpi=100):
+    def __init__(self, parent=None, width=5, height=4, dpi=100, style: Optional[PlotStyle] = None):
+        self.style = style or PlotStyle()
         self.fig = Figure(figsize=(width, height), dpi=dpi)
         self.axes = self.fig.add_subplot(111)
-        
+
         super().__init__(self.fig)
         self.setParent(parent)
-        
+
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.updateGeometry()
-    
+
     def clear(self):
         """Clear the current plot."""
         self.fig.clear()
         self.axes = self.fig.add_subplot(111)
         self.draw()
+
+    def apply_style(self, style: PlotStyle):
+        """Adopt a new PlotStyle and resize the figure/canvas accordingly."""
+        self.style = style
+        self.fig.set_size_inches(style.fig_width, style.fig_height)
+        self.fig.set_dpi(style.screen_dpi)
     
     def plot_cosinor_fit(
         self,
@@ -133,7 +143,7 @@ class PlotCanvas(FigureCanvas):
         t_max = np.max(times) if len(times) > 0 else period
 
         # Plot raw data
-        ax.scatter(times, values, alpha=0.6, label='Data', color='steelblue')
+        ax.scatter(times, values, alpha=0.6, label='Data', color=self.style.primary_color)
 
         # Plot fit curve covering the full data range
         n_points = max(200, int((t_max - t_min) / period * 200))
@@ -155,16 +165,16 @@ class PlotCanvas(FigureCanvas):
             # Single component: standard formula
             y_fit = mesor + amplitude * np.cos(2 * np.pi * t_fit / period - acrophase_rad)
 
-        ax.plot(t_fit, y_fit, 'r-', linewidth=2, label='Cosinor Fit')
+        ax.plot(t_fit, y_fit, '-', color=self.style.secondary_color, linewidth=self.style.line_width, label='Cosinor Fit')
 
         # Add horizontal line at MESOR
         ax.axhline(y=mesor, color='gray', linestyle='--', alpha=0.5, label=f'MESOR={mesor:.2f}')
 
         # Labels
-        ax.set_xlabel('Time (hours)')
-        ax.set_ylabel('Expression')
-        ax.set_title(f'{title} - {condition}' if condition else title)
-        ax.legend(loc='upper right')
+        ax.set_xlabel('Time (hours)', fontsize=self.style.font_axis())
+        ax.set_ylabel('Expression', fontsize=self.style.font_axis())
+        ax.set_title(f'{title} - {condition}' if condition else title, fontsize=self.style.font_title())
+        ax.legend(loc='upper right', fontsize=self.style.font_legend())
         ax.set_xlim(t_min, t_max)
 
         self.fig.tight_layout()
@@ -206,12 +216,12 @@ class PlotCanvas(FigureCanvas):
 
         # Plot raw data points for group 0 if available
         if times_g0 is not None and values_g0 is not None:
-            ax.scatter(times_g0, values_g0, alpha=0.5, s=30, color='steelblue',
+            ax.scatter(times_g0, values_g0, alpha=0.5, s=30, color=self.style.primary_color,
                       label=f'{cond1} data', zorder=1)
 
         # Plot raw data points for group 1 if available
         if times_g1 is not None and values_g1 is not None:
-            ax.scatter(times_g1, values_g1, alpha=0.5, s=30, color='coral',
+            ax.scatter(times_g1, values_g1, alpha=0.5, s=30, color=self.style.secondary_color,
                       label=f'{cond2} data', zorder=1)
 
         # Generate time points for smooth curves covering the full data range
@@ -231,18 +241,18 @@ class PlotCanvas(FigureCanvas):
         acr_g1 = result.get('acrophase_g1', 0)
         y_g1 = mesor_g1 + amp_g1 * np.cos(2 * np.pi * t_fit / period - acr_g1)
 
-        ax.plot(t_fit, y_g0, '-', linewidth=2, label=f'{cond1} fit', color='steelblue', zorder=2)
-        ax.plot(t_fit, y_g1, '-', linewidth=2, label=f'{cond2} fit', color='coral', zorder=2)
+        ax.plot(t_fit, y_g0, '-', linewidth=self.style.line_width, label=f'{cond1} fit', color=self.style.primary_color, zorder=2)
+        ax.plot(t_fit, y_g1, '-', linewidth=self.style.line_width, label=f'{cond2} fit', color=self.style.secondary_color, zorder=2)
 
-        ax.set_xlabel('Time (hours)')
-        ax.set_ylabel('Expression')
-        ax.set_title(title)
-        ax.legend(loc='upper right', fontsize=8)
+        ax.set_xlabel('Time (hours)', fontsize=self.style.font_axis())
+        ax.set_ylabel('Expression', fontsize=self.style.font_axis())
+        ax.set_title(title, fontsize=self.style.font_title())
+        ax.legend(loc='upper right', fontsize=self.style.font_legend())
         ax.set_xlim(t_min, t_max)
 
         self.fig.tight_layout()
         self.draw()
-    
+
     def plot_polar_acrophase(
         self,
         acrophases_hours: List[float],
@@ -268,7 +278,7 @@ class PlotCanvas(FigureCanvas):
         thetas = [2 * np.pi * h / period for h in valid_hours]
 
         # Plot each point with label for legend
-        colors = plt.cm.tab10(np.linspace(0, 1, len(thetas)))
+        colors = self.style.get_condition_colors(len(thetas))
 
         for theta, label, color in zip(thetas, valid_labels, colors):
             ax.scatter(theta, 1, s=100, c=[color], label=label, zorder=5)
@@ -279,17 +289,17 @@ class PlotCanvas(FigureCanvas):
 
         # Set ticks for 24-hour clock
         ax.set_xticks(np.linspace(0, 2*np.pi, 9)[:-1])
-        ax.set_xticklabels([f'ZT{int(h)}' for h in np.linspace(0, 24, 9)[:-1]])
+        ax.set_xticklabels([f'ZT{int(h)}' for h in np.linspace(0, 24, 9)[:-1]], fontsize=self.style.font_tick())
 
         ax.set_ylim(0, 1.2)
         ax.set_yticks([])
-        ax.set_title(title, y=1.08)
+        ax.set_title(title, y=1.08, fontsize=self.style.font_title())
 
         # Add legend outside the plot on the right side
         ax.legend(
             loc='center left',
             bbox_to_anchor=(1.15, 0.5),
-            fontsize=8,
+            fontsize=self.style.font_legend(),
             framealpha=0.9
         )
 
@@ -338,12 +348,12 @@ class PlotCanvas(FigureCanvas):
             errors = [lower_errors, upper_errors]
         
         x = np.arange(len(labels))
-        bars = ax.bar(x, values, yerr=errors, capsize=3, color='steelblue', alpha=0.7)
-        
-        ax.set_ylabel(parameter.replace('_', ' ').title())
-        ax.set_title(title or f'{parameter.title()} Comparison')
+        bars = ax.bar(x, values, yerr=errors, capsize=3, color=self.style.primary_color, alpha=0.7)
+
+        ax.set_ylabel(parameter.replace('_', ' ').title(), fontsize=self.style.font_axis())
+        ax.set_title(title or f'{parameter.title()} Comparison', fontsize=self.style.font_title())
         ax.set_xticks(x)
-        ax.set_xticklabels(labels, rotation=45, ha='right')
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=self.style.font_tick())
         
         self.fig.tight_layout()
         self.draw()
@@ -359,14 +369,14 @@ class PlotCanvas(FigureCanvas):
         self.clear()
         ax = self.axes
 
-        ax.plot(periods, power, 'b-', linewidth=1)
+        ax.plot(periods, power, '-', color=self.style.primary_color, linewidth=self.style.line_width)
         ax.axvline(x=dominant_period, color='red', linestyle='--',
                    label=f'Peak: {dominant_period:.1f}h')
 
-        ax.set_xlabel('Period (hours)')
-        ax.set_ylabel('Power')
-        ax.set_title(title)
-        ax.legend()
+        ax.set_xlabel('Period (hours)', fontsize=self.style.font_axis())
+        ax.set_ylabel('Power', fontsize=self.style.font_axis())
+        ax.set_title(title, fontsize=self.style.font_title())
+        ax.legend(fontsize=self.style.font_legend())
 
         self.fig.tight_layout()
         self.draw()
@@ -432,7 +442,7 @@ class PlotCanvas(FigureCanvas):
             im = ax.imshow(
                 matrix,
                 aspect='auto',
-                cmap='YlOrRd',  # Yellow-Orange-Red colormap
+                cmap=self.style.heatmap_cmap,
                 vmin=vmin,
                 vmax=vmax,
                 extent=[min(zt_times), max(zt_times), max_day + 0.5, min_day - 0.5],
@@ -450,11 +460,11 @@ class PlotCanvas(FigureCanvas):
             # Configure axes
             ax.set_xlim(0, 24)
             ax.set_ylim(max_day + 0.5, y_min)
-            ax.set_xlabel('ZT Time (hours)')
-            ax.set_ylabel('Day')
-            ax.set_title(f'{cond}')
+            ax.set_xlabel('ZT Time (hours)', fontsize=self.style.font_axis())
+            ax.set_ylabel('Day', fontsize=self.style.font_axis())
+            ax.set_title(f'{cond}', fontsize=self.style.font_title())
             ax.set_xticks([0, 6, 12, 18, 24])
-            ax.set_xticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'])
+            ax.set_xticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'], fontsize=self.style.font_tick())
 
             # Set y-ticks to show day numbers (only actual days, not the bar area)
             if len(days) <= 20:
@@ -467,7 +477,7 @@ class PlotCanvas(FigureCanvas):
             cbar.set_label('Activity')
 
         # Add overall title
-        self.fig.suptitle(title, fontsize=12, fontweight='bold')
+        self.fig.suptitle(title, fontsize=self.style.font_title(), fontweight='bold')
         self.fig.tight_layout()
         self.draw()
 
@@ -492,7 +502,7 @@ class PlotCanvas(FigureCanvas):
         ax = self.axes
 
         # Color palette for conditions
-        colors = plt.cm.tab10(np.linspace(0, 1, len(conditions)))
+        colors = self.style.get_condition_colors(len(conditions))
 
         # Add light/dark phase background
         ax.axvspan(0, 12, alpha=0.15, color='yellow', label='_Light')
@@ -514,19 +524,19 @@ class PlotCanvas(FigureCanvas):
             color = colors[i]
 
             # Plot mean line
-            ax.plot(zt_times, mean, '-', color=color, linewidth=2, label=cond)
+            ax.plot(zt_times, mean, '-', color=color, linewidth=self.style.line_width, label=cond)
 
             # Plot SEM shading
             ax.fill_between(zt_times, mean - sem, mean + sem, color=color, alpha=0.3)
 
         # Configure axes
-        ax.set_xlabel('ZT Time (hours)')
-        ax.set_ylabel('Activity (mean ± SEM)')
-        ax.set_title(title)
+        ax.set_xlabel('ZT Time (hours)', fontsize=self.style.font_axis())
+        ax.set_ylabel('Activity (mean ± SEM)', fontsize=self.style.font_axis())
+        ax.set_title(title, fontsize=self.style.font_title())
         ax.set_xlim(0, 24)
         ax.set_xticks([0, 6, 12, 18, 24])
-        ax.set_xticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'])
-        ax.legend(loc='upper right')
+        ax.set_xticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'], fontsize=self.style.font_tick())
+        ax.legend(loc='upper right', fontsize=self.style.font_legend())
         ax.grid(True, alpha=0.3)
 
         self.fig.tight_layout()
@@ -676,10 +686,10 @@ class PlotCanvas(FigureCanvas):
             ax.set_xlim(0, 48)
             ax.set_ylim(0, n_rows)
             ax.set_xticks([0, 6, 12, 18, 24, 30, 36, 42, 48])
-            ax.set_xticklabels(['0', '6', '12', '18', '24', '30', '36', '42', '48'])
-            ax.set_xlabel('Time (h)')
-            ax.set_ylabel('Day')
-            ax.set_title(f'{cond}')
+            ax.set_xticklabels(['0', '6', '12', '18', '24', '30', '36', '42', '48'], fontsize=self.style.font_tick())
+            ax.set_xlabel('Time (h)', fontsize=self.style.font_axis())
+            ax.set_ylabel('Day', fontsize=self.style.font_axis())
+            ax.set_title(f'{cond}', fontsize=self.style.font_title())
 
             if n_rows <= 20:
                 ax.set_yticks([n_rows - i for i in range(n_rows)])
@@ -689,7 +699,7 @@ class PlotCanvas(FigureCanvas):
                 ax.set_yticks([n_rows - i for i in tick_indices])
                 ax.set_yticklabels([str(row_days[i]) for i in tick_indices])
 
-        self.fig.suptitle(title, fontsize=12, fontweight='bold')
+        self.fig.suptitle(title, fontsize=self.style.font_title(), fontweight='bold')
         self.fig.tight_layout()
         self.draw()
 
@@ -710,7 +720,7 @@ class PlotCanvas(FigureCanvas):
         self.clear()
         ax = self.axes
 
-        colors = plt.cm.tab10(np.linspace(0, 1, len(conditions)))
+        colors = self.style.get_condition_colors(len(conditions))
 
         for i, cond in enumerate(conditions):
             if cond not in total_activity_data:
@@ -724,13 +734,13 @@ class PlotCanvas(FigureCanvas):
             color = colors[i]
 
             # Plot line with error band
-            ax.plot(days, mean, '-o', color=color, linewidth=2, markersize=4, label=cond)
+            ax.plot(days, mean, '-o', color=color, linewidth=self.style.line_width, markersize=4, label=cond)
             ax.fill_between(days, mean - sem, mean + sem, color=color, alpha=0.3)
 
-        ax.set_xlabel('Day')
-        ax.set_ylabel('Total Activity (mean ± SEM)')
-        ax.set_title(title)
-        ax.legend(loc='upper right')
+        ax.set_xlabel('Day', fontsize=self.style.font_axis())
+        ax.set_ylabel('Total Activity (mean ± SEM)', fontsize=self.style.font_axis())
+        ax.set_title(title, fontsize=self.style.font_title())
+        ax.legend(loc='upper right', fontsize=self.style.font_legend())
         ax.grid(True, alpha=0.3)
 
         # Set x-ticks to integers
@@ -761,7 +771,7 @@ class PlotCanvas(FigureCanvas):
         self.clear()
         ax = self.axes
 
-        colors = plt.cm.tab10(np.linspace(0, 1, len(conditions)))
+        colors = self.style.get_condition_colors(len(conditions))
 
         # Add light/dark phase background
         ax.axhspan(0, 12, alpha=0.15, color='yellow')
@@ -805,13 +815,13 @@ class PlotCanvas(FigureCanvas):
                             markerfacecolor='none', markeredgewidth=1.5,
                             label=f'{cond} offset')
 
-        ax.set_xlabel('Day')
-        ax.set_ylabel('Time (ZT)')
-        ax.set_title(title)
+        ax.set_xlabel('Day', fontsize=self.style.font_axis())
+        ax.set_ylabel('Time (ZT)', fontsize=self.style.font_axis())
+        ax.set_title(title, fontsize=self.style.font_title())
         ax.set_ylim(0, 24)
         ax.set_yticks([0, 6, 12, 18, 24])
-        ax.set_yticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'])
-        ax.legend(loc='upper right', fontsize=8)
+        ax.set_yticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'], fontsize=self.style.font_tick())
+        ax.legend(loc='upper right', fontsize=self.style.font_legend())
         ax.grid(True, alpha=0.3)
 
         self.fig.tight_layout()
@@ -829,8 +839,7 @@ class PlotCanvas(FigureCanvas):
     ):
         """Plot Qp vs period for each condition, with significance line and τ annotation."""
         self.fig.clear()
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
-                  '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
+        colors = self.style.get_condition_colors(max(len(conditions), 1))
 
         ax = self.fig.add_subplot(111)
         any_plotted = False
@@ -854,7 +863,7 @@ class PlotCanvas(FigureCanvas):
                 continue
 
             color = colors[idx % len(colors)]
-            ax.plot(periods, qp, color=color, linewidth=1.5, label=cond)
+            ax.plot(periods, qp, color=color, linewidth=self.style.line_width, label=cond)
 
             if qp_sem is not None and np.any(qp_sem > 0):
                 ax.fill_between(periods, qp - qp_sem, qp + qp_sem,
@@ -888,7 +897,7 @@ class PlotCanvas(FigureCanvas):
 
             phase_used = res.get('phase_used', 'all')
             if phase_used != 'all' and idx == 0:
-                ax.set_title(f"{title}\n(computed on {phase_used} phase)", fontsize=10)
+                ax.set_title(f"{title}\n(computed on {phase_used} phase)", fontsize=self.style.font_title())
 
             any_plotted = True
 
@@ -897,10 +906,10 @@ class PlotCanvas(FigureCanvas):
                     ha='center', va='center', transform=ax.transAxes)
         else:
             if ax.get_title() == '':
-                ax.set_title(title, fontsize=10)
-            ax.set_xlabel('Period (h)')
-            ax.set_ylabel('Qp statistic')
-            ax.legend(fontsize=8)
+                ax.set_title(title, fontsize=self.style.font_title())
+            ax.set_xlabel('Period (h)', fontsize=self.style.font_axis())
+            ax.set_ylabel('Qp statistic', fontsize=self.style.font_axis())
+            ax.legend(fontsize=self.style.font_legend())
             ax.grid(True, alpha=0.3)
 
         self.fig.tight_layout()
@@ -952,9 +961,7 @@ class PlotCanvas(FigureCanvas):
         import numpy as np
         n_conds = len(valid_conds)
         x = np.arange(n_conds)
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
-                  '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
-        bar_colors = [colors[i % len(colors)] for i in range(n_conds)]
+        bar_colors = self.style.get_condition_colors(n_conds)
 
         # 2×2 layout: IS | IV | α (with SD) | ρ (with SD)
         axes = [self.fig.add_subplot(2, 3, i + 1) for i in range(6)]
@@ -969,10 +976,10 @@ class PlotCanvas(FigureCanvas):
 
         for ax, vals, ylabel, subplot_title, errs, ylim in metrics:
             bars = ax.bar(x, vals, color=bar_colors, width=0.6)
-            ax.set_title(subplot_title, fontsize=9, fontweight='bold')
-            ax.set_ylabel(ylabel, fontsize=8)
+            ax.set_title(subplot_title, fontsize=self.style.font_axis(), fontweight='bold')
+            ax.set_ylabel(ylabel, fontsize=self.style.font_tick())
             ax.set_xticks(x)
-            ax.set_xticklabels(valid_conds, fontsize=7, rotation=15, ha='right')
+            ax.set_xticklabels(valid_conds, fontsize=self.style.font_tick(), rotation=15, ha='right')
             if ylim:
                 ax.set_ylim(*ylim)
             ax.grid(True, axis='y', alpha=0.3)
@@ -981,9 +988,9 @@ class PlotCanvas(FigureCanvas):
                 import math
                 if val is not None and not math.isnan(val):
                     ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                            f'{val:.2f}', ha='center', va='bottom', fontsize=7)
+                            f'{val:.2f}', ha='center', va='bottom', fontsize=self.style.font_tick())
 
-        self.fig.suptitle(title, fontsize=11, fontweight='bold')
+        self.fig.suptitle(title, fontsize=self.style.font_title(), fontweight='bold')
         self.fig.tight_layout()
         self.draw()
 
@@ -1008,7 +1015,10 @@ class ResultsPanel(QWidget):
         
         self._results: List[Dict[str, Any]] = []
         self._current_result_index: int = -1
-        
+
+        self._settings = QSettings("ChronoScope", "ChronoScope")
+        self._plot_style = PlotStyle.load(self._settings)
+
         self._setup_ui()
     
     def _setup_ui(self):
@@ -1063,13 +1073,36 @@ class ResultsPanel(QWidget):
         
         export_btn.setMenu(export_menu)
         layout.addWidget(export_btn)
-        
+
+        # Plot settings button
+        settings_btn = QPushButton("⚙ Plot Settings")
+        settings_btn.clicked.connect(self._open_plot_settings)
+        layout.addWidget(settings_btn)
+
         # Clear button
         clear_btn = QPushButton("Clear Results")
         clear_btn.clicked.connect(self.clear_results)
         layout.addWidget(clear_btn)
-        
+
         return frame
+
+    def _open_plot_settings(self):
+        """Open the Plot Settings dialog and apply/persist any changes made."""
+        dialog = PlotSettingsDialog(self._plot_style, self)
+        dialog.style_changed.connect(self._apply_plot_style)
+        if dialog.exec() == QDialog.Accepted:
+            self._plot_style.save(self._settings)
+
+    def _apply_plot_style(self, style: PlotStyle):
+        """Apply a new PlotStyle to every canvas and redraw the current results."""
+        self._plot_style = style
+        for canvas in (
+            self._fit_canvas, self._polar_canvas, self._bar_canvas,
+            self._period_canvas, self._onset_canvas, self._chisq_canvas,
+            self._metrics_canvas,
+        ):
+            canvas.apply_style(style)
+        self._update_plots()
     
     def _create_results_table(self) -> QGroupBox:
         """Create results table group."""
@@ -1106,7 +1139,7 @@ class ResultsPanel(QWidget):
         self._viz_tabs = QTabWidget()
         
         # Cosinor fit plot
-        self._fit_canvas = PlotCanvas(self, width=6, height=4)
+        self._fit_canvas = PlotCanvas(self, width=6, height=4, style=self._plot_style)
         fit_widget = QWidget()
         fit_layout = QVBoxLayout(fit_widget)
         fit_toolbar = NavigationToolbar(self._fit_canvas, self)
@@ -1115,7 +1148,7 @@ class ResultsPanel(QWidget):
         self._viz_tabs.addTab(fit_widget, "Cosinor Fit")
         
         # Polar plot
-        self._polar_canvas = PlotCanvas(self, width=5, height=5)
+        self._polar_canvas = PlotCanvas(self, width=5, height=5, style=self._plot_style)
         polar_widget = QWidget()
         polar_layout = QVBoxLayout(polar_widget)
         polar_toolbar = NavigationToolbar(self._polar_canvas, self)
@@ -1124,7 +1157,7 @@ class ResultsPanel(QWidget):
         self._viz_tabs.addTab(polar_widget, "Phase Plot")
         
         # Bar chart
-        self._bar_canvas = PlotCanvas(self, width=6, height=4)
+        self._bar_canvas = PlotCanvas(self, width=6, height=4, style=self._plot_style)
         bar_widget = QWidget()
         bar_layout = QVBoxLayout(bar_widget)
         
@@ -1146,7 +1179,7 @@ class ResultsPanel(QWidget):
         self._viz_tabs.addTab(bar_widget, "Parameter Comparison")
         
         # Periodogram (for Lomb-Scargle etc.)
-        self._period_canvas = PlotCanvas(self, width=6, height=4)
+        self._period_canvas = PlotCanvas(self, width=6, height=4, style=self._plot_style)
         period_widget = QWidget()
         period_layout = QVBoxLayout(period_widget)
         period_toolbar = NavigationToolbar(self._period_canvas, self)
@@ -1155,7 +1188,7 @@ class ResultsPanel(QWidget):
         self._viz_tabs.addTab(period_widget, "Periodogram")
 
         # Onset plot (for Activity Profile - Activity Onset times)
-        self._onset_canvas = PlotCanvas(self, width=6, height=4)
+        self._onset_canvas = PlotCanvas(self, width=6, height=4, style=self._plot_style)
         onset_widget = QWidget()
         onset_layout = QVBoxLayout(onset_widget)
         onset_toolbar = NavigationToolbar(self._onset_canvas, self)
@@ -1164,7 +1197,7 @@ class ResultsPanel(QWidget):
         self._viz_tabs.addTab(onset_widget, "Activity Onset")
 
         # Chi-square periodogram (Sokolove-Bushell) - Visualization module only
-        self._chisq_canvas = PlotCanvas(self, width=6, height=4)
+        self._chisq_canvas = PlotCanvas(self, width=6, height=4, style=self._plot_style)
         chisq_widget = QWidget()
         chisq_layout = QVBoxLayout(chisq_widget)
         chisq_toolbar = NavigationToolbar(self._chisq_canvas, self)
@@ -1173,7 +1206,7 @@ class ResultsPanel(QWidget):
         self._viz_tabs.addTab(chisq_widget, "Chi-sq Periodogram")
 
         # Behavioral metrics: IS, IV, α, ρ - Visualization module only
-        self._metrics_canvas = PlotCanvas(self, width=6, height=4)
+        self._metrics_canvas = PlotCanvas(self, width=6, height=4, style=self._plot_style)
         metrics_widget = QWidget()
         metrics_layout = QVBoxLayout(metrics_widget)
         metrics_toolbar = NavigationToolbar(self._metrics_canvas, self)
@@ -2196,24 +2229,26 @@ class ResultsPanel(QWidget):
         y_fit = fit_model.get('model_wave_full')
         mesor = fit_model.get('mesor', 0)
 
+        style = self._fit_canvas.style
+
         # Plot raw data if available
         if times is not None and values is not None:
-            ax.scatter(times, values, alpha=0.6, label='Data', color='steelblue')
+            ax.scatter(times, values, alpha=0.6, label='Data', color=style.primary_color)
 
         # Plot the harmonic cosinor fit
         if t_fit is not None and y_fit is not None:
-            ax.plot(t_fit, y_fit, 'r-', linewidth=2, label='Harmonic Cosinor Fit')
+            ax.plot(t_fit, y_fit, '-', color=style.secondary_color, linewidth=style.line_width, label='Harmonic Cosinor Fit')
 
         # Add horizontal line at MESOR
         if mesor != 0:
             ax.axhline(y=mesor, color='gray', linestyle='--', alpha=0.5, label=f'MESOR={mesor:.2f}')
 
         # Labels
-        ax.set_xlabel('Time (hours)')
-        ax.set_ylabel('Expression')
+        ax.set_xlabel('Time (hours)', fontsize=style.font_axis())
+        ax.set_ylabel('Expression', fontsize=style.font_axis())
         title_str = f'{variable} - {condition}' if condition else variable
-        ax.set_title(f'Harmonic Cosinor: {title_str}')
-        ax.legend(loc='upper right')
+        ax.set_title(f'Harmonic Cosinor: {title_str}', fontsize=style.font_title())
+        ax.legend(loc='upper right', fontsize=style.font_legend())
 
         # Set x-axis limits based on data range
         if times is not None and len(times) > 0:
@@ -2253,9 +2288,11 @@ class ResultsPanel(QWidget):
                         periods = periods[reasonable_mask]
                         power_spectrum = np.array(power_spectrum)[reasonable_mask]
 
+        style = self._fit_canvas.style
+
         if periods is not None and power_spectrum is not None:
             # Plot power spectrum
-            ax.plot(periods, power_spectrum, 'b-', linewidth=2, label='Power')
+            ax.plot(periods, power_spectrum, '-', color=style.primary_color, linewidth=style.line_width, label='Power')
 
             # Mark dominant period
             dominant_period = result.get('dominant_period')
@@ -2274,10 +2311,10 @@ class ResultsPanel(QWidget):
                 ax.axhline(y=threshold, color='red', linestyle='--',
                           linewidth=1, label=label)
 
-            ax.set_xlabel('Period (hours)', fontsize=10)
-            ax.set_ylabel('Power', fontsize=10)
-            ax.set_title(f'{method.upper()}: {variable} - {condition}', fontsize=11, fontweight='bold')
-            ax.legend(loc='best')
+            ax.set_xlabel('Period (hours)', fontsize=style.font_axis())
+            ax.set_ylabel('Power', fontsize=style.font_axis())
+            ax.set_title(f'{method.upper()}: {variable} - {condition}', fontsize=style.font_title(), fontweight='bold')
+            ax.legend(loc='best', fontsize=style.font_legend())
             ax.grid(True, alpha=0.3)
         else:
             # No periodogram data available
@@ -2313,9 +2350,11 @@ class ResultsPanel(QWidget):
             # Normalize power for better visualization (log scale often works better)
             power_normalized = np.log10(power_matrix + 1e-10)
 
+            style = self._fit_canvas.style
+
             # Plot the scalogram as a 2D heatmap
             # Use pcolormesh for better performance with large arrays
-            im = ax.pcolormesh(times, periods, power_normalized, shading='auto', cmap='viridis')
+            im = ax.pcolormesh(times, periods, power_normalized, shading='auto', cmap=style.heatmap_cmap)
 
             # Add colorbar
             cbar = self._fit_canvas.fig.colorbar(im, ax=ax, label='Log₁₀(Power)')
@@ -2324,15 +2363,15 @@ class ResultsPanel(QWidget):
             if dominant_period is not None and not np.isnan(dominant_period):
                 ax.axhline(y=dominant_period, color='red', linestyle='--', linewidth=1.5,
                           label=f'Dominant: {dominant_period:.1f}h')
-                ax.legend(loc='upper right', fontsize=8)
+                ax.legend(loc='upper right', fontsize=style.font_legend())
 
             # Labels
-            ax.set_xlabel('Time (hours)', fontsize=10)
-            ax.set_ylabel('Period (hours)', fontsize=10)
+            ax.set_xlabel('Time (hours)', fontsize=style.font_axis())
+            ax.set_ylabel('Period (hours)', fontsize=style.font_axis())
             title = f'Scalogram: {variable}'
             if condition:
                 title += f' - {condition}'
-            ax.set_title(title, fontsize=11, fontweight='bold')
+            ax.set_title(title, fontsize=style.font_title(), fontweight='bold')
 
         else:
             # Fallback: show text summary if no scalogram data
@@ -2561,22 +2600,24 @@ class ResultsPanel(QWidget):
         if sem_values is not None:
             sem_values = sem_values[sort_idx]
 
+        style = self._fit_canvas.style
+
         # Plot mean line with markers
-        ax.plot(times, mean_values, 'o-', color='steelblue', linewidth=2,
+        ax.plot(times, mean_values, 'o-', color=style.primary_color, linewidth=style.line_width,
                 markersize=5, label='Mean', zorder=3)
 
         # Plot SEM shading if available
         if has_sem:
             ax.fill_between(times, mean_values - sem_values, mean_values + sem_values,
-                            color='steelblue', alpha=0.2, label='SEM', zorder=2)
+                            color=style.primary_color, alpha=0.2, label='SEM', zorder=2)
 
         # Labels
-        ax.set_xlabel('Time (hours)', fontsize=10)
-        ax.set_ylabel(variable, fontsize=10)
-        ax.set_title(f'{variable} - {condition}', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Time (hours)', fontsize=style.font_axis())
+        ax.set_ylabel(variable, fontsize=style.font_axis())
+        ax.set_title(f'{variable} - {condition}', fontsize=style.font_title(), fontweight='bold')
 
         if has_sem:
-            ax.legend(fontsize=8, loc='best')
+            ax.legend(fontsize=style.font_legend(), loc='best')
 
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
@@ -2670,16 +2711,18 @@ class ResultsPanel(QWidget):
         values_closed = values + [values[0]]
         angles_closed = angles + [angles[0]]
 
+        style = self._bar_canvas.style
+
         ax = fig.add_subplot(111, polar=True)
-        ax.plot(angles_closed, values_closed, 'o-', linewidth=2, color='steelblue', markersize=5)
-        ax.fill(angles_closed, values_closed, alpha=0.2, color='steelblue')
+        ax.plot(angles_closed, values_closed, 'o-', linewidth=style.line_width, color=style.primary_color, markersize=5)
+        ax.fill(angles_closed, values_closed, alpha=0.2, color=style.primary_color)
 
         # Configure grid
-        ax.set_thetagrids(np.degrees(angles), labels, fontsize=8)
+        ax.set_thetagrids(np.degrees(angles), labels, fontsize=style.font_tick())
         ax.set_ylim(0, 1)
         ax.set_yticks([0.25, 0.5, 0.75, 1.0])
-        ax.set_yticklabels(['0.25', '0.5', '0.75', '1.0'], fontsize=7)
-        ax.set_title('Method Contribution Scores', fontsize=12, fontweight='bold', pad=20)
+        ax.set_yticklabels(['0.25', '0.5', '0.75', '1.0'], fontsize=style.font_tick())
+        ax.set_title('Method Contribution Scores', fontsize=style.font_title(), fontweight='bold', pad=20)
 
         fig.tight_layout()
         self._bar_canvas.draw()
@@ -2725,19 +2768,21 @@ class ResultsPanel(QWidget):
         names = [_FEATURE_LABELS.get(item[0], item[0].replace('_', ' ').title()) for item in sorted_items]
         values = [item[1] for item in sorted_items]
 
+        style = self._period_canvas.style
+
         y_pos = range(len(names))
-        bars = ax.barh(y_pos, values, color='steelblue', alpha=0.85, edgecolor='white')
+        bars = ax.barh(y_pos, values, color=style.primary_color, alpha=0.85, edgecolor='white')
 
         # Add value labels
         for bar, val in zip(bars, values):
             ax.text(bar.get_width() + 0.002, bar.get_y() + bar.get_height() / 2,
-                    f'{val:.3f}', va='center', fontsize=7)
+                    f'{val:.3f}', va='center', fontsize=style.font_tick())
 
         ax.set_yticks(y_pos)
-        ax.set_yticklabels(names, fontsize=8)
+        ax.set_yticklabels(names, fontsize=style.font_tick())
         ax.invert_yaxis()
-        ax.set_xlabel('Importance', fontsize=10)
-        ax.set_title('Random Forest Feature Importances', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Importance', fontsize=style.font_axis())
+        ax.set_title('Random Forest Feature Importances', fontsize=style.font_title(), fontweight='bold')
 
         fig.tight_layout()
         self._period_canvas.draw()
@@ -2804,6 +2849,7 @@ class ResultsPanel(QWidget):
         # Clear canvas and get axis
         self._fit_canvas.clear()
         ax = self._fit_canvas.axes
+        style = self._fit_canvas.style
 
         # Convert raw data arrays and determine time range for fit curve
         t_min, t_max = 0, period
@@ -2821,12 +2867,12 @@ class ResultsPanel(QWidget):
 
         # Plot raw data points for condition 1 (group 0) if available
         if times_g0 is not None and values_g0 is not None:
-            ax.scatter(times_g0, values_g0, alpha=0.5, s=30, color='steelblue',
+            ax.scatter(times_g0, values_g0, alpha=0.5, s=30, color=style.primary_color,
                       label=f'{condition1} data', zorder=1)
 
         # Plot raw data points for condition 2 (group 1) if available
         if times_g1 is not None and values_g1 is not None:
-            ax.scatter(times_g1, values_g1, alpha=0.5, s=30, color='orangered',
+            ax.scatter(times_g1, values_g1, alpha=0.5, s=30, color=style.secondary_color,
                       label=f'{condition2} data', zorder=1)
 
         # Generate time points for smooth curves covering the full data range
@@ -2835,23 +2881,23 @@ class ResultsPanel(QWidget):
 
         # Plot fit curve for condition 1 (group 0)
         y_fit_g0 = mesor_g0 + amplitude_g0 * np.cos(2 * np.pi * t_fit / period - acrophase_g0)
-        ax.plot(t_fit, y_fit_g0, '-', linewidth=2.5, label=f'{condition1} fit', color='steelblue', zorder=2)
+        ax.plot(t_fit, y_fit_g0, '-', linewidth=style.line_width, label=f'{condition1} fit', color=style.primary_color, zorder=2)
 
         # Plot fit curve for condition 2 (group 1)
         y_fit_g1 = mesor_g1 + amplitude_g1 * np.cos(2 * np.pi * t_fit / period - acrophase_g1)
-        ax.plot(t_fit, y_fit_g1, '-', linewidth=2.5, label=f'{condition2} fit', color='orangered', zorder=2)
+        ax.plot(t_fit, y_fit_g1, '-', linewidth=style.line_width, label=f'{condition2} fit', color=style.secondary_color, zorder=2)
 
         # Add horizontal lines at MESORs if they are not zero
         if mesor_g0 != 0:
-            ax.axhline(y=mesor_g0, color='steelblue', linestyle='--', alpha=0.3, zorder=0)
+            ax.axhline(y=mesor_g0, color=style.primary_color, linestyle='--', alpha=0.3, zorder=0)
         if mesor_g1 != 0:
-            ax.axhline(y=mesor_g1, color='orangered', linestyle='--', alpha=0.3, zorder=0)
+            ax.axhline(y=mesor_g1, color=style.secondary_color, linestyle='--', alpha=0.3, zorder=0)
 
         # Labels and legend
-        ax.set_xlabel('Time (hours)')
-        ax.set_ylabel('Expression')
-        ax.set_title(f'{variable} - Comparison: {condition1} vs {condition2}')
-        ax.legend(loc='upper right', fontsize=8)
+        ax.set_xlabel('Time (hours)', fontsize=style.font_axis())
+        ax.set_ylabel('Expression', fontsize=style.font_axis())
+        ax.set_title(f'{variable} - Comparison: {condition1} vs {condition2}', fontsize=style.font_title())
+        ax.legend(loc='upper right', fontsize=style.font_legend())
         ax.grid(True, alpha=0.3)
 
         self._fit_canvas.fig.tight_layout()
@@ -2870,9 +2916,10 @@ class ResultsPanel(QWidget):
         # Clear and plot
         self._period_canvas.clear()
         ax = self._period_canvas.axes
+        style = self._period_canvas.style
 
         # Plot power spectrum
-        ax.plot(periods, power, 'b-', linewidth=1, label='Power')
+        ax.plot(periods, power, '-', color=style.primary_color, linewidth=style.line_width, label='Power')
 
         # Plot significance threshold
         if threshold is not None:
@@ -2884,13 +2931,13 @@ class ResultsPanel(QWidget):
             ax.axvline(x=dominant_period, color='green', linestyle='--',
                       linewidth=2, label=f'Peak: {dominant_period:.1f}h')
 
-        ax.set_xlabel('Period (hours)')
-        ax.set_ylabel('Power')
+        ax.set_xlabel('Period (hours)', fontsize=style.font_axis())
+        ax.set_ylabel('Power', fontsize=style.font_axis())
 
         variable = result.get('variable', '')
         condition = result.get('condition', '')
-        ax.set_title(f'Periodogram - {variable} ({condition})')
-        ax.legend()
+        ax.set_title(f'Periodogram - {variable} ({condition})', fontsize=style.font_title())
+        ax.legend(fontsize=style.font_legend())
         ax.grid(True, alpha=0.3)
 
         self._period_canvas.fig.tight_layout()
@@ -2992,7 +3039,7 @@ class ResultsPanel(QWidget):
         
         if filepath:
             try:
-                canvas.fig.savefig(filepath, format=format, dpi=300, bbox_inches='tight')
+                canvas.fig.savefig(filepath, format=format, dpi=self._plot_style.export_dpi, bbox_inches='tight')
                 QMessageBox.information(self, "Export Complete", f"Plot exported to {filepath}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", str(e))
@@ -3006,11 +3053,12 @@ class ResultsPanel(QWidget):
                 from pathlib import Path
                 dir_path = Path(directory)
                 
-                self._fit_canvas.fig.savefig(dir_path / "cosinor_fit.png", dpi=300)
-                self._polar_canvas.fig.savefig(dir_path / "phase_plot.png", dpi=300)
-                self._bar_canvas.fig.savefig(dir_path / "parameter_comparison.png", dpi=300)
-                self._period_canvas.fig.savefig(dir_path / "periodogram.png", dpi=300)
-                self._onset_canvas.fig.savefig(dir_path / "activity_onset.png", dpi=300)
+                export_dpi = self._plot_style.export_dpi
+                self._fit_canvas.fig.savefig(dir_path / "cosinor_fit.png", dpi=export_dpi)
+                self._polar_canvas.fig.savefig(dir_path / "phase_plot.png", dpi=export_dpi)
+                self._bar_canvas.fig.savefig(dir_path / "parameter_comparison.png", dpi=export_dpi)
+                self._period_canvas.fig.savefig(dir_path / "periodogram.png", dpi=export_dpi)
+                self._onset_canvas.fig.savefig(dir_path / "activity_onset.png", dpi=export_dpi)
                 
                 QMessageBox.information(
                     self, "Export Complete",
