@@ -195,7 +195,8 @@ class PlotCanvas(FigureCanvas):
         ax.set_xlabel('Time (hours)', fontsize=self.style.font_axis())
         ax.set_ylabel('Expression', fontsize=self.style.font_axis())
         ax.set_title(f'{title} - {condition}' if condition else title, fontsize=self.style.font_title())
-        ax.legend(loc='upper right', fontsize=self.style.font_legend())
+        if self.style.show_legend:
+            ax.legend(loc='upper right', fontsize=self.style.font_legend())
         ax.set_xlim(t_min, t_max)
 
         self.fig.tight_layout()
@@ -268,7 +269,8 @@ class PlotCanvas(FigureCanvas):
         ax.set_xlabel('Time (hours)', fontsize=self.style.font_axis())
         ax.set_ylabel('Expression', fontsize=self.style.font_axis())
         ax.set_title(title, fontsize=self.style.font_title())
-        ax.legend(loc='upper right', fontsize=self.style.font_legend())
+        if self.style.show_legend:
+            ax.legend(loc='upper right', fontsize=self.style.font_legend())
         ax.set_xlim(t_min, t_max)
 
         self.fig.tight_layout()
@@ -316,17 +318,19 @@ class PlotCanvas(FigureCanvas):
         ax.set_yticks([])
         ax.set_title(title, y=1.08, fontsize=self.style.font_title())
 
-        # Add legend outside the plot on the right side
-        ax.legend(
-            loc='center left',
-            bbox_to_anchor=(1.15, 0.5),
-            fontsize=self.style.font_legend(),
-            framealpha=0.9
-        )
-
-        # Adjust layout to make room for the legend
-        self.fig.tight_layout()
-        self.fig.subplots_adjust(right=0.75)
+        if self.style.show_legend:
+            # Add legend outside the plot on the right side
+            ax.legend(
+                loc='center left',
+                bbox_to_anchor=(1.15, 0.5),
+                fontsize=self.style.font_legend(),
+                framealpha=0.9
+            )
+            # Adjust layout to make room for the legend
+            self.fig.tight_layout()
+            self.fig.subplots_adjust(right=0.75)
+        else:
+            self.fig.tight_layout()
         self.draw()
     
     def plot_bar_parameters(
@@ -397,7 +401,8 @@ class PlotCanvas(FigureCanvas):
         ax.set_xlabel('Period (hours)', fontsize=self.style.font_axis())
         ax.set_ylabel('Power', fontsize=self.style.font_axis())
         ax.set_title(title, fontsize=self.style.font_title())
-        ax.legend(fontsize=self.style.font_legend())
+        if self.style.show_legend:
+            ax.legend(fontsize=self.style.font_legend())
 
         self.fig.tight_layout()
         self.draw()
@@ -557,7 +562,8 @@ class PlotCanvas(FigureCanvas):
         ax.set_xlim(0, 24)
         ax.set_xticks([0, 6, 12, 18, 24])
         ax.set_xticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'], fontsize=self.style.font_tick())
-        ax.legend(loc='upper right', fontsize=self.style.font_legend())
+        if self.style.show_legend:
+            ax.legend(loc='upper right', fontsize=self.style.font_legend())
         ax.grid(True, alpha=0.3)
 
         self.fig.tight_layout()
@@ -761,7 +767,8 @@ class PlotCanvas(FigureCanvas):
         ax.set_xlabel('Day', fontsize=self.style.font_axis())
         ax.set_ylabel('Total Activity (mean ± SEM)', fontsize=self.style.font_axis())
         ax.set_title(title, fontsize=self.style.font_title())
-        ax.legend(loc='upper right', fontsize=self.style.font_legend())
+        if self.style.show_legend:
+            ax.legend(loc='upper right', fontsize=self.style.font_legend())
         ax.grid(True, alpha=0.3)
 
         # Set x-ticks to integers
@@ -842,7 +849,8 @@ class PlotCanvas(FigureCanvas):
         ax.set_ylim(0, 24)
         ax.set_yticks([0, 6, 12, 18, 24])
         ax.set_yticklabels(['ZT0', 'ZT6', 'ZT12', 'ZT18', 'ZT24'], fontsize=self.style.font_tick())
-        ax.legend(loc='upper right', fontsize=self.style.font_legend())
+        if self.style.show_legend:
+            ax.legend(loc='upper right', fontsize=self.style.font_legend())
         ax.grid(True, alpha=0.3)
 
         self.fig.tight_layout()
@@ -930,7 +938,8 @@ class PlotCanvas(FigureCanvas):
                 ax.set_title(title, fontsize=self.style.font_title())
             ax.set_xlabel('Period (h)', fontsize=self.style.font_axis())
             ax.set_ylabel('Qp statistic', fontsize=self.style.font_axis())
-            ax.legend(fontsize=self.style.font_legend())
+            if self.style.show_legend:
+                ax.legend(fontsize=self.style.font_legend())
             ax.grid(True, alpha=0.3)
 
         self.fig.tight_layout()
@@ -2269,7 +2278,8 @@ class ResultsPanel(QWidget):
         ax.set_ylabel('Expression', fontsize=style.font_axis())
         title_str = f'{variable} - {condition}' if condition else variable
         ax.set_title(f'Harmonic Cosinor: {title_str}', fontsize=style.font_title())
-        ax.legend(loc='upper right', fontsize=style.font_legend())
+        if style.show_legend:
+            ax.legend(loc='upper right', fontsize=style.font_legend())
 
         # Set x-axis limits based on data range
         if times is not None and len(times) > 0:
@@ -2335,7 +2345,8 @@ class ResultsPanel(QWidget):
             ax.set_xlabel('Period (hours)', fontsize=style.font_axis())
             ax.set_ylabel('Power', fontsize=style.font_axis())
             ax.set_title(f'{method.upper()}: {variable} - {condition}', fontsize=style.font_title(), fontweight='bold')
-            ax.legend(loc='best', fontsize=style.font_legend())
+            if style.show_legend:
+                ax.legend(loc='best', fontsize=style.font_legend())
             ax.grid(True, alpha=0.3)
         else:
             # No periodogram data available
@@ -2384,7 +2395,8 @@ class ResultsPanel(QWidget):
             if dominant_period is not None and not np.isnan(dominant_period):
                 ax.axhline(y=dominant_period, color='red', linestyle='--', linewidth=1.5,
                           label=f'Dominant: {dominant_period:.1f}h')
-                ax.legend(loc='upper right', fontsize=style.font_legend())
+                if style.show_legend:
+                    ax.legend(loc='upper right', fontsize=style.font_legend())
 
             # Labels
             ax.set_xlabel('Time (hours)', fontsize=style.font_axis())
@@ -2490,6 +2502,7 @@ class ResultsPanel(QWidget):
             mes_lo.append(m_lo)
             mes_hi.append(m_hi)
 
+        style = self._bar_canvas.style
         x = np.arange(len(groups))
         width = 0.35
         colors_amp = ['#4878D0', '#6ACC65', '#D65F5F', '#B47CC7', '#C4AD66']
@@ -2508,7 +2521,8 @@ class ResultsPanel(QWidget):
         ax1.set_xticklabels(groups, rotation=30, ha='right')
         ax1.set_ylabel('Amplitude')
         ax1.set_title('Amplitude by Group')
-        ax1.legend(fontsize='small')
+        if style.show_legend:
+            ax1.legend(fontsize='small')
 
         ax2 = fig.add_subplot(122)
         for idx in range(len(groups)):
@@ -2523,7 +2537,8 @@ class ResultsPanel(QWidget):
         ax2.set_xticklabels(groups, rotation=30, ha='right')
         ax2.set_ylabel('MESOR')
         ax2.set_title('MESOR by Group')
-        ax2.legend(fontsize='small')
+        if style.show_legend:
+            ax2.legend(fontsize='small')
 
         fig.suptitle(f'{variable} — Group Comparison (Period={period}h)', fontsize=11)
         fig.tight_layout()
@@ -2637,7 +2652,7 @@ class ResultsPanel(QWidget):
         ax.set_ylabel(variable, fontsize=style.font_axis())
         ax.set_title(f'{variable} - {condition}', fontsize=style.font_title(), fontweight='bold')
 
-        if has_sem:
+        if has_sem and style.show_legend:
             ax.legend(fontsize=style.font_legend(), loc='best')
 
         ax.grid(True, alpha=0.3)
@@ -2918,7 +2933,8 @@ class ResultsPanel(QWidget):
         ax.set_xlabel('Time (hours)', fontsize=style.font_axis())
         ax.set_ylabel('Expression', fontsize=style.font_axis())
         ax.set_title(f'{variable} - Comparison: {condition1} vs {condition2}', fontsize=style.font_title())
-        ax.legend(loc='upper right', fontsize=style.font_legend())
+        if style.show_legend:
+            ax.legend(loc='upper right', fontsize=style.font_legend())
         ax.grid(True, alpha=0.3)
 
         self._fit_canvas.fig.tight_layout()
@@ -2958,7 +2974,8 @@ class ResultsPanel(QWidget):
         variable = result.get('variable', '')
         condition = result.get('condition', '')
         ax.set_title(f'Periodogram - {variable} ({condition})', fontsize=style.font_title())
-        ax.legend(fontsize=style.font_legend())
+        if style.show_legend:
+            ax.legend(fontsize=style.font_legend())
         ax.grid(True, alpha=0.3)
 
         self._period_canvas.fig.tight_layout()

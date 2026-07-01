@@ -11,7 +11,7 @@ import copy
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QDoubleSpinBox, QSpinBox, QComboBox, QPushButton, QDialogButtonBox,
-    QColorDialog
+    QColorDialog, QCheckBox
 )
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor
@@ -153,6 +153,10 @@ class PlotSettingsDialog(QDialog):
         self._line_width_spin.setValue(self._style.line_width)
         text_form.addRow("Line width:", self._line_width_spin)
 
+        self._show_legend_check = QCheckBox("Show legend")
+        self._show_legend_check.setChecked(self._style.show_legend)
+        text_form.addRow("", self._show_legend_check)
+
         layout.addWidget(text_group)
 
         # --- Buttons ---
@@ -184,6 +188,7 @@ class PlotSettingsDialog(QDialog):
             heatmap_cmap=self._heatmap_combo.currentText(),
             base_font_size=self._font_spin.value(),
             line_width=self._line_width_spin.value(),
+            show_legend=self._show_legend_check.isChecked(),
         )
 
     def _reset_defaults(self):
@@ -198,6 +203,7 @@ class PlotSettingsDialog(QDialog):
         self._heatmap_combo.setCurrentText(d.heatmap_cmap)
         self._font_spin.setValue(d.base_font_size)
         self._line_width_spin.setValue(d.line_width)
+        self._show_legend_check.setChecked(d.show_legend)
 
     def _on_apply(self):
         self.style_changed.emit(self.get_style())

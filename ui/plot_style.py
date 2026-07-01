@@ -14,6 +14,13 @@ import matplotlib.pyplot as plt
 _SETTINGS_PREFIX = "PlotStyle/"
 
 
+def _to_bool(value) -> bool:
+    """QSettings may hand back bools as the literal string 'true'/'false' depending on backend."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes")
+    return bool(value)
+
+
 @dataclass
 class PlotStyle:
     """Aesthetic settings applied to every PlotCanvas plot."""
@@ -28,6 +35,7 @@ class PlotStyle:
     heatmap_cmap: str = "YlOrRd"      # activity profile heatmap + CWT scalogram
     base_font_size: int = 9
     line_width: float = 2.0
+    show_legend: bool = True
 
     def get_condition_colors(self, n: int) -> List[str]:
         """Resolve the condition palette to n distinct hex colors."""
@@ -63,6 +71,7 @@ class PlotStyle:
             heatmap_cmap=str(settings.value(_SETTINGS_PREFIX + "heatmap_cmap", defaults.heatmap_cmap)),
             base_font_size=int(settings.value(_SETTINGS_PREFIX + "base_font_size", defaults.base_font_size)),
             line_width=float(settings.value(_SETTINGS_PREFIX + "line_width", defaults.line_width)),
+            show_legend=_to_bool(settings.value(_SETTINGS_PREFIX + "show_legend", defaults.show_legend)),
         )
 
     def save(self, settings: QSettings) -> None:
@@ -77,6 +86,7 @@ class PlotStyle:
         settings.setValue(_SETTINGS_PREFIX + "heatmap_cmap", self.heatmap_cmap)
         settings.setValue(_SETTINGS_PREFIX + "base_font_size", self.base_font_size)
         settings.setValue(_SETTINGS_PREFIX + "line_width", self.line_width)
+        settings.setValue(_SETTINGS_PREFIX + "show_legend", self.show_legend)
 
 
 DEFAULTS = PlotStyle()
