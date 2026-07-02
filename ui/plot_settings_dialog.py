@@ -18,7 +18,7 @@ from PySide6.QtGui import QColor
 
 from ui.plot_style import PlotStyle, DEFAULTS
 
-CONDITION_PALETTES = ["tab10", "Set1", "Set2", "Dark2", "Paired"]
+CONDITION_PALETTES = ["tab10", "Set1", "Set2", "Dark2", "Paired", "Nature"]
 HEATMAP_CMAPS = ["YlOrRd", "viridis", "plasma", "coolwarm", "magma"]
 
 CM_PER_INCH = 2.54

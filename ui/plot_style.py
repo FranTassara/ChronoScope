@@ -13,6 +13,14 @@ import matplotlib.pyplot as plt
 
 _SETTINGS_PREFIX = "PlotStyle/"
 
+# "npg" (Nature Publishing Group) palette from the ggsci R package, widely
+# used to mimic Nature-style figure coloring. Not a real matplotlib colormap,
+# so it's handled as a plain hex cycle instead of via plt.get_cmap().
+NATURE_PALETTE = [
+    "#E64B35", "#4DBBD5", "#00A087", "#3C5488", "#F39B7F",
+    "#8491B4", "#91D1C2", "#DC0000", "#7E6148", "#B09C85",
+]
+
 
 def _to_bool(value) -> bool:
     """QSettings may hand back bools as the literal string 'true'/'false' depending on backend."""
@@ -51,6 +59,8 @@ class PlotStyle:
             return [self.primary_color]
         if n == 2:
             return [self.primary_color, self.secondary_color]
+        if self.condition_palette.lower() in ("nature", "npg"):
+            return [NATURE_PALETTE[i % len(NATURE_PALETTE)] for i in range(n)]
         cmap = plt.get_cmap(self.condition_palette)
         return [cmap(x / (n - 1)) for x in range(n)]
 
