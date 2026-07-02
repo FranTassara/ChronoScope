@@ -281,29 +281,40 @@ class PlotCanvas(FigureCanvas):
         acrophases_hours: List[float],
         labels: List[str],
         period: float = 24.0,
-        title: str = "Acrophase Distribution"
+        title: str = "Acrophase Distribution",
+        colors: Optional[List] = None,
     ):
-        """Plot acrophases on a polar plot with legend on the side."""
+        """Plot acrophases on a polar plot with legend on the side.
+
+        If `colors` is given, it must be parallel to acrophases_hours/labels
+        (one color per point, e.g. primary/secondary mapped by condition) so
+        that callers can keep this plot in sync with other plots' colors
+        instead of relying on positional palette sampling.
+        """
         self.fig.clear()
 
         # Create subplot with space for legend on the right
         ax = self.fig.add_subplot(111, projection='polar')
 
         # Filter out None values and convert hours to radians
-        valid_data = [(h, l) for h, l in zip(acrophases_hours, labels) if h is not None]
+        if colors is not None:
+            valid_data = [(h, l, c) for h, l, c in zip(acrophases_hours, labels, colors) if h is not None]
+        else:
+            valid_data = [(h, l, None) for h, l in zip(acrophases_hours, labels) if h is not None]
         if not valid_data:
             ax.text(0.5, 0.5, 'No acrophase data available',
                    ha='center', va='center', transform=ax.transAxes)
             self.draw()
             return
 
-        valid_hours, valid_labels = zip(*valid_data)
+        valid_hours, valid_labels, valid_colors = zip(*valid_data)
         thetas = [2 * np.pi * h / period for h in valid_hours]
 
         # Plot each point with label for legend
-        colors = self.style.get_condition_colors(len(thetas))
+        if colors is None:
+            valid_colors = self.style.get_condition_colors(len(thetas))
 
-        for theta, label, color in zip(thetas, valid_labels, colors):
+        for theta, label, color in zip(thetas, valid_labels, valid_colors):
             ax.scatter(theta, 1, s=100, c=[color], label=label, zorder=5)
 
         # Configure polar plot
@@ -2114,23 +2125,27 @@ class ResultsPanel(QWidget):
         if is_comparison:
             acrophases = []
             labels = []
+            colors = []
             for r in self._results:
                 if r.get('acrophase_g0') is not None:
                     acro_hours = (r.get('acrophase_g0') * 24.0) / (2 * np.pi)
                     acrophases.append(acro_hours)
                     labels.append(f"{r.get('variable', '')}_{r.get('condition1', '')}")
+                    colors.append(self._plot_style.primary_color)
                 if r.get('acrophase_g1') is not None:
                     acro_hours = (r.get('acrophase_g1') * 24.0) / (2 * np.pi)
                     acrophases.append(acro_hours)
                     labels.append(f"{r.get('variable', '')}_{r.get('condition2', '')}")
+                    colors.append(self._plot_style.secondary_color)
         else:
             acrophases = [r.get('acrophase_hours') for r in self._results
                          if r.get('acrophase_hours') is not None]
             labels = [f"{r.get('variable', '')}_{r.get('condition', '')}"
                      for r in self._results if r.get('acrophase_hours') is not None]
+            colors = None
 
         if acrophases:
-            self._polar_canvas.plot_polar_acrophase(acrophases, labels)
+            self._polar_canvas.plot_polar_acrophase(acrophases, labels, colors=colors)
 
         # Update fit plot with first result
         if self._results:

@@ -38,11 +38,21 @@ class PlotStyle:
     show_legend: bool = True
 
     def get_condition_colors(self, n: int) -> List[str]:
-        """Resolve the condition palette to n distinct hex colors."""
+        """Resolve n distinct colors for condition-based plots.
+
+        For 1-2 conditions, uses primary_color/secondary_color so that
+        e.g. the phase plot matches the cosinor fit plot's colors.
+        For 3+ conditions, falls back to the qualitative condition_palette
+        colormap since there's no fixed color assigned beyond the first two.
+        """
         if n <= 0:
             return []
+        if n == 1:
+            return [self.primary_color]
+        if n == 2:
+            return [self.primary_color, self.secondary_color]
         cmap = plt.get_cmap(self.condition_palette)
-        return [cmap(i) for i in [x / max(n - 1, 1) for x in range(n)]] if n > 1 else [cmap(0.0)]
+        return [cmap(x / (n - 1)) for x in range(n)]
 
     def font_title(self) -> int:
         return self.base_font_size + 3
