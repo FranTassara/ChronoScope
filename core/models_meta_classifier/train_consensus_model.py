@@ -35,8 +35,8 @@ import pandas as pd
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Training data scripts live in training_data_meta_classifer/
-training_data_dir = project_root / 'training_data_meta_classifer'
+# Training data scripts live in training_data_meta_classifier/
+training_data_dir = project_root / 'training_data_meta_classifier'
 sys.path.insert(0, str(training_data_dir))
 
 # Suppress warnings during training

@@ -33,14 +33,14 @@
 
 ## Overview
 
-Choosing among the growing number of rhythm-detection methods — each with different assumptions and failure modes — is one of the biggest hurdles in circadian data analysis. ChronoScope solves this with a single cross-platform desktop app that bundles **seven established rhythm-detection algorithms** plus a novel ML consensus score (**CRS-AI**) behind a point-and-click interface, so no programming is required.
+Choosing among the growing number of rhythm-detection methods — each with different assumptions and failure modes — is one of the biggest hurdles in circadian data analysis. ChronoScope solves this with a single cross-platform desktop app that bundles **ten established rhythm-detection algorithms** plus a novel ML consensus score (**CRS-AI**) behind a point-and-click interface, so no programming is required.
 
 It's built for circadian biologists working with gene expression, protein abundance, locomotor activity, count data, or any uniformly sampled time series — with native support for CSV files, Drosophila activity monitors (DAM/TriKinetics), rodent wheel-running data (AWD/ClockLab), and the Rosbash circadian neuron scRNA-seq dataset.
 
 ## Key Features
 
 - **No coding required** — point-and-click interface built with PySide6 (Qt)
-- **Six integrated analysis modules** — CosinorPy, CircaCompare, RhythmCount, Rhythm Analysis Suite, CRS-AI, and Locomotor Activity Analysis
+- **Six integrated analysis modules** — CosinorPy, CircaCompare, RhythmCount, Classical Rhythm Analysis (10 algorithms), CRS-AI, and Locomotor Activity Analysis
 - **Count-data support** — GLM-based cosinor fitting with five count distributions (Poisson, NB, ZIP, ZINB, Generalized Poisson)
 - **Differential rhythmicity** — statistical comparison of cosinor parameters between conditions
 - **CRS-AI** — Random Forest consensus score integrating outputs from multiple methods
@@ -63,8 +63,6 @@ The easiest way to get started — no Python, no dependencies.
 | macOS | `ChronoScope-macos.zip` | Unzip, then open `ChronoScope.app` |
 
 > **macOS Gatekeeper note:** the app isn't notarized by Apple yet, so the first launch may be blocked. Right-click the app → **Open**, or run `xattr -cr ChronoScope.app` in Terminal, then open it normally.
-
-Prefer to run from source, or on Linux? See [Installation from source](#installation-from-source) below.
 
 ---
 
@@ -94,8 +92,6 @@ pip install -r requirements.txt
 python main.py
 ```
 
-> **Note:** ChronoScope patches deprecated NumPy type aliases at startup to maintain compatibility with CosinorPy on NumPy ≥ 2.0.
-
 ---
 
 ## Usage
@@ -104,7 +100,7 @@ python main.py
 
 1. **Load data** — click *Browse…* to select a CSV file, or choose *DAM Monitor* / *Rosbash scRNA-seq* from the dataset selector.
 2. **Map columns** — assign time, condition, and variable columns. The application auto-detects common column names.
-3. **Select a module** — CosinorPy, CircaCompare, Rhythm Analysis, or CRS-AI.
+3. **Select a module** — CosinorPy, CircaCompare, RhythmCount, Classical Rhythm Analysis, CRS-AI, or Locomotor Activity Analysis (the last one only appears for DAM/AWD data).
 4. **Run analysis** — set parameters (period, number of harmonics, etc.) and click *Run Analysis*.
 5. **Export results** — summary tables (CSV / Excel) and figures (PNG / SVG / PDF) via the *Export* panel.
 
@@ -157,7 +153,7 @@ Before running any analysis module, each variable can be passed through an optio
 | 2. Detrending | Linear · Moving average · Polynomial | Removes slow, non-rhythmic trends while preserving the circadian oscillation |
 | 3. Smoothing | Moving average · Savitzky–Golay · Butterworth (low-pass) | Reduces high-frequency noise |
 
-This is useful for noisy locomotor activity traces or gene expression series with batch drift, before feeding the data into CosinorPy, RhythmCount, or the Rhythm Analysis Suite.
+This is useful for noisy locomotor activity traces or gene expression series with batch drift, before feeding the data into CosinorPy, RhythmCount, or Classical Rhythm Analysis.
 
 ---
 
@@ -209,19 +205,22 @@ Five count distributions are supported:
 
 Goodness of fit is assessed via the likelihood ratio test (LLR p-value), AIC, BIC, and McFadden's pseudo-R². Amplitude, MESOR, and acrophase are extracted from the predicted curve after fitting.
 
-### 4. Rhythm Analysis Suite
+### 4. Classical Rhythm Analysis Module
 
-Seven algorithms available for period detection and rhythmicity testing:
+Ten algorithms available for period detection and rhythmicity testing:
 
 | Method | Type | Best suited for |
 |---|---|---|
-| JTK Cycle | Nonparametric | Genome-scale datasets; no waveform assumption |
-| AR-JTK | Nonparametric | Autoregressive-corrected JTK for autocorrelated data |
-| Lomb–Scargle | Spectral | Unevenly sampled or missing time points |
-| Wavelet (CWT) | Time–frequency | Non-stationary rhythms; temporal changes in amplitude |
-| Fourier F24 | Effect size | Quantifying 24 h power relative to total variance |
-| Harmonic cosinor | Parametric | Multi-modal waveforms (up to 4 harmonics) |
-| Linear mixed effects | Hierarchical | Nested or longitudinal designs |
+| JTK Cycle | Nonparametric | Kendall's τ vs. a triangle waveform; independent (cross-sectional) data, no waveform assumption |
+| AR-JTK | Nonparametric | JTK with autoregressive noise correction (Ljung-Box + prewhitening); dependent/longitudinal data |
+| Cosine-Kendall | Nonparametric | Kendall's τ vs. a cosine template (assumes a symmetric waveform); independent data |
+| Cosinor (OLS) | Parametric | OLS fit of MESOR/amplitude/acrophase with F-test; independent or pre-averaged data |
+| Harmonic Cosinor | Parametric | OLS cosinor with up to 4 harmonics; complex/asymmetric waveforms |
+| Fourier F24 | Effect size | 24 h signal power vs. noise; requires ≥ 2 replicates per timepoint |
+| Lomb–Scargle | Spectral | Unevenly sampled or missing time points; reports a false-alarm probability |
+| Spectral Analysis (Periodogram) | Spectral | FFT-based power spectral density with interactive visualization; longitudinal data |
+| Wavelet (CWT) | Time–frequency | Non-stationary rhythms; temporal changes in period and amplitude |
+| Linear Mixed Effects | Hierarchical | Cosinor mixed model with random effects; repeated measures / grouped data |
 
 ### 5. CRS-AI (Consensus Rhythmicity Score)
 
@@ -303,9 +302,9 @@ If you use ChronoScope in your research, please cite:
 @article{tassara2025chronoscope,
   author  = {Tassara, Francisco},
   title   = {ChronoScope: A Desktop Application for Multi-Method Circadian Rhythm Analysis},
-  journal = {Journal of Biological Rhythms},
-  year    = {2025},
-  doi     = {TODO}
+  journal = {},
+  year    = {},
+  doi     = {}
 }
 ```
 
@@ -324,11 +323,6 @@ If you use ChronoScope in your research, please cite:
 **RhythmCount:**
 > Velikajne N, et al. (2022). RhythmCount: an R/Python package for circadian
 > rhythmicity analysis of count data. DOI: to be confirmed upon publication.
-
-**JTK_CYCLE:**
-> Hughes ME, et al. (2010). JTK_CYCLE: an efficient nonparametric algorithm for
-> detecting rhythmic components in genome-scale datasets.
-> *Journal of Biological Rhythms*, 25(5), 372–380.
 
 </details>
 

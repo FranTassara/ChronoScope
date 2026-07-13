@@ -14,7 +14,7 @@ experimental platform (GPL14664 Agilent custom zebrafish microarray).
 Labeling strategy (BioCycle-consistent, non-rhythmic-from-absence)
 -------------------------------------------------------------------
 Labels are derived from the RhythmicDB / BioCycle analysis for
-E-GEOD-37332_LD (training_data_meta_classifer/
+E-GEOD-37332_LD (training_data_meta_classifier/
 rhythmicdb_query_BioCycle_allModels_noFilters.xlsx):
 
   R (Rhythmic, label=1):
@@ -58,7 +58,7 @@ import joblib
 # ---------------------------------------------------------------------------
 MODEL_DIR     = Path(__file__).parent
 PROJECT_ROOT  = MODEL_DIR.parent.parent
-TRAINING_DIR  = PROJECT_ROOT / 'training_data_meta_classifer'
+TRAINING_DIR  = PROJECT_ROOT / 'training_data_meta_classifier'
 GEO_CACHE_DIR = TRAINING_DIR / 'data' / 'geo'
 REPORT_PATH   = MODEL_DIR / 'validate_external_holdout_gse37332.txt'
 MODEL_PATH    = MODEL_DIR / 'consensus_rf_model.pkl'

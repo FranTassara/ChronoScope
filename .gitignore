@@ -57,6 +57,7 @@ ChronoScope.zip
 # Keep examples
 !examples/*.csv
 
-training_data_meta_classifer/data/
-training_data_meta_classifer/geo/
+training_data_meta_classifier/data/
+training_data_meta_classifier/geo/
+training_data_meta_classifier/*.xlsx
 presentation/

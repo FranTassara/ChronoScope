@@ -30,7 +30,7 @@ import pandas as pd
 import joblib
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-TRAINING_DATA_DIR = PROJECT_ROOT / 'training_data_meta_classifer'
+TRAINING_DATA_DIR = PROJECT_ROOT / 'training_data_meta_classifier'
 MODEL_DIR = PROJECT_ROOT / 'core' / 'models_meta_classifier'
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(TRAINING_DATA_DIR))
