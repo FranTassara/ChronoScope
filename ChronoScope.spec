@@ -14,8 +14,7 @@ Salida:
 Para distribuir: comprimir toda la carpeta dist/ChronoScope/ en un .zip.
 
 Ícono:
-    Agregar un archivo icon.ico en la raíz del proyecto y
-    descomentar la línea icon= en EXE() más abajo.
+    paper/logo/logo.ico (ver EXE() más abajo).
 """
 
 # ---------------------------------------------------------------------------
@@ -146,6 +145,10 @@ a = Analysis(
         'notebook',
         'pytest',
         'tkinter',
+        # Otros bindings de Qt instalados en el entorno: forzar PySide6 únicamente
+        'PyQt5',
+        'PyQt6',
+        'PySide2',
     ],
     noarchive=False,
 )
@@ -171,7 +174,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon='icon.ico',          # descomentar cuando agregues un ícono
+    icon='paper/logo/logo.ico',
 )
 
 # ---------------------------------------------------------------------------
