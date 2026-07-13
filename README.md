@@ -5,38 +5,159 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/github/v/release/FranTassara/ChronoScope?label=release&sort=semver" alt="Latest release"/>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue" alt="Python 3.9+"/>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform"/>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey" alt="Platform"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License"/>
 </p>
 
 <p align="center">
   <a href="#overview">Overview</a> •
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
+  <a href="#key-features">Features</a> •
+  <a href="#download">Download</a> •
+  <a href="#installation-from-source">Installation</a> •
   <a href="#usage">Usage</a> •
-  <a href="#methods">Methods</a> •
+  <a href="#data-preprocessing-optional">Preprocessing</a> •
+  <a href="#analysis-modules">Modules</a> •
   <a href="#citation">Citation</a>
 </p>
+
+<p align="center">
+  <img src="assets/screenshots/screenshot-1-load-data.png" width="32%" alt="Loading data in ChronoScope"/>
+  <img src="assets/screenshots/screenshot-2-run-analysis.png" width="32%" alt="Configuring and running an analysis"/>
+  <img src="assets/screenshots/screenshot-3-results.png" width="32%" alt="Reviewing and exporting results"/>
+</p>
+<p align="center"><sub><em>Load data → configure & run an analysis → export publication-ready results.</em></sub></p>
 
 ---
 
 ## Overview
 
-Identifying rhythmic patterns in biological data requires choosing among a growing number of statistical methods — each with different assumptions, sensitivities, and failure modes. ChronoScope addresses this challenge by providing a unified, cross-platform desktop application that integrates seven established rhythm-detection algorithms alongside a novel machine-learning consensus score (CRS-AI), all accessible through a graphical interface that requires no programming experience.
+Choosing among the growing number of rhythm-detection methods — each with different assumptions and failure modes — is one of the biggest hurdles in circadian data analysis. ChronoScope solves this with a single cross-platform desktop app that bundles **seven established rhythm-detection algorithms** plus a novel ML consensus score (**CRS-AI**) behind a point-and-click interface, so no programming is required.
 
-ChronoScope is designed for circadian biologists working with gene expression, protein abundance, locomotor activity, count data, or any uniformly sampled time series. It handles data from CSV files, Drosophila activity monitors (DAM systems, TriKinetics), and the Rosbash single-cell RNA-seq circadian neuron dataset, and exports publication-ready figures in vector and raster formats.
+It's built for circadian biologists working with gene expression, protein abundance, locomotor activity, count data, or any uniformly sampled time series — with native support for CSV files, Drosophila activity monitors (DAM/TriKinetics), rodent wheel-running data (AWD/ClockLab), and the Rosbash circadian neuron scRNA-seq dataset.
 
-### Key Features
+## Key Features
 
-- **No coding required**: point-and-click interface built with PySide6 (Qt)
-- **Five integrated analysis modules**: CosinorPy, CircaCompare, RhythmCount, Rhythm Analysis Suite, and CRS-AI
-- **Count-data support**: GLM-based cosinor fitting with five count distributions (Poisson, NB, ZIP, ZINB, Generalized Poisson)
-- **Differential rhythmicity**: statistical comparison of cosinor parameters between conditions
-- **CRS-AI**: Random Forest consensus score integrating outputs from multiple methods
-- **DAM Monitor support**: native parsing of TriKinetics locomotor activity files
-- **scRNA-seq support**: integrated loader for the Rosbash *Drosophila* clock neuron dataset
-- **Publication-ready output**: PNG, SVG, PDF figures; CSV and Excel result tables
+- **No coding required** — point-and-click interface built with PySide6 (Qt)
+- **Six integrated analysis modules** — CosinorPy, CircaCompare, RhythmCount, Rhythm Analysis Suite, CRS-AI, and Locomotor Activity Analysis
+- **Count-data support** — GLM-based cosinor fitting with five count distributions (Poisson, NB, ZIP, ZINB, Generalized Poisson)
+- **Differential rhythmicity** — statistical comparison of cosinor parameters between conditions
+- **CRS-AI** — Random Forest consensus score integrating outputs from multiple methods
+- **Locomotor activity support** — native parsing of TriKinetics (DAM) and Actimetrics ClockLab (AWD) files, with dedicated actogram, chi-square periodogram, and activity-rhythm metrics
+- **Optional preprocessing pipeline** — outlier removal, detrending, and smoothing filters, applied before any analysis
+- **scRNA-seq support** — integrated loader for the Rosbash *Drosophila* clock neuron dataset
+- **Publication-ready output** — PNG, SVG, PDF figures; CSV and Excel result tables
+
+---
+
+## Download
+
+The easiest way to get started — no Python, no dependencies.
+
+**[⬇ Download the latest release](https://github.com/FranTassara/ChronoScope/releases/latest)**
+
+| Platform | What to grab | Run |
+|---|---|---|
+| Windows | `ChronoScope-win64.zip` | Unzip anywhere, then run `ChronoScope.exe` |
+| macOS | `ChronoScope-macos.zip` | Unzip, then open `ChronoScope.app` |
+
+> **macOS Gatekeeper note:** the app isn't notarized by Apple yet, so the first launch may be blocked. Right-click the app → **Open**, or run `xattr -cr ChronoScope.app` in Terminal, then open it normally.
+
+Prefer to run from source, or on Linux? See [Installation from source](#installation-from-source) below.
+
+---
+
+## Installation from source
+
+### Requirements
+
+- Python 3.9 or higher
+- See `requirements.txt` for the complete dependency list
+
+### Steps
+
+```bash
+# Clone the repository
+git clone https://github.com/FranTassara/ChronoScope.git
+cd ChronoScope
+
+# Create a virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate       # Linux / macOS
+venv\Scripts\activate          # Windows
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Launch the application
+python main.py
+```
+
+> **Note:** ChronoScope patches deprecated NumPy type aliases at startup to maintain compatibility with CosinorPy on NumPy ≥ 2.0.
+
+---
+
+## Usage
+
+### Quick Start
+
+1. **Load data** — click *Browse…* to select a CSV file, or choose *DAM Monitor* / *Rosbash scRNA-seq* from the dataset selector.
+2. **Map columns** — assign time, condition, and variable columns. The application auto-detects common column names.
+3. **Select a module** — CosinorPy, CircaCompare, Rhythm Analysis, or CRS-AI.
+4. **Run analysis** — set parameters (period, number of harmonics, etc.) and click *Run Analysis*.
+5. **Export results** — summary tables (CSV / Excel) and figures (PNG / SVG / PDF) via the *Export* panel.
+
+<details>
+<summary><strong>CSV format & optional data sources</strong></summary>
+
+#### CSV Format
+
+```
+time,condition,replicate,gene1,gene2,gene3
+0,control,1,10.2,5.3,8.1
+0,control,2,10.5,5.1,8.3
+4,control,1,12.1,6.2,9.2
+4,control,2,11.8,6.4,9.0
+...
+```
+
+**Required columns:**
+- `time` — numeric time in hours
+- `condition` — group or treatment label
+- One or more numeric variable columns
+
+**Optional columns:**
+- `replicate` — replicate identifier
+- `subject` — subject/animal ID (required for population-mean cosinor)
+
+#### Locomotor Activity Files (DAM / AWD)
+
+Load raw TriKinetics `.txt` DAM monitor files (*Drosophila* beam-break activity) or Actimetrics ClockLab `.awd` files (rodent wheel-running activity) directly. ChronoScope parses each format, bins/structures the data for downstream analysis, and unlocks the [Locomotor Activity Analysis module](#6-locomotor-activity-analysis-module) (actogram, chi-square periodogram, IS/IV, α/ρ, onset/offset).
+
+#### Rosbash scRNA-seq Dataset
+
+Preprocessed HDF5 file derived from:
+
+> Ma D, Przybylski D, Bhinder T, et al. A transcriptomic taxonomy of *Drosophila* circadian neurons around the clock. *eLife* 2021;10:e63056.
+
+Use the included `Rosbash_data/process_rosbash_dataset.py` script to generate the HDF5 file from the raw GEO data.
+
+</details>
+
+---
+
+## Data Preprocessing (optional)
+
+Before running any analysis module, each variable can be passed through an optional filter pipeline (`core/preprocessing.py`). Every stage is disabled by default and configured independently; when enabled, they always run in this order:
+
+| Stage | Methods | Purpose |
+|---|---|---|
+| 1. Outlier removal | IQR · Z-score | Flags anomalous points and replaces them with NaN before fitting |
+| 2. Detrending | Linear · Moving average · Polynomial | Removes slow, non-rhythmic trends while preserving the circadian oscillation |
+| 3. Smoothing | Moving average · Savitzky–Golay · Butterworth (low-pass) | Reduces high-frequency noise |
+
+This is useful for noisy locomotor activity traces or gene expression series with batch drift, before feeding the data into CosinorPy, RhythmCount, or the Rhythm Analysis Suite.
 
 ---
 
@@ -65,10 +186,6 @@ Outputs confidence intervals for MESOR, amplitude, and acrophase differences.
 ### 3. RhythmCount Module
 
 Wraps the RhythmCount library (Velikajne et al. 2022) to fit cosinor models within a generalized linear model (GLM) framework for **count-valued time series** — RNA-seq read counts, neuronal spike counts, locomotor activity event tallies, or any non-negative discrete data where the Gaussian residual assumption of standard cosinor is violated.
-
-The expected count at each time point is modeled as:
-
-$$\log(\mu_i) = \beta_0 + \sum_{k=1}^{N} \left[ \beta_{2k-1} \sin\!\left(\frac{2\pi k t_i}{\tau}\right) + \beta_{2k} \cos\!\left(\frac{2\pi k t_i}{\tau}\right) \right]$$
 
 Five count distributions are supported:
 
@@ -112,83 +229,22 @@ A Random Forest classifier trained on synthetic and real circadian time series t
 
 The model was trained on synthetic oscillations spanning a range of amplitudes, noise levels, and sampling densities, and validated on two public datasets: GSE11923 (mouse liver, hourly × 48 h) and the Rosbash *Drosophila* circadian neuron scRNA-seq dataset.
 
----
+### 6. Locomotor Activity Analysis Module
 
-## Installation
+Automatically enabled when the loaded dataset is a DAM (TriKinetics, *Drosophila*) or AWD (Actimetrics ClockLab, rodent) recording. Runs a full activity-rhythm characterization ("Activity Profile") in one pass:
 
-### Requirements
-
-- Python 3.9 or higher
-- See `requirements.txt` for the complete dependency list
-
-### From Source
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/ChronoScope.git
-cd ChronoScope
-
-# Create a virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate       # Linux / macOS
-venv\Scripts\activate          # Windows
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Launch the application
-python main.py
-```
-
-> **Note:** ChronoScope patches deprecated NumPy type aliases at startup to maintain compatibility with CosinorPy on NumPy ≥ 2.0.
+| Output | Description |
+|---|---|
+| Double-plotted actogram | Population mean or individual (median-τ) actogram |
+| Chi-square periodogram | Per-individual period (τ) estimation with a rhythmicity significance filter |
+| Interdaily stability (IS) / Intradaily variability (IV) | Regularity of the rhythm across days vs. fragmentation within a day |
+| α / ρ | Active-phase vs. rest-phase activity ratio |
+| Onset / offset | Activity onset and offset timing per cycle |
 
 ---
 
-## Usage
-
-### Quick Start
-
-1. **Load data** — click *Browse…* to select a CSV file, or choose *DAM Monitor* / *Rosbash scRNA-seq* from the dataset selector.
-2. **Map columns** — assign time, condition, and variable columns. The application auto-detects common column names.
-3. **Select a module** — CosinorPy, CircaCompare, Rhythm Analysis, or CRS-AI.
-4. **Run analysis** — set parameters (period, number of harmonics, etc.) and click *Run Analysis*.
-5. **Export results** — summary tables (CSV / Excel) and figures (PNG / SVG / PDF) via the *Export* panel.
-
-### CSV Format
-
-```
-time,condition,replicate,gene1,gene2,gene3
-0,control,1,10.2,5.3,8.1
-0,control,2,10.5,5.1,8.3
-4,control,1,12.1,6.2,9.2
-4,control,2,11.8,6.4,9.0
-...
-```
-
-**Required columns:**
-- `time` — numeric time in hours
-- `condition` — group or treatment label
-- One or more numeric variable columns
-
-**Optional columns:**
-- `replicate` — replicate identifier
-- `subject` — subject/animal ID (required for population-mean cosinor)
-
-### DAM Monitor Files
-
-Load raw TriKinetics `.txt` monitor files directly. ChronoScope extracts activity counts per beam break, bins data to the requested resolution, and structures it for downstream analysis.
-
-### Rosbash scRNA-seq Dataset
-
-Preprocessed HDF5 file derived from:
-
-> Ma D, Przybylski D, Bhinder T, et al. A transcriptomic taxonomy of *Drosophila* circadian neurons around the clock. *eLife* 2021;10:e63056.
-
-Use the included `Rosbash_data/process_rosbash_dataset.py` script to generate the HDF5 file from the raw GEO data.
-
----
-
-## Methods
+<details>
+<summary><h2 style="display:inline">Methods reference (formulas & algorithm details)</h2></summary>
 
 ### Cosinor Model
 
@@ -203,6 +259,10 @@ $$Y(t) = M + A \cos\!\left(\frac{2\pi t}{\tau} - \varphi\right) + \varepsilon$$
 | ε | Residual | Assumed i.i.d. Gaussian |
 
 Statistical significance is assessed via the zero-amplitude test (F-test on A = 0).
+
+### RhythmCount GLM
+
+$$\log(\mu_i) = \beta_0 + \sum_{k=1}^{N} \left[ \beta_{2k-1} \sin\!\left(\frac{2\pi k t_i}{\tau}\right) + \beta_{2k} \cos\!\left(\frac{2\pi k t_i}{\tau}\right) \right]$$
 
 ### JTK Cycle
 
@@ -219,9 +279,7 @@ Evaluates spectral power at each candidate frequency using a least-squares proje
 
 For each time series, ChronoScope extracts 18 features from JTK Cycle, cosinor, and Lomb–Scargle (p-values, effect sizes, estimated periods, R², method agreement index, and relative amplitude). A pre-trained Random Forest classifier (100 trees, trained on ≥ 10 000 synthetic instances) maps this feature vector to a rhythmicity probability score.
 
----
-
-## Output Parameters
+### Output Parameters
 
 | Parameter | Description | Units |
 |-----------|-------------|-------|
@@ -232,6 +290,8 @@ For each time series, ChronoScope extracts 18 features from JTK Cycle, cosinor, 
 | p-value | Test of zero amplitude (or equivalent) | — |
 | R² | Goodness of fit | 0–1 |
 | CRS score | Consensus rhythmicity probability | 0–1 |
+
+</details>
 
 ---
 
@@ -249,7 +309,8 @@ If you use ChronoScope in your research, please cite:
 }
 ```
 
-Please also cite the underlying methods used in your analysis:
+<details>
+<summary>Please also cite the underlying methods used in your analysis</summary>
 
 **CosinorPy:**
 > Moškon M. (2020). CosinorPy: a Python package for cosinor-based rhythmometry.
@@ -269,13 +330,13 @@ Please also cite the underlying methods used in your analysis:
 > detecting rhythmic components in genome-scale datasets.
 > *Journal of Biological Rhythms*, 25(5), 372–380.
 
+</details>
+
 ---
 
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
-
----
 
 ## Dependencies
 
