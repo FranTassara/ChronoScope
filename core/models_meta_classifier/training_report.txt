@@ -336,6 +336,31 @@ plus derived consensus metrics:
     uncertain. The ChronoScope GUI presents these cases
     as 'Borderline — manual review recommended'.
 
+  6.6 Borderline zone error analysis (main holdout, threshold 0.50)
+
+    Where do classification errors at the default 0.50 decision
+    threshold fall relative to the GUI's three-zone split
+    (Rhythmic >= 0.70, Borderline 0.30-0.70, Arrhythmic < 0.30)?
+
+    Errors (FP+FN):          n=131
+      in borderline [0.30,0.70]:      n=62 (47.3%)
+      outside borderline:             n=69 (52.7%)
+
+    Correct (TP+TN):         n=986
+      in borderline [0.30,0.70]:      n=86 (8.72%)
+      outside borderline:             n=900 (91.28%)
+
+    Borderline zone size (whole holdout, n=1117):
+      in borderline [0.30,0.70]:      n=148 (13.2%)
+      outside borderline:             n=969 (86.8%)
+
+    The borderline zone occupies a small fraction of the
+    holdout but concentrates a disproportionate share of the
+    errors, while correct predictions are rarely borderline —
+    supporting the GUI's 'Borderline — manual review
+    recommended' zone as a meaningful uncertainty signal
+    rather than an arbitrary probability cut.
+
 7. FEATURE IMPORTANCES
 --------------------------------------------------------------------------------
 

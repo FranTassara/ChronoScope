@@ -958,6 +958,40 @@ def main():
         else:
             f.write("    (Not available — BioCycle ambiguous data not loaded.)\n\n")
 
+        f.write("  6.6 Borderline zone error analysis (main holdout, threshold 0.50)\n\n")
+        f.write("    Where do classification errors at the default 0.50 decision\n")
+        f.write("    threshold fall relative to the GUI's three-zone split\n")
+        f.write("    (Rhythmic >= 0.70, Borderline 0.30-0.70, Arrhythmic < 0.30)?\n\n")
+        is_error = (y_pred != y_test)
+        in_borderline = (y_proba >= 0.30) & (y_proba <= 0.70)
+        n_err = int(is_error.sum())
+        n_err_border = int((is_error & in_borderline).sum())
+        n_corr = int((~is_error).sum())
+        n_corr_border = int((~is_error & in_borderline).sum())
+        n_border_total = int(in_borderline.sum())
+        n_total = len(y_test)
+        f.write(f"    Errors (FP+FN):          n={n_err}\n")
+        f.write(f"      in borderline [0.30,0.70]:      "
+                f"n={n_err_border} ({100 * n_err_border / n_err:.1f}%)\n")
+        f.write(f"      outside borderline:             "
+                f"n={n_err - n_err_border} ({100 * (n_err - n_err_border) / n_err:.1f}%)\n\n")
+        f.write(f"    Correct (TP+TN):         n={n_corr}\n")
+        f.write(f"      in borderline [0.30,0.70]:      "
+                f"n={n_corr_border} ({100 * n_corr_border / n_corr:.2f}%)\n")
+        f.write(f"      outside borderline:             "
+                f"n={n_corr - n_corr_border} ({100 * (n_corr - n_corr_border) / n_corr:.2f}%)\n\n")
+        f.write(f"    Borderline zone size (whole holdout, n={n_total}):\n")
+        f.write(f"      in borderline [0.30,0.70]:      "
+                f"n={n_border_total} ({100 * n_border_total / n_total:.1f}%)\n")
+        f.write(f"      outside borderline:             "
+                f"n={n_total - n_border_total} ({100 * (n_total - n_border_total) / n_total:.1f}%)\n\n")
+        f.write("    The borderline zone occupies a small fraction of the\n")
+        f.write("    holdout but concentrates a disproportionate share of the\n")
+        f.write("    errors, while correct predictions are rarely borderline —\n")
+        f.write("    supporting the GUI's 'Borderline — manual review\n")
+        f.write("    recommended' zone as a meaningful uncertainty signal\n")
+        f.write("    rather than an arbitrary probability cut.\n\n")
+
         # --- 7. Feature importances ---
         f.write("7. FEATURE IMPORTANCES\n")
         f.write("-" * W + "\n\n")
