@@ -3587,7 +3587,7 @@ class AnalysisPanel(QWidget):
             methods = [
                 ("Consensus Rhythmicity Score",
                  "AI-powered meta-classifier that combines evidence from JTK_CYCLE, Cosinor, "
-                 "Lomb-Scargle, Fourier F24, and Harmonic Cosinor into a single rhythmicity "
+                 "Lomb-Scargle, and Fourier F24 into a single rhythmicity "
                  "probability score (0-1). Uses a pre-trained, calibrated Random Forest "
                  "(11-feature schema) trained on 3,395 instances (1,696 synthetic + 1,699 "
                  "real biological) with known ground truth.")

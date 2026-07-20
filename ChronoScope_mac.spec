@@ -40,6 +40,7 @@ hidden_imports = [
     'sklearn.pipeline',
     'sklearn.model_selection',
     'sklearn.metrics',
+    'sklearn.calibration',
     'sklearn.utils._cython_blas',
     'sklearn.neighbors._partition_nodes',
     'sklearn.tree._utils',

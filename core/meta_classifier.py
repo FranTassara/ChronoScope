@@ -5,8 +5,8 @@ Consensus Rhythmicity Score (AI) Meta-Classifier
 Uses a pre-trained Random Forest to combine evidence from multiple
 circadian analysis methods into a single rhythmicity probability (0-1).
 
-The classifier runs JTK, Cosinor OLS, Lomb-Scargle, F24, Harmonic Cosinor,
-and CWT internally, extracts ~20 features from their results, and feeds
+The classifier runs JTK, Cosinor OLS, Lomb-Scargle, and F24 internally,
+extracts an 11-feature vector from their results, and feeds
 them to the model for prediction.
 
 Author: Francisco Tassara
