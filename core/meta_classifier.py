@@ -75,6 +75,20 @@ class ConsensusClassifier:
         try:
             self._model = joblib.load(str(model_path))
 
+            # The pickled RandomForest was trained with n_jobs=-1 (see
+            # train_consensus_model.py), which is baked into the estimator.
+            # At inference we only ever score one sample at a time, so
+            # parallel tree evaluation is pure overhead — and in a frozen
+            # (PyInstaller) app it can trip multiprocessing's 'spawn' start
+            # method, which re-launches a second copy of the whole GUI.
+            # Force sequential prediction on every fitted fold.
+            for calibrated_classifier in getattr(self._model, 'calibrated_classifiers_', []):
+                estimator = getattr(calibrated_classifier, 'estimator', None)
+                if estimator is not None and hasattr(estimator, 'n_jobs'):
+                    estimator.n_jobs = 1
+            if hasattr(self._model, 'n_jobs'):
+                self._model.n_jobs = 1
+
             if features_path.exists():
                 with open(features_path, 'r') as f:
                     self._feature_names = json.load(f)
