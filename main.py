@@ -67,15 +67,21 @@ def main():
     from PySide6.QtGui import QFont
 
     from ui.main_window import MainWindow
-    
+
     # Create application
     app = QApplication(sys.argv)
-    
+
     # Application metadata
     app.setApplicationName("ChronoScope")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("LabCeriani")
-    
+
+    # The stylesheet below hardcodes light backgrounds but not text colors,
+    # so it relies on a light QPalette. Force light mode regardless of the
+    # OS appearance setting, otherwise macOS/Windows dark mode gives white
+    # text on the hardcoded white backgrounds.
+    app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+
     # Set application style
     # Try Windows style first for better dropdown rendering, fallback to Fusion
     available_styles = [s.lower() for s in QStyleFactory.keys()]

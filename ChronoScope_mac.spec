@@ -206,5 +206,9 @@ app = BUNDLE(
     info_plist={
         'NSHighResolutionCapable': True,
         'NSPrincipalClass': 'NSApplication',
+        # UI stylesheet assumes a light palette; force Light Appearance so
+        # macOS Dark Mode doesn't flip text to white on the hardcoded white
+        # widget backgrounds.
+        'NSRequiresAquaSystemAppearance': True,
     },
 )
