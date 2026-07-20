@@ -82,12 +82,21 @@ class ConsensusClassifier:
             # (PyInstaller) app it can trip multiprocessing's 'spawn' start
             # method, which re-launches a second copy of the whole GUI.
             # Force sequential prediction on every fitted fold.
-            for calibrated_classifier in getattr(self._model, 'calibrated_classifiers_', []):
+            #
+            # self._model is a Pipeline; calibrated_classifiers_ lives on
+            # the wrapped CalibratedClassifierCV step, not on the Pipeline
+            # itself, so it must be unwrapped first (same as
+            # _get_feature_importances below) or this patch silently no-ops.
+            classifier_step = self._model
+            if hasattr(classifier_step, 'named_steps'):
+                classifier_step = classifier_step.named_steps.get('classifier', classifier_step)
+
+            for calibrated_classifier in getattr(classifier_step, 'calibrated_classifiers_', []):
                 estimator = getattr(calibrated_classifier, 'estimator', None)
                 if estimator is not None and hasattr(estimator, 'n_jobs'):
                     estimator.n_jobs = 1
-            if hasattr(self._model, 'n_jobs'):
-                self._model.n_jobs = 1
+            if hasattr(classifier_step, 'n_jobs'):
+                classifier_step.n_jobs = 1
 
             if features_path.exists():
                 with open(features_path, 'r') as f:
