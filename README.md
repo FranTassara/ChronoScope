@@ -59,7 +59,7 @@ The easiest way to get started — no Python, no dependencies.
 
 | Platform | What to grab | Run |
 |---|---|---|
-| Windows | `ChronoScope-win64.zip` | Unzip anywhere, then run `ChronoScope.exe` |
+| Windows | `ChronoScope-windows.zip` | Unzip anywhere, then run `ChronoScope.exe` |
 | macOS | `ChronoScope-macos.zip` | Unzip, then open `ChronoScope.app` |
 
 > **macOS Gatekeeper note:** the app isn't notarized by Apple yet, so the first launch may be blocked. Right-click the app → **Open**, or run `xattr -cr ChronoScope.app` in Terminal, then open it normally.
