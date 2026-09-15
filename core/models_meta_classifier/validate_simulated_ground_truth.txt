@@ -1,0 +1,141 @@
+================================================================================
+ChronoScope CRS-AI -- SIMULATED GROUND-TRUTH VALIDATION REPORT
+================================================================================
+
+  Run date:        2026-09-15 14:53
+  Model dir:       W:\Fran\A - Programas\ChronoScope\core\models_meta_classifier
+  Instances:       420  (7 SNR levels x 60)
+  Random seed:     42
+
+1. MOTIVATION AND DESIGN
+--------------------------------------------------------------------------------
+
+  JBR review comment: CRS-AI's reported performance versus BioCycle/
+  RhythmicDB reduces to how well CRS-AI recreates BioCycle's own
+  classification, which the reviewer does not consider a true ground
+  truth. This validation instead uses simulated waveforms whose
+  rhythmicity is fixed at generation time (label = 1 iff a real 24h
+  cosine component with amplitude = SNR x noise_std was injected;
+  label = 0 iff amplitude = 0, i.e. SNR = 0). No inference procedure
+  of any kind -- BioCycle, CRS-AI, or otherwise -- determines the
+  label. This complements, and does not replace, the BioCycle-
+  consistent validations already in training_report.txt and
+  validate_external_holdout_gse37332.py.
+
+  SNR levels (0 = arrhythmic ground truth): [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0]
+  Fixed observation-noise std: 1.5  (true amplitude = SNR x 1.5)
+  True period jitter (rhythmic instances): 23-25 h
+  Sampling: duration in [48.0, 72.0, 96.0] h, interval in [1.0, 2.0, 3.0, 4.0] h (irregular per instance)
+  Distortions (independently randomised per instance):
+    Non-stationary linear trend: P=0.5, slope in (-0.08, 0.08) units/h
+    Spike outliers (1-2 spikes, 6.0x local std): P=0.3
+    Sampling gaps: P=0.4, drop fraction in (0.1, 0.35)
+  Prediction path: core.meta_classifier.ConsensusClassifier.predict()
+  (the same production entry point used by the app's AI Consensus
+  panel) -- feature extraction and the trained Random Forest are
+  reused unmodified; nothing about the model was reimplemented.
+
+2. OVERALL METRICS (pooled across all SNR levels)
+--------------------------------------------------------------------------------
+
+  95% CIs from percentile bootstrap (1000 valid resamples of 1000):
+
+  ROC-AUC:         0.9148  [95% CI 0.8873, 0.9423]
+  Avg. Precision:  0.9852  [95% CI 0.9784, 0.9909]
+  Accuracy:        0.7881  [95% CI 0.7500, 0.8238]
+  Brier score:     0.1510  [95% CI 0.1286, 0.1753]
+
+  Threshold-dependent (0.50):
+    Sensitivity (TPR): 0.7583
+    Specificity (TNR): 0.9667
+    PPV: 0.9927   NPV: 0.4000   F1: 0.8598
+
+  Note: this pooled sample has one ground-truth-arrhythmic SNR bin
+  (SNR=0) against 6 ground-truth-rhythmic SNR bins, by
+  design of the SNR sweep -- a 60:360 class ratio, not a
+  balanced test set. ROC-AUC and the calibration curve are threshold-
+  and prior-independent and unaffected; Accuracy/PPV/NPV above should
+  be read together with the class-balanced per-SNR-level breakdown in
+  Section 3 (each level compared 1:1 against the same arrhythmic pool),
+  not treated as a standalone balanced-test estimate.
+
+  Confusion matrix (threshold 0.5):
+
+                          Predicted
+                     Arrhythmic  Rhythmic
+    Actual arrhythmic       58         2
+    Actual rhythmic         87       273
+
+    TP=273  FP=2  TN=58  FN=87
+
+3. BREAKDOWN BY TRUE SNR LEVEL
+--------------------------------------------------------------------------------
+
+  AUROC per level is computed against the shared pool of ground-truth
+  arrhythmic instances (SNR=0, n=60, pooled specificity=0.9667).
+
+     SNR     n   Mean P(rhy)      SD   %Rhythmic   %Border.   %Arrhy.   AUC vs N   Sens@0.5
+  ------------------------------------------------------------------------------------------
+    0.00    60        0.1657  0.1540        0.0%      10.0%     90.0%         --         --
+    0.50    60        0.3003  0.2557       11.7%      16.7%     71.7%     0.6619     0.2167
+    1.00    60        0.5993  0.2917       46.7%      25.0%     28.3%     0.8992     0.6333
+    1.50    60        0.8006  0.2360       71.7%      21.7%      6.7%     0.9768     0.8667
+    2.00    60        0.8488  0.2323       83.3%       8.3%      8.3%     0.9654     0.8833
+    3.00    60        0.9291  0.1522       95.0%       1.7%      3.3%     0.9871     0.9667
+    5.00    60        0.9441  0.0836       98.3%       1.7%      0.0%     0.9986     0.9833
+
+  Interpretation: mean predicted P(rhythmic) should increase
+  monotonically with true SNR, and AUC vs. the arrhythmic pool should
+  approach 1.0 as SNR grows -- this is the dose-response signature of a
+  classifier tracking real signal strength rather than a BioCycle
+  labeling artifact (which no simulated instance was exposed to).
+
+4. ROBUSTNESS TO DISTORTION TYPE (pooled across SNR levels)
+--------------------------------------------------------------------------------
+
+  Distortion              Condition      n    AUROC   Accuracy    Brier
+  ----------------------------------------------------------------------
+  Non-stationary trend         with    206   0.9065     0.7767   0.1650
+  Non-stationary trend      without    214   0.9230     0.7991   0.1376
+  Spike outliers               with    124   0.8118     0.6210   0.2476
+  Spike outliers            without    296   0.9452     0.8581   0.1106
+  Sampling gaps                with    161   0.8895     0.7516   0.1777
+  Sampling gaps             without    259   0.9293     0.8108   0.1345
+
+5. CALIBRATION CURVE (10 quantile bins, pooled)
+--------------------------------------------------------------------------------
+
+    Mean predicted P    Observed fraction rhythmic
+              0.0443                        0.3810
+              0.1808                        0.6136
+              0.2606                        0.7250
+              0.5025                        0.8837
+              0.7862                        0.9756
+              0.8967                        1.0000
+              0.9525                        1.0000
+              0.9792                        1.0000
+              0.9823                        1.0000
+              0.9853                        1.0000
+
+  Figure (ROC / dose-response / reliability diagram): validate_simulated_ground_truth.png
+
+6. SUGGESTED REPORTING (JBR response letter)
+--------------------------------------------------------------------------------
+
+    "To address the concern that CRS-AI's evaluation against BioCycle/
+    RhythmicDB may be circular, we additionally validated CRS-AI on
+    420 simulated ~24h waveforms spanning 7 signal-to-noise
+    ratios (SNR=0, i.e. no true periodic component, through SNR=5),
+    each independently corrupted with Gaussian noise, spike outliers,
+    non-stationary linear trends, and sampling gaps. Ground truth was
+    fixed at generation time and never inferred by any method. CRS-AI
+    achieved AUROC=0.915 (95% CI 0.887-0.942)
+    discriminating rhythmic from arrhythmic simulated series overall,
+    with predicted probability increasing monotonically with true SNR
+    and per-SNR-level AUROC approaching 1.0 at high signal strength
+    (see Table/Figure), confirming that CRS-AI tracks genuine signal
+    strength rather than recapitulating BioCycle-specific artifacts."
+
+================================================================================
+END OF REPORT
+================================================================================
