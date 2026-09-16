@@ -1,0 +1,191 @@
+================================================================================
+ChronoScope CRS-AI -- NESTED CROSS-VALIDATION CHECK
+Feature-selection / holdout leakage (JBR Reviewer 2, Major Point 3)
+================================================================================
+
+  Run date: 2026-09-16 09:42
+  This is a supplementary robustness analysis. It does NOT retrain or
+  replace the production model -- consensus_rf_model.pkl and
+  feature_names.json are unmodified (still v6, 11 features).
+
+1. MOTIVATION
+--------------------------------------------------------------------------------
+
+  CRS-AI's 11 input features were originally selected by
+  permutation importance computed on the same GroupShuffleSplit
+  holdout later used to report the model's test performance
+  (0.9474 ROC-AUC). The holdout is therefore not fully
+  independent of the feature-selection decision -- a form of
+  data leakage flagged by JBR Reviewer 2 (Major Point 3).
+
+  This script re-runs feature selection under proper nested
+  cross-validation: in each of 5 outer folds, permutation
+  importance is computed on an inner validation split carved
+  out of that fold's training data only, and the outer-test
+  split never participates in the selection decision.
+
+2. DESIGN
+--------------------------------------------------------------------------------
+
+  Candidate feature pool (18 features): the 11 production
+  features plus the 7 candidates dropped in the v1->v2 cut
+  (still computed by extract_features(), just not fed to
+  the model): jtk_tau, jtk_period, harmonic_p_value, harmonic_r_squared, method_agreement, period_concordance, log_min_p_value.
+
+  Outer loop:   5-fold StratifiedGroupKFold, grouped by gene
+                (random_state=42), same grouping convention as
+                train_consensus_model.py.
+  Inner step:   80/20 GroupShuffleSplit (random_state=42) within
+                each outer-train split. Permutation importance
+                (n_repeats=10, scoring=ROC-AUC) computed on the
+                inner validation split only.
+  Selection rule (Supplementary Table S1 criterion): retain a
+                candidate feature iff its mean permutation drop in
+                ROC-AUC exceeds 1 SD of its own shuffle noise.
+  Final fit:    Pipeline identical to train_consensus_model.py
+                (SimpleImputer(constant=-999) -> CalibratedClassifierCV
+                (RandomForest, isotonic, 5-fold internal StratifiedGroupKFold
+                calibration)), trained on the FULL outer-train split using
+                only the features selected by the inner step, then
+                evaluated on the outer-test split.
+  Aggregate:    Out-of-fold predictions from all 5 outer folds are
+                pooled (each instance gets exactly one out-of-fold
+                prediction) into a single ROC-AUC / F1 / Brier / Accuracy
+                estimate with 1000-resample percentile bootstrap CI,
+                directly comparable to the single-partition holdout
+                reported in training_report.txt.
+  External check: each outer fold's fitted model is also evaluated
+                on GSE37332 (zebrafish), which never participated in
+                training or feature engineering at any step.
+
+  Training corpus: 5649 instances, 4691 gene/synthetic groups
+  (identical generators and seeds as train_consensus_model.py).
+
+3. PER-FOLD RESULTS
+--------------------------------------------------------------------------------
+
+  Fold 1/5
+    Outer-train: 4520   Outer-test: 1129
+    Inner-train: 3601   Inner-val: 919
+    Selected features (17): amplitude_relative, cosinor_amplitude, cosinor_p_value, cosinor_period, cosinor_r_squared, f24_score, harmonic_p_value, harmonic_r_squared, jtk_p_value, jtk_period, jtk_tau, log_min_p_value, ls_dominant_period, ls_p_value, ls_power, period_concordance, period_dev_24h
+    Outer-test  Accuracy: 0.8707  [0.8503, 0.8902]
+                F1:       0.8774  [0.8581, 0.8971]
+                ROC-AUC:  0.9455  [0.9333, 0.9571]
+                Brier:    0.0917  [0.0812, 0.1028]
+    GSE37332 (zebrafish) AUROC with this fold's model: 0.9285
+
+  Fold 2/5
+    Outer-train: 4519   Outer-test: 1130
+    Inner-train: 3615   Inner-val: 904
+    Selected features (17): amplitude_relative, cosinor_amplitude, cosinor_p_value, cosinor_period, cosinor_r_squared, f24_score, harmonic_p_value, harmonic_r_squared, jtk_p_value, jtk_period, jtk_tau, log_min_p_value, ls_dominant_period, ls_p_value, ls_power, period_concordance, period_dev_24h
+    Outer-test  Accuracy: 0.8640  [0.8425, 0.8850]
+                F1:       0.8747  [0.8537, 0.8954]
+                ROC-AUC:  0.9342  [0.9188, 0.9483]
+                Brier:    0.0960  [0.0843, 0.1087]
+    GSE37332 (zebrafish) AUROC with this fold's model: 0.9314
+
+  Fold 3/5
+    Outer-train: 4519   Outer-test: 1130
+    Inner-train: 3601   Inner-val: 918
+    Selected features (15): amplitude_relative, cosinor_amplitude, cosinor_period, cosinor_r_squared, f24_score, harmonic_p_value, harmonic_r_squared, jtk_p_value, jtk_period, log_min_p_value, ls_dominant_period, ls_p_value, ls_power, period_concordance, period_dev_24h
+    Outer-test  Accuracy: 0.8653  [0.8442, 0.8850]
+                F1:       0.8736  [0.8519, 0.8930]
+                ROC-AUC:  0.9308  [0.9163, 0.9442]
+                Brier:    0.1030  [0.0915, 0.1156]
+    GSE37332 (zebrafish) AUROC with this fold's model: 0.9306
+
+  Fold 4/5
+    Outer-train: 4518   Outer-test: 1131
+    Inner-train: 3617   Inner-val: 901
+    Selected features (16): amplitude_relative, cosinor_amplitude, cosinor_p_value, cosinor_period, cosinor_r_squared, f24_score, harmonic_p_value, harmonic_r_squared, jtk_p_value, jtk_tau, log_min_p_value, ls_dominant_period, ls_p_value, ls_power, method_agreement, period_dev_24h
+    Outer-test  Accuracy: 0.8661  [0.8470, 0.8851]
+                F1:       0.8748  [0.8557, 0.8934]
+                ROC-AUC:  0.9364  [0.9229, 0.9491]
+                Brier:    0.0977  [0.0864, 0.1094]
+    GSE37332 (zebrafish) AUROC with this fold's model: 0.9287
+
+  Fold 5/5
+    Outer-train: 4520   Outer-test: 1129
+    Inner-train: 3605   Inner-val: 915
+    Selected features (17): amplitude_relative, cosinor_amplitude, cosinor_p_value, cosinor_period, cosinor_r_squared, f24_score, harmonic_p_value, harmonic_r_squared, jtk_p_value, jtk_period, jtk_tau, log_min_p_value, ls_dominant_period, ls_p_value, ls_power, period_concordance, period_dev_24h
+    Outer-test  Accuracy: 0.8685  [0.8494, 0.8866]
+                F1:       0.8802  [0.8609, 0.8987]
+                ROC-AUC:  0.9370  [0.9228, 0.9501]
+                Brier:    0.0973  [0.0864, 0.1093]
+    GSE37332 (zebrafish) AUROC with this fold's model: 0.9287
+
+4. POOLED NESTED-CV ESTIMATE vs. REPORTED SINGLE PARTITION
+--------------------------------------------------------------------------------
+
+  Pooled out-of-fold predictions (every training instance
+  contributes exactly one out-of-fold prediction, from the
+  fold where it was in the outer-test split):
+
+  Metric       Nested CV (pooled)           Reported (training_report.txt)  
+  -----------  --------------------------  ------------------------------
+  Accuracy     0.8668 [0.8582, 0.8756]      0.8827 [0.8639, 0.9006]         
+  F1           0.8760 [0.8671, 0.8845]      0.8988 [0.8814, 0.9155]         
+  ROC-AUC      0.9361 [0.9298, 0.9422]      0.9474 [0.9348, 0.9604]         
+  Brier        0.0972 [0.0918, 0.1024]      0.0864 [0.0754, 0.0972]         
+
+  Delta (nested - reported): -0.0113 ROC-AUC points.
+  95% CIs overlap between the nested-CV pooled
+  estimate and the reported single-partition holdout.
+
+5. FEATURE-SELECTION STABILITY ACROSS OUTER FOLDS
+--------------------------------------------------------------------------------
+
+  Feature                  Folds selected  Production feature?
+  -----------------------  --------------  -------------------
+  jtk_p_value                       5/5     Yes
+  cosinor_p_value                   4/5     Yes
+  cosinor_r_squared                 5/5     Yes
+  cosinor_amplitude                 5/5     Yes
+  cosinor_period                    5/5     Yes
+  ls_p_value                        5/5     Yes
+  ls_power                          5/5     Yes
+  ls_dominant_period                5/5     Yes
+  f24_score                         5/5     Yes
+  amplitude_relative                5/5     Yes
+  period_dev_24h                    5/5     Yes
+  jtk_tau                           4/5     No
+  jtk_period                        4/5     No
+  harmonic_p_value                  5/5     No
+  harmonic_r_squared                5/5     No
+  method_agreement                  1/5     No
+  period_concordance                4/5     No
+  log_min_p_value                   5/5     No
+
+  Selected in all 5 folds (13): amplitude_relative, cosinor_amplitude, cosinor_period, cosinor_r_squared, f24_score, harmonic_p_value, harmonic_r_squared, jtk_p_value, log_min_p_value, ls_dominant_period, ls_p_value, ls_power, period_dev_24h
+  Never selected (0): (none)
+
+  Overlap between the 5/5-fold stable set and the current 11
+  production features: 10/11 production features are in the always-selected set;
+  3 always-selected feature(s) are not currently in production.
+
+6. EXTERNAL CHECK: GSE37332 (ZEBRAFISH)
+--------------------------------------------------------------------------------
+
+  AUROC across the 5 fold-specific models (never seen at any
+  training or feature-engineering step): 0.9296 +/- 0.0012
+  Per-fold: 0.9285, 0.9314, 0.9306, 0.9287, 0.9287
+
+  For reference, the single production model (v6, 11 fixed features)
+  reported AUROC=0.9305 [0.9069, 0.9528] on this same dataset
+  (validate_external_holdout_gse37332.txt).
+
+7. INTERPRETATION
+--------------------------------------------------------------------------------
+
+  The pooled nested-CV ROC-AUC is lower than the single-partition
+  estimate reported in the paper, consistent with the reviewer's
+  concern that the original holdout number was somewhat optimistic
+  due to shared feature-selection/evaluation data.
+
+  Feature-selection stability across outer folds indicates whether the
+  11 production features represent a robust choice or an artifact of
+  the single original train/test partition (Section 5 above).
+
+================================================================================
+END OF REPORT
+================================================================================
