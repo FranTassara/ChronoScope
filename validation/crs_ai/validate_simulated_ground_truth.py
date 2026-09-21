@@ -34,7 +34,7 @@ separate task).
 Usage
 -----
 Run from the project root after training:
-    python core/models_meta_classifier/validate_simulated_ground_truth.py [--n-per-level N]
+    python validation/crs_ai/validate_simulated_ground_truth.py [--n-per-level N]
 """
 
 import sys
@@ -58,11 +58,12 @@ from sklearn.calibration import calibration_curve
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-MODEL_DIR    = Path(__file__).parent
-PROJECT_ROOT = MODEL_DIR.parent.parent
-REPORT_PATH  = MODEL_DIR / 'validate_simulated_ground_truth.txt'
-FIGURE_PATH  = MODEL_DIR / 'validate_simulated_ground_truth.png'
-CSV_PATH     = MODEL_DIR / 'validate_simulated_ground_truth_predictions.csv'
+SCRIPT_DIR   = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+MODEL_DIR    = PROJECT_ROOT / 'core' / 'models'
+REPORT_PATH  = SCRIPT_DIR / 'validate_simulated_ground_truth.txt'
+FIGURE_PATH  = SCRIPT_DIR / 'validate_simulated_ground_truth.png'
+CSV_PATH     = SCRIPT_DIR / 'validate_simulated_ground_truth_predictions.csv'
 
 sys.path.insert(0, str(PROJECT_ROOT))
 warnings.filterwarnings('ignore')

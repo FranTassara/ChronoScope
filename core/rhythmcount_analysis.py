@@ -50,9 +50,9 @@ import numpy as np
 
 # Check RhythmCount availability
 try:
-    from .RhythmCount_docs import data_processing as dproc
-    from .RhythmCount_docs import helpers as hlp
-    from .RhythmCount_docs import plot as rplot
+    from .vendor.rhythmcount import data_processing as dproc
+    from .vendor.rhythmcount import helpers as hlp
+    from .vendor.rhythmcount import plot as rplot
     RHYTHMCOUNT_AVAILABLE = True
 except ImportError:
     RHYTHMCOUNT_AVAILABLE = False

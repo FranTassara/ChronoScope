@@ -63,3 +63,9 @@ training_data_meta_classifier/*.xlsx
 presentation/
 ChronoScope-macos.zip
 ChronoScope-windows.zip
+# Output folders generated at runtime
+examples/cosinorpy_plots/
+
+# The blanket `test_*.py` rule above is for ad-hoc scripts left in the repo root;
+# the real test suite under tests/ must stay tracked.
+!tests/test_*.py

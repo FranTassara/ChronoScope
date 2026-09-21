@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 # Ensure project root is in path
-# __file__ is at core/models_meta_classifier/train_consensus_model.py
+# __file__ is at validation/crs_ai/train_consensus_model.py
 # so .parent.parent.parent is the project root
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -553,8 +553,11 @@ def main():
     # ------------------------------------------------------------------
     print("\n[4b/6] Saving holdout predictions and test arrays...")
 
-    model_dir = Path(__file__).parent
-    model_dir.mkdir(exist_ok=True)
+    # Model artefacts live in core/models/ (shipped with the app); the holdout
+    # arrays and reports stay next to this script, under validation/crs_ai/.
+    script_dir = Path(__file__).resolve().parent
+    model_dir = script_dir.parent.parent / 'core' / 'models'
+    model_dir.mkdir(parents=True, exist_ok=True)
 
     # y_true + y_proba CSV — used for ROC curve and figures
     holdout_df = pd.DataFrame({
@@ -564,13 +567,13 @@ def main():
         'source': [m.get('source', 'synthetic') for m in meta_test],
         'signal_type': [m['signal_type'] for m in meta_test],
     })
-    holdout_path = model_dir / 'holdout_predictions.csv'
+    holdout_path = script_dir / 'holdout_predictions.csv'
     holdout_df.to_csv(holdout_path, index=False)
     print(f"  Holdout predictions saved: {holdout_path}  ({len(holdout_df)} rows)")
 
     # Raw arrays — useful for computing other metrics without re-running extraction
-    np.save(str(model_dir / 'X_test.npy'), X_test)
-    np.save(str(model_dir / 'y_test.npy'), y_test)
+    np.save(str(script_dir / 'X_test.npy'), X_test)
+    np.save(str(script_dir / 'y_test.npy'), y_test)
     print(f"  X_test.npy / y_test.npy saved ({X_test.shape})")
 
     # Ambiguous holdout predictions (if available)
@@ -579,7 +582,7 @@ def main():
             'y_true_midpoint': amb_results['y_true'],
             'y_proba': amb_results['y_proba'],
         })
-        amb_path = model_dir / 'ambiguous_holdout_predictions.csv'
+        amb_path = script_dir / 'ambiguous_holdout_predictions.csv'
         amb_df.to_csv(amb_path, index=False)
         print(f"  Ambiguous holdout predictions saved: {amb_path}  ({len(amb_df)} rows)")
 
@@ -635,7 +638,7 @@ def main():
     }
 
     training_date = datetime.now().strftime('%Y-%m-%d')
-    report_path = model_dir / 'training_report.txt'
+    report_path = script_dir / 'training_report.txt'
     with open(report_path, 'w', encoding='utf-8') as f:
         W = 80  # line width
         f.write("=" * W + "\n")
@@ -1032,12 +1035,12 @@ def main():
         f.write("  To retrain:\n")
         f.write("    python train_consensus_model.py\n\n")
         f.write("  Output files:\n")
-        f.write(f"    Model:            core/models_meta_classifier/consensus_rf_model.pkl\n")
-        f.write(f"    Feature names:    core/models_meta_classifier/feature_names.json\n")
-        f.write(f"    Main holdout:     core/models_meta_classifier/holdout_predictions.csv\n")
+        f.write(f"    Model:            core/models/consensus_rf_model.pkl\n")
+        f.write(f"    Feature names:    core/models/feature_names.json\n")
+        f.write(f"    Main holdout:     validation/crs_ai/holdout_predictions.csv\n")
         if amb_results is not None:
-            f.write(f"    Ambiguous holdout: core/models_meta_classifier/ambiguous_holdout_predictions.csv\n")
-        f.write(f"    This report:      core/models_meta_classifier/training_report.txt\n\n")
+            f.write(f"    Ambiguous holdout: validation/crs_ai/ambiguous_holdout_predictions.csv\n")
+        f.write(f"    This report:      validation/crs_ai/training_report.txt\n\n")
         f.write(f"  Model file size:    {model_path.stat().st_size / 1024:.1f} KB\n\n")
 
         # --- 9. Runtime parameter override policy ---
@@ -1083,7 +1086,7 @@ def main():
         f.write("      A holdout re-evaluation comparing default settings\n")
         f.write("      against period_range=(22, 26)h is maintained as a\n")
         f.write("      standalone report:\n\n")
-        f.write("        core/models_meta_classifier/parameter_override_validation.txt\n\n")
+        f.write("        validation/crs_ai/parameter_override_validation.txt\n\n")
         f.write("      The numbers there are model-version-specific. After\n")
         f.write("      retraining, re-run\n")
         f.write("        python validate_period_range_override.py\n")

@@ -12,7 +12,7 @@ training window (core.meta_classifier.timepoint_applicability). This script
 checks the decision boundary, confirms the bioluminescence case is now caught,
 and shows that the previous loader-only rule would have let it through.
 
-Run:  python core/validate_crs_ai_length_gating.py
+Run:  python validation/methods/validate_crs_ai_length_gating.py
 """
 
 from __future__ import annotations

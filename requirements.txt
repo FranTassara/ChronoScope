@@ -1,4 +1,4 @@
-# CircaScope - Circadian Rhythm Analysis Application
+# ChronoScope - Circadian Rhythm Analysis Application
 # Requirements file for pip installation
 
 # GUI Framework
@@ -25,7 +25,7 @@ PyWavelets>=1.4.0
 
 # Machine Learning (for AI Consensus classifier)
 # Pinned to match the scikit-learn version the bundled consensus_rf_model.pkl
-# was trained with (see core/models_meta_classifier/training_report.txt) —
+# was trained with (see validation/crs_ai/training_report.txt) —
 # a newer version triggers InconsistentVersionWarning and may change predictions.
 scikit-learn==1.8.0
 joblib>=1.3.0

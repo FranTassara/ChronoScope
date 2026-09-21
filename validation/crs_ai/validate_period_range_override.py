@@ -29,9 +29,10 @@ import numpy as np
 import pandas as pd
 import joblib
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT      = Path(__file__).parent.parent.parent
 TRAINING_DATA_DIR = PROJECT_ROOT / 'training_data_meta_classifier'
-MODEL_DIR = PROJECT_ROOT / 'core' / 'models_meta_classifier'
+MODEL_DIR         = PROJECT_ROOT / 'core' / 'models'
+SCRIPT_DIR        = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(TRAINING_DATA_DIR))
 
@@ -191,8 +192,8 @@ X_test_narrow = _extract_for_test((22.0, 26.0))
 # ---------------------------------------------------------------------------
 print()
 print("[4/5] Sanity: comparing re-extracted DEFAULT features to cached X_test.npy")
-X_test_cached = np.load(MODEL_DIR / 'X_test.npy')
-y_test_cached = np.load(MODEL_DIR / 'y_test.npy')
+X_test_cached = np.load(SCRIPT_DIR / 'X_test.npy')
+y_test_cached = np.load(SCRIPT_DIR / 'y_test.npy')
 
 # Cached file was saved with v5's 11-feature schema (matches FEATURE_NAMES).
 if X_test_default.shape == X_test_cached.shape and len(y_test) == len(y_test_cached):

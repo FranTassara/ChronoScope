@@ -41,7 +41,7 @@ Findings this script quantifies:
      (tau correctly recovered) by the fix.
 
 Usage (from project root):
-    python core/validate_chi_square_periodogram_fix.py
+    python validation/methods/validate_chi_square_periodogram_fix.py
 Outputs:
     core/chi_square_periodogram_fix_validation.txt
     core/chi_square_periodogram_fix_validation.png

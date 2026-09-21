@@ -55,7 +55,7 @@ Usage
 -----
 Run from the project root after training (uses the same training
 corpus generators as train_consensus_model.py):
-    python core/models_meta_classifier/validate_nested_feature_selection.py
+    python validation/crs_ai/validate_nested_feature_selection.py
 """
 
 import sys
@@ -71,13 +71,14 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-MODEL_DIR      = Path(__file__).parent
-PROJECT_ROOT   = MODEL_DIR.parent.parent
-TRAINING_DIR   = PROJECT_ROOT / 'training_data_meta_classifier'
-GEO_CACHE_DIR  = TRAINING_DIR / 'data' / 'geo'
-REPORT_PATH    = MODEL_DIR / 'validate_nested_feature_selection.txt'
-TRAINING_REPORT_PATH = MODEL_DIR / 'training_report.txt'
-BIOCYCLE_XLSX  = (TRAINING_DIR /
+SCRIPT_DIR           = Path(__file__).resolve().parent
+PROJECT_ROOT         = SCRIPT_DIR.parent.parent
+MODEL_DIR            = PROJECT_ROOT / 'core' / 'models'
+TRAINING_DIR         = PROJECT_ROOT / 'training_data_meta_classifier'
+GEO_CACHE_DIR        = TRAINING_DIR / 'data' / 'geo'
+REPORT_PATH          = SCRIPT_DIR / 'validate_nested_feature_selection.txt'
+TRAINING_REPORT_PATH = SCRIPT_DIR / 'training_report.txt'
+BIOCYCLE_XLSX        = (TRAINING_DIR /
                   'rhythmicdb_query_BioCycle_allModels_noFilters.xlsx')
 
 # GSE37332 / GPL14664 files (external check, cached -- see
@@ -628,7 +629,7 @@ def main():
           f"[{pooled_boot['auroc'][1]:.4f}, {pooled_boot['auroc'][2]:.4f}]")
     print(f"  Reported (single partition): {reported['auroc'][0]:.4f} "
           f"[{reported['auroc'][1]:.4f}, {reported['auroc'][2]:.4f}]")
-    print("  core/models_meta_classifier/consensus_rf_model.pkl was NOT "
+    print("  core/models/consensus_rf_model.pkl was NOT "
           "modified by this script.")
 
 

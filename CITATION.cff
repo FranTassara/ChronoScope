@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use ChronoScope in your research, please cite it as below."
+title: "ChronoScope: A Desktop Application for Multi-Method Circadian Rhythm Analysis"
+abstract: >-
+  ChronoScope is a desktop application for circadian rhythm analysis that brings
+  multiple established methods (CosinorPy, CircaCompare, RhythmCount, JTK_CYCLE,
+  Lomb-Scargle, wavelet and spectral analysis) under a single graphical interface,
+  together with CRS-AI, a random-forest consensus rhythmicity score that integrates
+  the individual method outputs into a single probability.
+type: software
+authors:
+  - family-names: Tassara
+    given-names: Francisco
+    email: ftassara@leloir.org.ar
+    affiliation: "Fundación Instituto Leloir"
+repository-code: "https://github.com/FranTassara/ChronoScope"
+url: "https://github.com/FranTassara/ChronoScope"
+license: MIT
+version: 1.0.0
+date-released: "2026-07-20"
+keywords:
+  - circadian rhythms
+  - chronobiology
+  - rhythmicity detection
+  - cosinor
+  - time series analysis
+  - locomotor activity

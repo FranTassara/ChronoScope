@@ -15,7 +15,7 @@ This script checks two things:
      by feeding it to the same chi_square_periodogram / compute_is_iv /
      compute_alpha_rho / filter_days functions the GUI calls.
 
-Run:  python core/validate_locomotor_tabular_input.py
+Run:  python validation/methods/validate_locomotor_tabular_input.py
 """
 
 from __future__ import annotations

@@ -53,7 +53,7 @@ abdominal white adipose tissue, LD 12:12, 18 circadian timepoints over
 Usage
 -----
 Run from the project root after training:
-    python core/models_meta_classifier/validate_external_holdout_gse20635.py
+    python validation/crs_ai/validate_external_holdout_gse20635.py
 """
 
 import sys
@@ -72,11 +72,12 @@ import joblib
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-MODEL_DIR     = Path(__file__).parent
-PROJECT_ROOT  = MODEL_DIR.parent.parent
+SCRIPT_DIR    = Path(__file__).resolve().parent
+PROJECT_ROOT  = SCRIPT_DIR.parent.parent
+MODEL_DIR     = PROJECT_ROOT / 'core' / 'models'
 TRAINING_DIR  = PROJECT_ROOT / 'training_data_meta_classifier'
 GEO_CACHE_DIR = TRAINING_DIR / 'data' / 'geo'
-REPORT_PATH   = MODEL_DIR / 'validate_external_holdout_gse20635.txt'
+REPORT_PATH   = SCRIPT_DIR / 'validate_external_holdout_gse20635.txt'
 MODEL_PATH    = MODEL_DIR / 'consensus_rf_model.pkl'
 FEATURES_PATH = MODEL_DIR / 'feature_names.json'
 BIOCYCLE_XLSX = (TRAINING_DIR /

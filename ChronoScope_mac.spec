@@ -96,14 +96,25 @@ hidden_imports = [
     'core.feature_extraction',
     'core.meta_classifier',
     'core.rhythm_analysis',
+    'core.rhythmcount_analysis',
+    'core.preprocessing',
+    'core.visualization_circadian_metrics',
+    'core.vendor',
+    'core.vendor.rhythmcount',
+    'core.vendor.rhythmcount.data_processing',
+    'core.vendor.rhythmcount.helpers',
+    'core.vendor.rhythmcount.plot',
     'ui',
     'ui.main_window',
     'ui.data_panel',
     'ui.analysis_panel',
     'ui.results_panel',
+    'ui.plot_style',
+    'ui.plot_settings_dialog',
     'utils',
     'utils.data_loader',
     'utils.dam_loader',
+    'utils.awd_loader',
     'utils.export',
     'utils.rosbash_loader',
 ]
@@ -114,13 +125,13 @@ hidden_imports = [
 # ---------------------------------------------------------------------------
 datas = [
     # Modelo Random Forest entrenado + metadatos de features
-    ('core/models_meta_classifier', 'core/models_meta_classifier'),
+    ('core/models', 'core/models'),
 
     # Ejemplos de datos (cargados desde el GUI)
     ('examples', 'examples'),
 
     # Dataset scRNA-seq de Rosbash (archivo HDF5 ~pesado)
-    ('Rosbash_data/rosbash_processed.h5', 'Rosbash_data'),
+    ('data/rosbash/rosbash_processed.h5', 'data/rosbash'),
 ]
 
 # ---------------------------------------------------------------------------

@@ -64,6 +64,8 @@ The easiest way to get started — no Python, no dependencies.
 
 > **macOS Gatekeeper note:** the app isn't notarized by Apple yet, so the first launch may be blocked. Right-click the app → **Open**, or run `xattr -cr ChronoScope.app` in Terminal, then open it normally.
 
+📖 **[User Manual (PDF)](docs/ChronoScope_User_Manual.pdf)** — walkthrough of every module, with worked examples.
+
 ---
 
 ## Installation from source
@@ -91,6 +93,34 @@ pip install -r requirements.txt
 # Launch the application
 python main.py
 ```
+
+### Running the tests
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+The suite needs no dependencies beyond the ones in `requirements.txt`. It checks
+that every module imports, that the packaged CRS-AI model agrees with
+`core/feature_extraction.py`, that each method still separates a synthetic 24 h
+rhythm from noise, and that the paths the PyInstaller specs bundle still exist.
+
+### Repository layout
+
+| Path | Contents |
+|---|---|
+| `main.py`, `cli.py` | GUI entry point and headless batch interface |
+| `core/` | Analysis engines (CosinorPy, CircaCompare, RhythmCount, classical methods, CRS-AI) |
+| `core/models/` | Trained CRS-AI random forest and its feature metadata |
+| `core/vendor/` | Third-party code bundled and imported at runtime |
+| `ui/` | PySide6 panels and dialogs |
+| `utils/` | Data loaders (CSV/Excel, DAM, AWD, Rosbash HDF5) and export |
+| `examples/` | Example datasets, user templates and their generators |
+| `data/` | Bundled datasets (Rosbash CLK856 scRNA-seq) |
+| `scripts/` | One-off data preparation scripts |
+| `validation/` | Validation scripts and reports supporting the manuscript |
+| `docs/reference/` | Upstream documentation for the wrapped methods (not imported) |
+| `tests/` | Test suite |
 
 ---
 
@@ -137,7 +167,7 @@ Preprocessed HDF5 file derived from:
 
 > Ma D, Przybylski D, Bhinder T, et al. A transcriptomic taxonomy of *Drosophila* circadian neurons around the clock. *eLife* 2021;10:e63056.
 
-Use the included `Rosbash_data/process_rosbash_dataset.py` script to generate the HDF5 file from the raw GEO data.
+Use the included `scripts/process_rosbash_dataset.py` script to generate the HDF5 file from the raw GEO data.
 
 </details>
 
