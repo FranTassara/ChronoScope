@@ -270,8 +270,14 @@ def extract_features(
         )
 
         if harm_result is not None:
-            features['harmonic_p_value'] = harm_result.adj_p_value
-            p_values_for_agreement.append(harm_result.adj_p_value)
+            # Raw F-test p-value. HarmonicCosinorResult.adj_p_value used to hold
+            # this same uncorrected value despite its name; now that it carries a
+            # real Bonferroni correction, read the raw field explicitly so these
+            # UI-only features keep the meaning they had when the model was
+            # trained (harmonic_p_value is not one of FEATURE_NAMES, but it feeds
+            # method_agreement and log_min_p_value, which the UI displays).
+            features['harmonic_p_value'] = harm_result.p_value
+            p_values_for_agreement.append(harm_result.p_value)
 
             # Get R-squared from fit_model if available
             if harm_result.fit_model and 'r_squared' in harm_result.fit_model:

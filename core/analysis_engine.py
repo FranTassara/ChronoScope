@@ -160,7 +160,10 @@ class AnalysisResult:
     
     # Method-specific
     tau: Optional[float] = None  # JTK Kendall tau
-    bonf_p_value: Optional[float] = None  # Bonferroni-corrected p-value (JTK)
+    # Bonferroni correction for the number of candidate periods scanned.
+    # Set by JTK, cosinor_ols and harmonic_cosinor; for the latter two,
+    # p_value holds the uncorrected F-test at the winning period.
+    bonf_p_value: Optional[float] = None
     raw_p_value: Optional[float] = None   # Raw (uncorrected) p-value (JTK)
     lag: Optional[float] = None           # Phase lag in hours (JTK/Cosine-Kendall)
     asymmetry: Optional[float] = None     # Waveform asymmetry parameter (JTK)
@@ -1114,7 +1117,10 @@ class AnalysisEngine:
             amplitude=primary_amplitude,
             acrophase_hours=primary_acrophase,
             period=result.period,
-            p_value=result.adj_p_value,
+            # Same convention as cosinor_ols: p_value is the raw F-test at the
+            # best-fitting period, bonf_p_value corrects it for the period scan.
+            p_value=result.p_value,
+            bonf_p_value=result.adj_p_value,
             n_components=result.n_harmonics,
             peak_times=result.acrophases,    # all harmonic acrophases (h)
             trough_times=result.amplitudes,  # all harmonic amplitudes (repurposed field)

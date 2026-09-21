@@ -342,7 +342,12 @@ class HarmonicCosinorResult:
     Supports detection of multi-modal rhythms (e.g., bimodal with 2 peaks per cycle).
 
     Attributes:
-        adj_p_value: Bonferroni-adjusted p-value
+        p_value: Raw F-test p-value at the best-fitting period. The period is
+            chosen by scanning `period_range`, so this value is optimistic:
+            it does not account for the number of periods tested.
+        adj_p_value: Bonferroni-adjusted p-value, correcting `p_value` for the
+            number of periods scanned. Conservative, because neighbouring
+            periods are strongly correlated rather than independent tests.
         period: Best-fit period
         amplitudes: List of amplitudes for each peak
         acrophases: List of acrophase times (hours) for each peak
@@ -351,6 +356,7 @@ class HarmonicCosinorResult:
         fit_model: Dictionary with fitted model parameters for plotting
         warning: Optional warning message (e.g., if extra harmonics don't improve fit)
     """
+    p_value: float
     adj_p_value: float
     period: float
     amplitudes: List[float]
@@ -367,6 +373,7 @@ class HarmonicCosinorResult:
     def to_dict(self) -> Dict[str, Any]:
         """Convert results to dictionary."""
         result = {
+            'p_value': self.p_value,
             'adj_p_value': self.adj_p_value,
             'period': self.period,
             'n_harmonics': self.n_harmonics,
@@ -1541,8 +1548,17 @@ def _fit_harmonic_cosinor(
         }
     }
 
+    # The reported p-value belongs to the best period out of `period_range`,
+    # picked after scanning all of them. Left uncorrected it is anticonservative
+    # by roughly the number of periods tested, so expose both: the raw F-test
+    # p-value and its Bonferroni correction over the scan (same convention as
+    # _fit_cosinor).
+    n_periods_tested = max(1, len(period_range))
+    bonf_p = min(1.0, float(p_value) * n_periods_tested)
+
     return HarmonicCosinorResult(
-        adj_p_value=round(float(p_value), 6),
+        p_value=round(float(p_value), 6),
+        adj_p_value=round(bonf_p, 6),
         period=round(float(best_period), 2),
         amplitudes=amplitudes_sorted,
         acrophases=acrophases_sorted,

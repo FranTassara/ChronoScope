@@ -21,10 +21,32 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - `tests/`: a smoke-test suite runnable with `python -m unittest discover tests`
   — no extra dependencies. Covers imports, model/feature consistency,
   rhythm detection versus noise, the vendored RhythmCount path, and guards on
-  the repository layout and the PyInstaller bundle contents.
+  the repository layout and the PyInstaller bundle contents, and the
+  period-scan corrections described under Fixed.
 - `CITATION.cff`, so GitHub renders a "Cite this repository" entry.
 
 ### Fixed
+- Harmonic Cosinor reported an uncorrected p-value in a field named
+  `adj_p_value` and documented as "Bonferroni-adjusted": no correction was ever
+  computed. The Bonferroni correction over the period scan is now applied, the
+  raw F-test p-value is exposed separately as `p_value`, and the results table
+  shows both as `p (raw)` and `p (Bonf adj)`, matching Cosinor OLS. The value
+  previously shown under `p_value` is unchanged; the corrected one is new.
+- The results panel decided significance -- both the "N significant" counter and
+  the "Significant (p<0.05)" filter -- on the raw p-value. For Cosinor OLS and
+  Harmonic Cosinor that value is the F-test at a period chosen by scanning
+  20-28 h, so it is optimistic: measured on arrhythmic simulated series, Cosinor
+  OLS called ~14% of them significant at alpha = 0.05, against ~1% on the
+  Bonferroni-corrected value. Both now use the corrected p-value for these two
+  methods. Other methods are unaffected -- JTK already reports its p-value
+  BH-adjusted and is well calibrated (0% false positives in the same test).
+  Exported columns are unchanged; only the significance call moved.
+- README: the CRS-AI description said the model maps an 18-feature vector and
+  was trained on ">= 10 000 synthetic instances". It consumes 11 features (18
+  are computed; 7 feed only the interface) and was trained on 5649 instances,
+  3953 of them from real biological datasets. The Random Forest has 200 trees,
+  not 100, and is wrapped in isotonic calibration. The Cosinor section now also
+  documents the period scan and the two p-value columns.
 - Chi-square periodogram: the significance threshold was too low by roughly a
   factor of `n_slots`, which made essentially any input come out "significantly
   rhythmic". Corrected following Tackenberg & Hughey (2021), *PLOS Comput Biol*

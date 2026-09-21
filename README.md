@@ -289,6 +289,18 @@ $$Y(t) = M + A \cos\!\left(\frac{2\pi t}{\tau} - \varphi\right) + \varepsilon$$
 
 Statistical significance is assessed via the zero-amplitude test (F-test on A = 0).
 
+When τ is not fixed, the Cosinor OLS and Harmonic Cosinor modules fit the model at
+every period in the candidate range (20–28 h in 0.5 h steps by default) and keep
+the best fit by AIC. Because the reported period is chosen after seeing all of
+them, the F-test *p*-value at that period is optimistic. Both modules therefore
+report two columns: **p (raw)**, the F-test at the winning period, and
+**p (Bonf adj)**, corrected for the number of periods scanned. The two bracket
+the truth — the raw value is anticonservative, while Bonferroni is conservative
+because neighbouring candidate periods are strongly correlated rather than
+independent tests. ChronoScope's "significant" counter and filter use the
+corrected value for these two modules; JTK applies its own Bonferroni–Dunn
+correction and is reported already adjusted.
+
 ### RhythmCount GLM
 
 $$\log(\mu_i) = \beta_0 + \sum_{k=1}^{N} \left[ \beta_{2k-1} \sin\!\left(\frac{2\pi k t_i}{\tau}\right) + \beta_{2k} \cos\!\left(\frac{2\pi k t_i}{\tau}\right) \right]$$
@@ -306,7 +318,7 @@ Evaluates spectral power at each candidate frequency using a least-squares proje
 
 ### CRS-AI Feature Vector
 
-For each time series, ChronoScope extracts 18 features from JTK Cycle, cosinor, and Lomb–Scargle (p-values, effect sizes, estimated periods, R², method agreement index, and relative amplitude). A pre-trained Random Forest classifier (100 trees, trained on ≥ 10 000 synthetic instances) maps this feature vector to a rhythmicity probability score.
+For each time series, ChronoScope computes 18 descriptors from JTK Cycle, cosinor, harmonic cosinor and Lomb–Scargle (p-values, effect sizes, estimated periods, R², method agreement index, and relative amplitude). Eleven of them form the model's input vector; the remaining seven were dropped after their permutation importance on the holdout proved negligible, and are kept only to populate the sub-method panels in the interface. That 11-feature vector is mapped to a rhythmicity probability by a pre-trained Random Forest (200 trees, max depth 10, balanced class weights) wrapped in isotonic probability calibration with 5-fold internal cross-validation, trained on 5649 instances — 3953 from real biological datasets and 1696 synthetic. Training and validation are reproducible from `validation/crs_ai/`.
 
 ### Output Parameters
 
