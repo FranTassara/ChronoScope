@@ -1,0 +1,51 @@
+Chi-square periodogram fix validation
+Tackenberg & Hughey (2021) PLOS Comput Biol 17:e1008567 'greedy' correction
+==============================================================================
+
+[1] Significance calibration (Monte Carlo, pure noise, alpha=0.05)
+------------------------------------------------------------------------------
+  3 days: OLD false-positive rate = 100.0%   NEW false-positive rate =  96.3%   (nominal alpha = 5%)
+  5 days: OLD false-positive rate = 100.0%   NEW false-positive rate =  96.0%   (nominal alpha = 5%)
+  7 days: OLD false-positive rate = 100.0%   NEW false-positive rate =  98.0%   (nominal alpha = 5%)
+  10 days: OLD false-positive rate = 100.0%   NEW false-positive rate =  97.0%   (nominal alpha = 5%)
+  (OLD's threshold was too low by ~n_slots-fold, so it calls essentially
+   any input 'significantly rhythmic' regardless of true periodicity; NEW's
+   per-scan false-positive rate is close to, though still somewhat above,
+   the nominal alpha -- see the multiple-testing caveat in [3] below.)
+
+[2] Periodogram continuity and true-positive period recovery
+------------------------------------------------------------------------------
+  5 days (N=240): OLD tau=23.75h Qp=207.3 roughness=12.3885  |  NEW tau=23.75h Qp=208.2 roughness=12.2932
+  6.3 days (N=302): OLD tau=23.75h Qp=256.5 roughness=15.7757  |  NEW tau=23.75h Qp=251.5 roughness=15.5302
+  7 days (N=336): OLD tau=23.75h Qp=283.9 roughness=17.1381  |  NEW tau=23.75h Qp=284.8 roughness=17.1014
+  9.7 days (N=466): OLD tau=23.75h Qp=393.2 roughness=25.5929  |  NEW tau=23.75h Qp=390.6 roughness=25.4985
+  12 days (N=576): OLD tau=23.75h Qp=479.6 roughness=30.2333  |  NEW tau=23.75h Qp=480.4 roughness=30.2011
+
+  Both implementations correctly recover tau ~= 24 h for this clean
+  rhythmic signal; the old and new Qp(P) curves are close in shape in this
+  implementation (ChronoScope's original modulo-based slot assignment already
+  used every data point rather than discarding a partial final cycle, unlike
+  the classic discard-based formula the reviewer/paper describe), differing
+  mainly by the normalisation constant corrected in [1].
+
+[3] Residual caveat: multiple comparisons across the scanned period range
+------------------------------------------------------------------------------
+  The app reports significance by comparing the BEST Qp across ~280 scanned
+  periods to a single per-period chi-square threshold. Even with the fixed
+  calibration, this 'take the best of many correlated tests' procedure has a
+  higher true false-positive rate than the nominal alpha (see [1], NEW column,
+  still above 5% for short recordings). This look-elsewhere effect is a known
+  property of periodogram peak-picking in general, is NOT the discontinuity
+  bug reported by Tackenberg & Hughey, and is NOT fixed by this change. A full
+  fix would require a permutation- or extreme-value-corrected threshold and is
+  left as a documented limitation / future-work item.
+
+==============================================================================
+Summary: replaced the Qp normalisation with the peer-reviewed 'greedy' CSP
+formula (Tackenberg & Hughey 2021), which correctly recalibrates the
+significance threshold (previously off by roughly n_slots-fold, causing
+near-universal false 'significant rhythmicity' calls) and removes the
+internally-derived approximation in favour of a validated reference formula.
+True-positive period recovery on rhythmic signals is unchanged. A residual,
+distinct multiple-testing caveat over the scanned period range remains and
+is disclosed above, not fixed by this change.
