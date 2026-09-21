@@ -1,0 +1,435 @@
+================================================================================
+ChronoScope CRS-AI -- EXTERNAL LODO VALIDATION REPORT
+GSE20635: Rattus norvegicus, abdominal white adipose tissue, LD
+================================================================================
+
+  Run date:    2026-09-15 17:00
+  Model file:  consensus_rf_model.pkl
+  Model size:  23641.0 KB
+  Model MD5:   7a92c21dbbf8
+  Features:    11
+  Dataset:     GSE20635 (GEO), platform GPL1355
+
+1. DATASET SUMMARY
+--------------------------------------------------------------------------------
+
+  GEO accession:  GSE20635
+  Species:        Rattus norvegicus (Wistar, male)
+  Tissue:         Abdominal white adipose tissue (WAT)
+  Light regime:   LD (12h light : 12h dark)
+  Publication:    Sukumaran et al. 2010, Physiol Genomics 42:141
+  Platform:       GPL1355 (Affymetrix Rat Genome 230 2.0 Array)
+  Probes:         31,099
+  Total samples:  52
+  Samples with circadian timepoints: 52 (2-3 animals x 18 timepoints over 0.25-23.75 h)
+  Probe-level expression universe (U): 31,099
+
+  Note on labeling granularity: unlike the GSE37332 (zebrafish)
+  and GSE3416 (Arabidopsis) validations, this dataset is labeled
+  at the PROBE level rather than the gene level. BioCycle's
+  RhythmicDB entry for E-GEOD-20635 identifies genes by rat
+  UniGene cluster ID (e.g. Rn.94978), not by the gene symbol
+  GPL1355's curated annotation reports (e.g. Sumo2). Matching on
+  BioCycle's 'Probe ref' column (the actual Affymetrix probeset
+  ID) instead avoids this identifier mismatch entirely and is
+  also more faithful to what BioCycle itself analysed.
+
+  BioCycle reference (E-GEOD-20635 from RhythmicDB,
+  rhythmicdb_query_BioCycle_allModels_noFilters.xlsx):
+    Total probes in RhythmicDB for this dataset: 1,232
+    RhythmicDB ^ U: 1,232 probes (100% coverage)
+    R class (Q<=0.05, period 20-28h, in U): 246 probes
+    X class (in RhythmicDB ^ U, excluded):  986 probes
+    N class (absent from RhythmicDB, in U): 29,867 available -> 300 after cap
+
+  Canonical rat circadian clock gene label audit:
+
+  Gene      Probe           Class  Q-value     Period (h)    In expression U
+  -------  -------------  -----  ---------  -----------  ---------------
+  Per1      1374855_at      N      --          --            Yes
+  Per2      1368303_at      R      0.0000      24.02         Yes
+  Per2      1378560_at      N      --          --            Yes
+  Per3      1378745_at      N      --          --            Yes
+  Per3      1388239_at      X      0.6711      13.48         Yes
+  Cry1      1392640_at      N      --          --            Yes
+  Cry2      1369446_at      X      0.1345      24.39         Yes
+  Cry2      1372548_at      N      --          --            Yes
+  Arntl     1370510_a_at    N      --          --            Yes
+  Clock     1369168_a_at    N      --          --            Yes
+  Clock     1380098_at      N      --          --            Yes
+  Clock     1389456_at      N      --          --            Yes
+  Clock     1390199_at      N      --          --            Yes
+  Nr1d1     1370816_at      N      --          --            Yes
+  Nr1d2     1370540_at      N      --          --            Yes
+  Nr1d2     1370541_at      N      --          --            Yes
+  Nr1d2     1390430_at      N      --          --            Yes
+  Dbp       1387874_at      X      0.6711      13.81         Yes
+
+  Note: Per2 (1368303_at) is R-class with Q=0.000 at period=24.0h,
+  confirming that the Q<=0.05 criterion recovers a bona fide core
+  clock gene in this dataset. Several other core clock probes are
+  absent from BioCycle's output for this dataset (failed its
+  internal missing-data/QC filters) or fall in the borderline
+  X-class (e.g. Cry2, Dbp) -- consistent with the known lower
+  core-clock-gene amplitude in adipose tissue relative to liver
+  or SCN.
+
+  Validation set: 546 instances (R=246, N=300)
+
+2. VALIDATION DESIGN
+--------------------------------------------------------------------------------
+
+  GSE20635 adds a mammalian species and tissue combination not
+  represented anywhere in CRS-AI's training or prior validation
+  data:
+
+    * Different species:  CRS-AI was trained on Mus musculus
+      liver (GSE11516, GSE11923), Drosophila melanogaster clock
+      neurons (GSE77451), and Homo sapiens blood (GSE39445), and
+      externally validated on Danio rerio (GSE37332). Rattus
+      norvegicus is phylogenetically closer to mouse and human
+      than zebrafish, making this a complementary, higher-
+      similarity mammalian generalisation test.
+
+    * Different tissue:  Abdominal white adipose tissue is a
+      peripheral metabolic clock tissue not present in the
+      training corpus (liver, neurons, blood) or the zebrafish
+      whole-organism validation.
+
+    * True biological replication:  2-3 animals per timepoint,
+      unlike the whole-organism zebrafish pools.
+
+    * Different experimental platform:  GPL1355 Affymetrix Rat
+      Genome 230 2.0 Array.
+
+    * Zero data leakage:  GSE20635 was never accessed at any
+      step of CRS-AI training, hyperparameter optimisation, or
+      feature engineering. Labels were assigned entirely from an
+      independent BioCycle analysis (RhythmicDB, E-GEOD-20635)
+      after training was complete.
+
+  Label quality: BioCycle-consistent non-rhythmic-from-absence
+  labeling is used, matched at the probe level for the reasons
+  given above -- the same underlying strategy used for CRS-AI
+  v6 training and for the GSE37332/GSE3416 validations.
+
+3. METRICS
+--------------------------------------------------------------------------------
+
+  Test set: 546 instances  (R-class=246, N-class=300)
+  95% CIs from percentile bootstrap (1000 valid resamples of 1000):
+
+  ROC-AUC:         0.7920  [95% CI 0.7533, 0.8283]
+  Avg. Precision:  0.6946  [95% CI 0.6375, 0.7580]
+  Accuracy:        0.7161  [95% CI 0.6795, 0.7546]
+  Brier score:     0.2030  [95% CI 0.1836, 0.2242]  (lower = better calibration)
+
+  Threshold-dependent metrics (threshold = 0.50):
+
+  Sensitivity (TPR):   0.9106
+  Specificity (TNR):   0.5567
+  Positive pred. val.: 0.6275
+  Negative pred. val.: 0.8836
+  F1-score:            0.7430
+
+  Confusion matrix (threshold 0.5):
+
+                        Predicted
+                   Arrhythmic  Rhythmic
+    Actual N-class      167       133
+    Actual R-class       22       224
+
+    TP=224  FP=133  TN=167  FN=22
+
+4. PER-PROBE PREDICTIONS -- R CLASS
+--------------------------------------------------------------------------------
+
+  All R-class probes (BioCycle-confirmed rhythmic, Q<=0.05,
+  period 20-28 h), sorted by predicted P(rhythmic) descending.
+
+  Symbol      Probe             Q-val    Period  P(rhythmic)   Predicted
+  ---------  -------------  -------  -------  -----------  ---------
+  Per2        1368303_at       0.0000     24.02       0.9830    Rhythmic
+  St6galnac3  1368882_at       0.0097     22.01       0.9824    Rhythmic
+  Pi4k2a      1369177_at       0.0057     25.60       0.9824    Rhythmic
+  Fgf10       1369604_at       0.0193     24.64       0.9824    Rhythmic
+  LOC100909491  1369775_at       0.0097     25.59       0.9824    Rhythmic
+  Pim1        1369862_at       0.0163     23.37       0.9824    Rhythmic
+  Parva       1370266_at       0.0098     25.21       0.9824    Rhythmic
+  Osbpl1a     1383830_a_at     0.0092     24.75       0.9804    Rhythmic
+  Tsc22d3     1367771_at       0.0074     24.90       0.9799    Rhythmic
+  Rab14       1367884_at       0.0496     25.68       0.9799    Rhythmic
+  Ddit4       1368025_at       0.0165     23.48       0.9799    Rhythmic
+  Apln        1368258_at       0.0166     23.13       0.9799    Rhythmic
+  Cast        1369754_a_at     0.0400     23.65       0.9799    Rhythmic
+  Crybb1      1369985_at       0.0423     26.14       0.9799    Rhythmic
+  Dclre1c     1383597_at       0.0089     23.87       0.9799    Rhythmic
+  Psen1       1368792_at       0.0208     24.03       0.9785    Rhythmic
+  Acadsb      1369526_at       0.0137     25.31       0.9785    Rhythmic
+  Pth1r       1370259_a_at     0.0233     24.10       0.9785    Rhythmic
+  Add3        1370260_at       0.0223     25.60       0.9785    Rhythmic
+  Slc4a4      1369756_a_at     0.0152     25.36       0.9713    Rhythmic
+  Crcp        1369994_at       0.0309     23.49       0.9698    Rhythmic
+  Pdlim5      1368703_at       0.0057     24.33       0.9692    Rhythmic
+  Chrna1      1369843_at       0.0163     24.22       0.9686    Rhythmic
+  Egr1        1368321_at       0.0197     23.78       0.9598    Rhythmic
+  Pde4b       1369044_a_at     0.0366     24.13       0.9596    Rhythmic
+  Csnk1a1     1369312_a_at     0.0197     23.35       0.9579    Rhythmic
+  Cdc42       1367475_at       0.0114     22.28       0.9516    Rhythmic
+  Cirbp       1369083_at       0.0140     23.10       0.9478    Rhythmic
+  Cdkn1b      1369192_at       0.0031     24.84       0.9475    Rhythmic
+  Mlycd       1367638_at       0.0008     23.75       0.9458    Rhythmic
+  Gfap        1368353_at       0.0438     23.84       0.9458    Rhythmic
+  Pthlh       1368681_at       0.0260     24.41       0.9425    Rhythmic
+  Vegfa       1370081_a_at     0.0208     22.73       0.9417    Rhythmic
+  Pim3        1367725_at       0.0001     23.56       0.9390    Rhythmic
+  Stx5        1367878_at       0.0437     23.79       0.9387    Rhythmic
+  Atox1       1367945_at       0.0232     23.53       0.9385    Rhythmic
+  Nr2f2       1370063_at       0.0074     25.34       0.9385    Rhythmic
+  Kpnb1       1368573_at       0.0397     24.06       0.9338    Rhythmic
+  Cd93        1387168_at       0.0081     21.33       0.9326    Rhythmic
+  Anp32a      1369063_at       0.0045     23.32       0.9305    Rhythmic
+  Clip2       1368571_at       0.0114     23.21       0.9260    Rhythmic
+  Thra        1367726_at       0.0479     21.65       0.9220    Rhythmic
+  Pdk4        1369150_at       0.0194     23.03       0.9220    Rhythmic
+  Flt1        1369087_at       0.0163     23.08       0.9187    Rhythmic
+  Slc18a2     1369131_at       0.0097     22.56       0.9187    Rhythmic
+  Kcnj13      1369261_at       0.0427     24.12       0.9106    Rhythmic
+  Crk         1369912_at       0.0397     24.41       0.9106    Rhythmic
+  H1f0        1367759_at       0.0059     22.90       0.9096    Rhythmic
+  Mpg         1368410_at       0.0481     23.07       0.9096    Rhythmic
+  Slc6a9      1369772_at       0.0183     24.01       0.9096    Rhythmic
+  Sv2b        1369628_at       0.0409     25.94       0.9073    Rhythmic
+  Gadd45a     1368947_at       0.0445     24.31       0.9063    Rhythmic
+  Leprot      1369323_at       0.0206     24.09       0.9063    Rhythmic
+  Crebbp      1385852_at       0.0190     25.24       0.9063    Rhythmic
+  Ar          1369159_at       0.0409     25.06       0.9015    Rhythmic
+  Fgf7        1369884_at       0.0330     23.68       0.9008    Rhythmic
+  Ptges       1368014_at       0.0032     21.11       0.8924    Rhythmic
+  Grpel1      1368552_at       0.0114     22.95       0.8924    Rhythmic
+  Gosr2       1370031_at       0.0452     25.27       0.8918    Rhythmic
+  Mmp14       1367860_a_at     0.0172     24.01       0.8891    Rhythmic
+  Rgs2        1368144_at       0.0467     24.28       0.8891    Rhythmic
+  Bmf         1369902_at       0.0188     21.77       0.8891    Rhythmic
+  Rcbtb2      1393419_at       0.0348     23.97       0.8891    Rhythmic
+  Inppl1      1368022_at       0.0164     24.04       0.8856    Rhythmic
+  Rgs5        1369957_at       0.0437     24.15       0.8850    Rhythmic
+  LOC100364138  1367559_at       0.0404     23.35       0.8848    Rhythmic
+  Cat         1367995_at       0.0427     23.02       0.8848    Rhythmic
+  Serpine1    1368519_at       0.0043     22.79       0.8827    Rhythmic
+  Stx12       1370192_at       0.0338     23.22       0.8827    Rhythmic
+  LOC100910501  1368512_a_at     0.0325     25.35       0.8817    Rhythmic
+  Sfmbt1      1368129_at       0.0050     23.89       0.8801    Rhythmic
+  Hrh3        1368451_at       0.0479     23.63       0.8779    Rhythmic
+  Pex14       1370306_at       0.0309     24.07       0.8772    Rhythmic
+  Rgs7        1368373_at       0.0114     24.94       0.8767    Rhythmic
+  Fmo3        1368304_at       0.0119     23.74       0.8756    Rhythmic
+  Stc2        1369579_at       0.0349     23.76       0.8741    Rhythmic
+  Ptgs2       1368527_at       0.0158     22.90       0.8676    Rhythmic
+  Fbxo32      1369188_at       0.0138     22.83       0.8676    Rhythmic
+  Adgrl3      1368666_a_at     0.0366     24.42       0.8667    Rhythmic
+  Pld2        1368954_at       0.0049     22.88       0.8667    Rhythmic
+  Gria2       1368401_at       0.0273     21.73       0.8651    Rhythmic
+  Epor        1369988_at       0.0258     23.03       0.8651    Rhythmic
+  Chkb        1367718_at       0.0156     22.93       0.8650    Rhythmic
+  Psma3       1368508_at       0.0074     24.12       0.8650    Rhythmic
+  Hbp1        1368549_at       0.0159     22.82       0.8650    Rhythmic
+  Adrb3       1368780_at       0.0441     21.27       0.8650    Rhythmic
+  Nfil3       1368488_at       0.0006     24.44       0.8620    Rhythmic
+  Hbb         1367553_x_at     0.0057     22.79       0.8619    Rhythmic
+  Trnau1ap    1369975_at       0.0206     24.51       0.8619    Rhythmic
+  Cx3cl1      1368200_at       0.0069     22.24       0.8604    Rhythmic
+  Ppargc1b    1392715_at       0.0193     24.09       0.8568    Rhythmic
+  LOC100910982  1368208_at       0.0264     23.49       0.8549    Rhythmic
+  Sparc       1367563_at       0.0053     22.03       0.8548    Rhythmic
+  Cxcr2       1369697_at       0.0125     21.94       0.8545    Rhythmic
+  Adh1        1368021_at       0.0368     22.59       0.8499    Rhythmic
+  Nr3c2       1368476_at       0.0088     23.37       0.8499    Rhythmic
+  Bhlhe41     1368511_at       0.0008     24.02       0.8499    Rhythmic
+  Gabbr1      1369371_a_at     0.0305     23.53       0.8499    Rhythmic
+  Ppp1r9a     1369095_at       0.0031     23.67       0.8494    Rhythmic
+  Smad4       1367910_at       0.0117     21.55       0.8469    Rhythmic
+  Sh2b2       1368605_at       0.0227     22.91       0.8469    Rhythmic
+  Shox2       1368825_at       0.0222     24.08       0.8345    Rhythmic
+  Blcap       1369032_at       0.0155     20.92       0.8266    Rhythmic
+  Vof16       1385386_at       0.0268     23.95       0.8266    Rhythmic
+  Apcs        1367804_at       0.0171     22.66       0.8236    Rhythmic
+  Gucy1a3     1368154_at       0.0163     23.88       0.8236    Rhythmic
+  Hnrnpd      1369971_a_at     0.0499     24.60       0.8236    Rhythmic
+  Rab11b      1398825_at       0.0269     24.69       0.8236    Rhythmic
+  AFFX_Rat_beta-actin_3_at  AFFX_Rat_beta-actin_3_at   0.0061     21.46       0.8217    Rhythmic
+  Vapb        1369597_at       0.0198     23.26       0.8208    Rhythmic
+  Cited2      1367601_at       0.0008     24.14       0.8136    Rhythmic
+  Bet1l       1387448_at       0.0211     22.52       0.8134    Rhythmic
+  Hr          1369336_at       0.0206     23.02       0.8106    Rhythmic
+  LOC689130   1367565_a_at     0.0075     22.63       0.8062    Rhythmic
+  Kcnip1      1370781_a_at     0.0156     21.87       0.8005    Rhythmic
+  Klf9        1370209_at       0.0000     23.86       0.7972    Rhythmic
+  Lypla2      1367458_at       0.0397     23.33       0.7943    Rhythmic
+  Klk1b3      1367961_at       0.0155     22.91       0.7943    Rhythmic
+  LOC100910768  1370274_at       0.0026     21.88       0.7937    Rhythmic
+  Fzd4        1369468_at       0.0374     23.42       0.7898    Rhythmic
+  Skiv2l      1399112_at       0.0119     22.77       0.7889    Rhythmic
+  Gls         1367806_at       0.0157     23.05       0.7856    Rhythmic
+  Acly        1367854_at       0.0207     25.42       0.7848    Rhythmic
+  Syngr2      1369554_at       0.0480     24.31       0.7842    Rhythmic
+  Ppargc1a    1370089_at       0.0348     23.29       0.7822    Rhythmic
+  LOC100365711  1367757_at       0.0127     22.40       0.7803    Rhythmic
+  Gnas        1369897_s_at     0.0083     22.27       0.7765    Rhythmic
+  Ndrg4       1370229_at       0.0481     24.03       0.7707    Rhythmic
+  Rabep1      1367981_at       0.0270     21.92       0.7638    Rhythmic
+  Lgals8      1368960_at       0.0316     22.34       0.7446    Rhythmic
+  Limk1       1369149_at       0.0117     22.42       0.7446    Rhythmic
+  Hmgcs2      1370310_at       0.0075     23.59       0.7394    Rhythmic
+  Ctsl        1370245_at       0.0368     23.58       0.7340    Rhythmic
+  Gatm        1367627_at       0.0437     23.64       0.7291    Rhythmic
+  Acot8       1368206_at       0.0321     22.19       0.7290    Rhythmic
+  Abi1        1367958_at       0.0057     24.34       0.7266    Rhythmic
+  Cyp2e1      1367871_at       0.0163     23.84       0.7262    Rhythmic
+  Rps3a       1367606_at       0.0246     21.12       0.7260    Rhythmic
+  Synj2bp     1368039_at       0.0398     24.12       0.7251    Rhythmic
+  Aldh2       1367999_at       0.0366     22.32       0.7210    Rhythmic
+  Gdf10       1368459_at       0.0097     23.66       0.7166    Rhythmic
+  Scp2        1370296_at       0.0304     22.25       0.7113    Rhythmic
+  Cs          1369967_at       0.0368     22.45       0.7108    Rhythmic
+  LOC100911372  1367573_at       0.0358     21.36       0.7073    Rhythmic
+  Ctsd        1367651_at       0.0178     23.12       0.7073    Rhythmic
+  Kcnn3       1368626_at       0.0223     23.92       0.7073    Rhythmic
+  Clstn3      1369827_at       0.0102     22.77       0.7058    Rhythmic
+  LOC100365810  1367645_at       0.0330     21.24       0.7033    Rhythmic
+  Mgst1       1367612_at       0.0074     22.29       0.7005    Rhythmic
+  Car3        1367896_at       0.0174     22.68       0.7003    Rhythmic
+  Eef1a1      1370109_s_at     0.0190     21.45       0.7003    Rhythmic
+  Hpn         1368431_at       0.0451     23.41       0.6994    Rhythmic
+  Stxbp3      1369414_at       0.0452     22.26       0.6975    Rhythmic
+  Cdo1        1367755_at       0.0076     22.91       0.6973    Rhythmic
+  Thrsp       1370150_a_at     0.0264     22.29       0.6903    Rhythmic
+  Ybx1        1370213_at       0.0043     21.56       0.6903    Rhythmic
+  Adnp        1369402_at       0.0164     21.33       0.6884    Rhythmic
+  Car2        1367733_at       0.0270     22.39       0.6874    Rhythmic
+  Dlg1        1368944_at       0.0224     23.08       0.6860    Rhythmic
+  LOC100911847  1368211_at       0.0270     21.37       0.6836    Rhythmic
+  Lgals1      1367628_at       0.0080     22.53       0.6826    Rhythmic
+  Qsox1       1368023_at       0.0400     22.91       0.6825    Rhythmic
+  Hmgcl       1367767_at       0.0360     22.82       0.6711    Rhythmic
+  P2rx5       1369673_at       0.0438     21.46       0.6659    Rhythmic
+  B2m         1367595_s_at     0.0057     21.72       0.6644    Rhythmic
+  Cysltr1     1369561_at       0.0435     23.93       0.6615    Rhythmic
+  Pla2g16     1370202_at       0.0183     21.82       0.6592    Rhythmic
+  Atp5o       1370276_at       0.0338     22.82       0.6589    Rhythmic
+  Cpt1a       1367836_at       0.0423     22.60       0.6587    Rhythmic
+  Aagab       1369209_at       0.0155     24.13       0.6568    Rhythmic
+  Ndel1       1367761_at       0.0096     22.56       0.6545    Rhythmic
+  Acat1       1367763_at       0.0208     22.56       0.6504    Rhythmic
+  Aco2        1367589_at       0.0401     22.82       0.6490    Rhythmic
+  LOC100361854  1367596_at       0.0097     21.08       0.6483    Rhythmic
+  Col1a2      1370155_at       0.0391     21.84       0.6335    Rhythmic
+  Hba2        1370239_at       0.0229     21.97       0.6335    Rhythmic
+  C4bpa       1369764_at       0.0127     22.94       0.6315    Rhythmic
+  Fabp4       1368271_a_at     0.0107     22.30       0.6310    Rhythmic
+  Tspo        1370249_at       0.0250     22.73       0.6308    Rhythmic
+  Cox7a2l2    1367629_at       0.0342     22.81       0.6297    Rhythmic
+  F3          1369182_at       0.0021     22.95       0.6288    Rhythmic
+  Avpi1       1370251_at       0.0432     23.03       0.6288    Rhythmic
+  Cox4i1      1367607_at       0.0088     21.98       0.6265    Rhythmic
+  Sdha        1367678_at       0.0342     22.14       0.6242    Rhythmic
+  Atp5h       1367622_at       0.0232     22.02       0.6234    Rhythmic
+  Gucy1b3     1369097_s_at     0.0298     22.78       0.6214    Rhythmic
+  Dus1l       1373573_at       0.0206     23.38       0.6189    Rhythmic
+  LOC100359969  1367569_at       0.0465     21.51       0.6163    Rhythmic
+  Ldhb        1370218_at       0.0304     22.40       0.6163    Rhythmic
+  Idh1        1369954_at       0.0362     22.08       0.6145    Rhythmic
+  Vdac2       1369933_at       0.0330     22.12       0.6103    Rhythmic
+  Dync1li2    1368402_at       0.0426     22.80       0.6052    Rhythmic
+  Rabep1      1367980_at       0.0338     22.29       0.6042    Rhythmic
+  Prkag1      1367947_at       0.0424     22.74       0.6012    Rhythmic
+  Gucy2e      1369360_at       0.0462     24.19       0.6012    Rhythmic
+  Pigm        1369042_at       0.0380     24.23       0.5870    Rhythmic
+  Cygb        1367913_at       0.0043     23.30       0.5862    Rhythmic
+  Zdhhc7      1368152_at       0.0462     22.69       0.5853    Rhythmic
+  Wdr7        1369344_at       0.0400     24.69       0.5816    Rhythmic
+  Ppp1r15a    1370174_at       0.0376     22.07       0.5782    Rhythmic
+  rnf141      1385787_at       0.0264     23.68       0.5782    Rhythmic
+  LOC100911825  1367850_at       0.0057     23.99       0.5736    Rhythmic
+  Nt5e        1369200_at       0.0493     22.71       0.5734    Rhythmic
+  Nr1i2       1369270_at       0.0353     23.14       0.5731    Rhythmic
+  Stmn2       1370041_at       0.0342     23.86       0.5711    Rhythmic
+  Nudt22      1367507_at       0.0181     23.59       0.5693    Rhythmic
+  Mdh1        1367653_a_at     0.0097     22.18       0.5662    Rhythmic
+  Stx17       1370597_at       0.0404     23.11       0.5660    Rhythmic
+  Rgs4        1368506_at       0.0372     21.01       0.5576    Rhythmic
+  Hpd         1368188_at       0.0211     22.53       0.5526    Rhythmic
+  Gemin2      1368229_at       0.0403     23.34       0.5526    Rhythmic
+  Magt1       1369868_at       0.0367     21.61       0.5526    Rhythmic
+  Cacna2d3    1390358_at       0.0245     23.19       0.5526    Rhythmic
+  LOC683573   1368080_at       0.0348     23.09       0.5508    Rhythmic
+  Dcxr        1367909_at       0.0481     23.08       0.5480    Rhythmic
+  Gsta5       1368180_s_at     0.0231     22.43       0.5477    Rhythmic
+  Galnt1      1369269_at       0.0078     25.58       0.5391    Rhythmic
+  Picalm      1369452_a_at     0.0152     22.24       0.5391    Rhythmic
+  Ap2b1       1367704_at       0.0031     25.11       0.5359    Rhythmic
+  Nab1        1369409_at       0.0426     23.22       0.5344    Rhythmic
+  Tef         1369919_at       0.0021     24.31       0.5344    Rhythmic
+  Aifm1       1370321_at       0.0260     22.63       0.5344    Rhythmic
+  Tspan2      1368104_at       0.0348     20.64       0.5280    Rhythmic
+  Cp          1368418_a_at     0.0376     22.89       0.5264    Rhythmic
+  Klf15       1368249_at       0.0163     22.37       0.4866  Arrhythmic
+  Ctrb1       1369951_at       0.0427     22.01       0.4581  Arrhythmic
+  Pdzk1ip1    1368209_at       0.0476     23.07       0.4553  Arrhythmic
+  Gstt2       1368409_at       0.0345     24.22       0.4500  Arrhythmic
+  Calb1       1370201_at       0.0251     22.18       0.4500  Arrhythmic
+  Zg16        1368586_at       0.0366     22.59       0.4373  Arrhythmic
+  Upb1        1368245_at       0.0143     22.16       0.4227  Arrhythmic
+  Cited2      1367602_at       0.0037     22.89       0.3952  Arrhythmic
+  Amy2a3      1369502_a_at     0.0354     22.02       0.3731  Arrhythmic
+  Pcsk1n      1367835_at       0.0426     24.35       0.3635  Arrhythmic
+  Prss1       1369030_at       0.0423     22.03       0.3316  Arrhythmic
+  Rgn         1368627_at       0.0376     23.28       0.3049  Arrhythmic
+  Pde2a       1368089_at       0.0414     22.80       0.2902  Arrhythmic
+  Clps        1368196_at       0.0384     22.61       0.2799  Arrhythmic
+  Cel         1368396_at       0.0244     22.16       0.2799  Arrhythmic
+  Cyp4f1      1368467_at       0.0413     22.83       0.2799  Arrhythmic
+  Scarb1      1367855_at       0.0193     22.61       0.2512  Arrhythmic
+  Pnliprp1    1368532_at       0.0445     22.00       0.2512  Arrhythmic
+  Rida        1368060_at       0.0269     23.96       0.2229  Arrhythmic
+  Pnlip       1368554_at       0.0460     22.09       0.2229  Arrhythmic
+  Cpb1        1370084_at       0.0298     22.07       0.2229  Arrhythmic
+  Serpina1    1367647_at       0.0421     21.68       0.1773  Arrhythmic
+
+5. INTERPRETATION
+--------------------------------------------------------------------------------
+
+  The AUROC lies in the range 0.70-0.85, consistent with meaningful
+  generalisation despite the modest core-clock-gene amplitude
+  typical of adipose tissue.
+
+  External LODO context: CRS-AI was trained exclusively on
+  mouse, Drosophila and human data, and previously validated on
+  zebrafish. An AUROC of 0.792 [95% CI 0.753, 0.828]
+  on held-out rat adipose tissue -- a species, tissue and
+  platform not seen at any training step -- provides additional
+  evidence that CRS-AI's features generalise across mammalian
+  species and peripheral tissue types.
+
+  Label quality is supported by Per2 (1368303_at, Q=0.000,
+  T=24.0h) -- a core mammalian TTFL gene -- landing in R-class.
+
+  Bootstrap CI width reflects sample size (N=546 instances,
+  R=246, N=300). For manuscript reporting, cite the
+  CI rather than the point estimate alone.
+
+  Suggested reporting (JBR Methods section):
+    "To evaluate generalisation to an additional mammalian
+    species and peripheral tissue, CRS-AI was applied to
+    GSE20635 (Rattus norvegicus, abdominal white adipose
+    tissue, LD cycle; GPL1355 Affymetrix microarray;
+    n=546 probes: R=246, N=300). Probe-level
+    labels were derived independently from RhythmicDB / BioCycle
+    (E-GEOD-20635; Q<=0.05, period 20-28 h for rhythmic class;
+    absent-from-database criterion for non-rhythmic class). The
+    model achieved AUROC=0.792 (95% CI 0.753-0.828) on
+    this zero-overlap external dataset."
+
+================================================================================
+END OF REPORT
+================================================================================

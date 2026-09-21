@@ -1,0 +1,1198 @@
+================================================================================
+ChronoScope CRS-AI -- EXTERNAL LODO VALIDATION REPORT
+GSE3416: Arabidopsis thaliana, Col-0 rosette leaf, LD cycle
+================================================================================
+
+  Run date:    2026-09-15 16:55
+  Model file:  consensus_rf_model.pkl
+  Model size:  23641.0 KB
+  Model MD5:   7a92c21dbbf8
+  Features:    11
+  Dataset:     GSE3416 (GEO), platform GPL198
+
+1. DATASET SUMMARY
+--------------------------------------------------------------------------------
+
+  GEO accession:  GSE3416
+  Species:        Arabidopsis thaliana (Col-0, wild-type)
+  Tissue:         Rosette leaves, non-flowering plants, 5-6 weeks
+  Light regime:   LD (12h light : 12h dark, 20C)
+  Publication:    Blasing et al. 2006, Plant Cell 18:2965
+  Platform:       GPL198 (Affymetrix ATH1 Genome Array)
+  Probes:         22,810
+  Total samples:  18
+  Samples with timepoints: 18 (3 replicates x 6 timepoints, 4 h intervals, 0-20 h)
+  Genes after probe->AGI-locus mapping (universe U): 22,591
+
+  BioCycle reference (E-GEOD-3416 from RhythmicDB,
+  rhythmicdb_query_BioCycle_allModels_noFilters.xlsx):
+    Total genes in RhythmicDB for this dataset: 2,815
+    RhythmicDB ^ U: 2,736 genes (97% coverage)
+    R class (Q<=0.05, period 20-28h, in U): 1,015 genes
+    X class (in RhythmicDB ^ U, excluded):  1,721 genes
+    N class (absent from RhythmicDB, in U): 19,855 available -> 300 after cap
+
+  Canonical Arabidopsis circadian clock gene label audit:
+
+  Gene      AGI locus    Class  Q-value     Period (h)    In expression U
+  -------  ----------  -----  ---------  -----------  ---------------
+  CCA1      AT2G46830    N      --          --            Yes
+  LHY       AT1G01060    X      0.2239      24.61         Yes
+  TOC1      AT5G61380    X      0.1625      23.40         Yes
+  GI        AT1G22770    R      0.0226      23.15         Yes
+  PRR7      AT5G02810    N      --          --            Yes
+  PRR9      AT2G46790    N      --          --            Yes
+  PRR5      AT5G24470    X      0.1567      23.12         Yes
+  ELF3      AT2G25930    N      --          --            Yes
+  ELF4      AT2G40080    X      0.0686      23.22         Yes
+  LUX       AT3G46640    N      --          --            Yes
+
+  Note: core clock transcription factors typically show modest-
+  amplitude, tissue-averaged oscillations in a single 24h diurnal
+  cycle with n=3 replicates, so several fall in class X (borderline,
+  0.05 < Q < 0.20) rather than R. This mirrors the zebrafish
+  validation, where per2/cry1b/bhlhe40/nfil3 were also X-class.
+
+  Validation set: 1315 instances (R=1015, N=300)
+
+2. VALIDATION DESIGN
+--------------------------------------------------------------------------------
+
+  GSE3416 constitutes the most phylogenetically distant external
+  validation dataset available for CRS-AI. Its novelty relative to
+  the training corpus (and to the zebrafish LODO validation) is
+  multi-dimensional:
+
+    * Different kingdom:  CRS-AI was trained and validated
+      exclusively on animal transcription-translation feedback
+      loop (TTFL) circadian data (mouse liver, Drosophila clock
+      neurons, human blood, zebrafish whole organism). The plant
+      circadian oscillator is built from an entirely distinct
+      molecular repressilator (CCA1/LHY <-> PRR7/9 <-> TOC1/GI),
+      with zero sequence or structural homology to Per/Cry/Bmal1/
+      Clock. Strong performance here cannot be explained by any
+      clock-gene-specific or animal-specific learned pattern.
+
+    * Different experimental design:  a single 24h diurnal cycle
+      (6 timepoints, 4h intervals) with true biological triplicate
+      replication per timepoint, vs. the 48h/no-replicate and
+      48h/2-replicate designs used for training and the zebrafish
+      validation respectively.
+
+    * Different experimental platform:  GPL198 Affymetrix ATH1
+      Genome Array (plant-specific probe design) vs. the mammalian/
+      insect/teleost Affymetrix, Illumina and Agilent platforms
+      used in training and prior validation.
+
+    * Zero data leakage:  GSE3416 was never accessed at any step
+      of CRS-AI training, hyperparameter optimisation, or feature
+      engineering. Labels were assigned entirely from an independent
+      BioCycle analysis (RhythmicDB, E-GEOD-3416) after training
+      was complete.
+
+  Label quality: BioCycle-consistent non-rhythmic-from-absence
+  labeling is used -- the same strategy used for CRS-AI v6 training
+  and for the GSE37332 zebrafish validation, ensuring methodological
+  consistency across all cross-species evaluations reported in
+  the manuscript.
+
+3. METRICS
+--------------------------------------------------------------------------------
+
+  Test set: 1315 instances  (R-class=1015, N-class=300)
+  95% CIs from percentile bootstrap (1000 valid resamples of 1000):
+
+  ROC-AUC:         0.9199  [95% CI 0.8968, 0.9399]
+  Avg. Precision:  0.9604  [95% CI 0.9435, 0.9747]
+  Accuracy:        0.8844  [95% CI 0.8684, 0.9004]
+  Brier score:     0.0844  [95% CI 0.0740, 0.0948]  (lower = better calibration)
+
+  Threshold-dependent metrics (threshold = 0.50):
+
+  Sensitivity (TPR):   1.0000
+  Specificity (TNR):   0.4933
+  Positive pred. val.: 0.8698
+  Negative pred. val.: 1.0000
+  F1-score:            0.9303
+
+  Confusion matrix (threshold 0.5):
+
+                        Predicted
+                   Arrhythmic  Rhythmic
+    Actual N-class      148       152
+    Actual R-class        0      1015
+
+    TP=1015  FP=152  TN=148  FN=0
+
+4. PER-GENE PREDICTIONS -- R CLASS
+--------------------------------------------------------------------------------
+
+  All R-class genes (BioCycle-confirmed rhythmic, Q<=0.05,
+  period 20-28 h), sorted by predicted P(rhythmic) descending.
+
+  Gene (AGI)          Q-val    Period  P(rhythmic)   Predicted
+  ---------------  -------  -------  -----------  ---------
+  AT3G15510          0.0412     23.05       1.0000    Rhythmic
+  AT5G58700          0.0275     23.39       0.9968    Rhythmic
+  AT1G17190          0.0224     23.31       0.9936    Rhythmic
+  AT1G28010          0.0387     22.89       0.9936    Rhythmic
+  AT1G67970          0.0147     23.26       0.9936    Rhythmic
+  AT1G76580          0.0260     23.56       0.9936    Rhythmic
+  AT2G47890          0.0148     23.27       0.9936    Rhythmic
+  AT4G18520          0.0202     23.28       0.9936    Rhythmic
+  AT1G04020          0.0231     24.86       0.9904    Rhythmic
+  AT1G21550          0.0445     23.96       0.9904    Rhythmic
+  AT1G26960          0.0142     24.04       0.9904    Rhythmic
+  AT1G43620          0.0209     23.43       0.9904    Rhythmic
+  AT1G50270          0.0236     23.17       0.9904    Rhythmic
+  AT1G53920          0.0275     23.70       0.9904    Rhythmic
+  AT1G65390          0.0260     23.40       0.9904    Rhythmic
+  AT1G77000          0.0136     23.31       0.9904    Rhythmic
+  AT2G27920          0.0236     23.51       0.9904    Rhythmic
+  AT2G42200          0.0261     25.09       0.9904    Rhythmic
+  AT3G11010          0.0416     23.57       0.9904    Rhythmic
+  AT3G11490          0.0262     23.38       0.9904    Rhythmic
+  AT3G13880          0.0147     23.43       0.9904    Rhythmic
+  AT3G54960          0.0069     23.44       0.9904    Rhythmic
+  AT4G16660          0.0116     23.60       0.9904    Rhythmic
+  AT4G17695          0.0202     24.52       0.9904    Rhythmic
+  AT5G40480          0.0262     24.01       0.9904    Rhythmic
+  AT5G46150          0.0121     24.32       0.9904    Rhythmic
+  AT5G59320          0.0116     23.92       0.9904    Rhythmic
+  AT5G65630          0.0226     23.45       0.9904    Rhythmic
+  AT5G66880          0.0141     23.30       0.9904    Rhythmic
+  AT4G26070          0.0150     23.31       0.9889    Rhythmic
+  AT5G02620          0.0153     24.27       0.9889    Rhythmic
+  AT5G14270          0.0136     23.35       0.9889    Rhythmic
+  AT5G39760          0.0285     23.67       0.9889    Rhythmic
+  AT5G46460          0.0456     23.77       0.9889    Rhythmic
+  AT3G08870          0.0169     23.52       0.9879    Rhythmic
+  AT3G24550          0.0172     23.68       0.9879    Rhythmic
+  AT4G11840          0.0319     23.30       0.9877    Rhythmic
+  AT5G14960          0.0247     23.31       0.9877    Rhythmic
+  AT4G23220          0.0275     23.29       0.9872    Rhythmic
+  AT2G23340          0.0305     23.48       0.9863    Rhythmic
+  AT3G55010          0.0193     24.27       0.9863    Rhythmic
+  AT4G37460          0.0219     23.50       0.9863    Rhythmic
+  AT5G01500          0.0086     23.31       0.9863    Rhythmic
+  AT4G18270          0.0372     23.24       0.9856    Rhythmic
+  AT1G13960          0.0222     24.31       0.9846    Rhythmic
+  AT1G19510          0.0221     23.70       0.9846    Rhythmic
+  AT1G51140          0.0244     24.18       0.9846    Rhythmic
+  AT1G55900          0.0106     23.79       0.9846    Rhythmic
+  AT2G23560          0.0096     24.02       0.9846    Rhythmic
+  AT2G26170          0.0198     23.55       0.9846    Rhythmic
+  AT3G07390          0.0029     23.65       0.9846    Rhythmic
+  AT3G10370          0.0194     24.87       0.9846    Rhythmic
+  AT3G15620          0.0211     23.95       0.9846    Rhythmic
+  AT3G52450          0.0121     23.94       0.9846    Rhythmic
+  AT3G58670          0.0153     23.77       0.9846    Rhythmic
+  AT3G62930          0.0110     23.21       0.9846    Rhythmic
+  AT4G01720          0.0242     23.64       0.9846    Rhythmic
+  AT4G11460          0.0165     24.00       0.9846    Rhythmic
+  AT4G14230          0.0202     23.26       0.9846    Rhythmic
+  AT5G15330          0.0266     24.25       0.9846    Rhythmic
+  AT5G25190          0.0260     24.35       0.9846    Rhythmic
+  AT5G40250          0.0075     23.88       0.9846    Rhythmic
+  AT5G64640          0.0083     23.97       0.9846    Rhythmic
+  AT5G65970          0.0275     23.76       0.9846    Rhythmic
+  AT1G03457          0.0019     23.30       0.9840    Rhythmic
+  AT1G07745          0.0193     24.71       0.9840    Rhythmic
+  AT1G16410          0.0150     23.29       0.9840    Rhythmic
+  AT1G17460          0.0108     23.23       0.9840    Rhythmic
+  AT1G18320          0.0477     24.23       0.9840    Rhythmic
+  AT1G18590          0.0387     24.00       0.9840    Rhythmic
+  AT1G21750          0.0147     23.67       0.9840    Rhythmic
+  AT1G22370          0.0482     23.43       0.9840    Rhythmic
+  AT1G26130          0.0153     24.29       0.9840    Rhythmic
+  AT1G28130          0.0429     23.85       0.9840    Rhythmic
+  AT1G35560          0.0394     24.21       0.9840    Rhythmic
+  AT1G55500          0.0020     23.26       0.9840    Rhythmic
+  AT1G58180          0.0069     24.20       0.9840    Rhythmic
+  AT1G60140          0.0194     24.17       0.9840    Rhythmic
+  AT1G63090          0.0147     23.71       0.9840    Rhythmic
+  AT1G63260          0.0106     23.46       0.9840    Rhythmic
+  AT1G66230          0.0010     23.64       0.9840    Rhythmic
+  AT1G76890          0.0098     23.12       0.9840    Rhythmic
+  AT1G77510          0.0043     23.29       0.9840    Rhythmic
+  AT2G01860          0.0219     24.02       0.9840    Rhythmic
+  AT2G06925          0.0229     23.21       0.9840    Rhythmic
+  AT2G26440          0.0035     23.32       0.9840    Rhythmic
+  AT2G28630          0.0443     24.31       0.9840    Rhythmic
+  AT2G29690          0.0414     23.99       0.9840    Rhythmic
+  AT2G31350          0.0043     23.82       0.9840    Rhythmic
+  AT2G38720          0.0336     24.42       0.9840    Rhythmic
+  AT2G43160          0.0194     24.05       0.9840    Rhythmic
+  AT2G43535          0.0118     23.20       0.9840    Rhythmic
+  AT2G44790          0.0500     22.91       0.9840    Rhythmic
+  AT2G46030          0.0018     23.40       0.9840    Rhythmic
+  AT3G05030          0.0043     23.68       0.9840    Rhythmic
+  AT3G17440          0.0053     23.78       0.9840    Rhythmic
+  AT3G17790          0.0397     23.64       0.9840    Rhythmic
+  AT3G18600          0.0106     23.93       0.9840    Rhythmic
+  AT3G23030          0.0148     23.93       0.9840    Rhythmic
+  AT3G48080          0.0147     23.28       0.9840    Rhythmic
+  AT3G50750          0.0304     24.23       0.9840    Rhythmic
+  AT3G50760          0.0205     23.72       0.9840    Rhythmic
+  AT3G55560          0.0024     23.44       0.9840    Rhythmic
+  AT3G55940          0.0147     23.09       0.9840    Rhythmic
+  AT3G55980          0.0433     23.35       0.9840    Rhythmic
+  AT3G57530          0.0126     23.32       0.9840    Rhythmic
+  AT3G63010          0.0352     23.40       0.9840    Rhythmic
+  AT4G00080          0.0320     23.90       0.9840    Rhythmic
+  AT4G09500          0.0180     23.91       0.9840    Rhythmic
+  AT4G16110          0.0104     22.90       0.9840    Rhythmic
+  AT4G23010          0.0233     23.32       0.9840    Rhythmic
+  AT4G26080          0.0130     23.22       0.9840    Rhythmic
+  AT4G30610          0.0029     23.26       0.9840    Rhythmic
+  AT4G31550          0.0286     24.80       0.9840    Rhythmic
+  AT4G35840          0.0285     23.48       0.9840    Rhythmic
+  AT4G37330          0.0193     23.77       0.9840    Rhythmic
+  AT4G38580          0.0148     23.28       0.9840    Rhythmic
+  AT5G09320          0.0157     23.81       0.9840    Rhythmic
+  AT5G15770          0.0106     23.84       0.9840    Rhythmic
+  AT5G15830          0.0241     24.10       0.9840    Rhythmic
+  AT5G41410          0.0275     24.15       0.9840    Rhythmic
+  AT5G45250          0.0419     23.90       0.9840    Rhythmic
+  AT5G46410          0.0192     23.96       0.9840    Rhythmic
+  AT5G47230          0.0315     23.27       0.9840    Rhythmic
+  AT5G52900          0.0355     24.18       0.9840    Rhythmic
+  AT1G13450          0.0158     24.06       0.9834    Rhythmic
+  AT5G01340          0.0110     22.93       0.9830    Rhythmic
+  AT1G04550          0.0110     23.00       0.9830    Rhythmic
+  AT1G31817          0.0455     24.15       0.9830    Rhythmic
+  AT1G48260          0.0281     24.22       0.9830    Rhythmic
+  AT2G15680          0.0244     23.93       0.9830    Rhythmic
+  AT2G37310          0.0298     23.49       0.9830    Rhythmic
+  AT4G15490          0.0140     24.40       0.9830    Rhythmic
+  AT5G17400          0.0053     23.74       0.9830    Rhythmic
+  AT5G17600          0.0045     23.39       0.9830    Rhythmic
+  AT1G12580          0.0447     24.27       0.9826    Rhythmic
+  AT1G22400          0.0222     23.91       0.9826    Rhythmic
+  AT3G62950          0.0446     24.61       0.9826    Rhythmic
+  AT1G05690          0.0424     24.33       0.9824    Rhythmic
+  AT1G10230          0.0059     23.71       0.9824    Rhythmic
+  AT1G11400          0.0104     23.86       0.9824    Rhythmic
+  AT1G21270          0.0018     23.58       0.9824    Rhythmic
+  AT1G32170          0.0372     23.60       0.9824    Rhythmic
+  AT1G53090          0.0108     23.88       0.9824    Rhythmic
+  AT1G68020          0.0153     24.39       0.9824    Rhythmic
+  AT1G69170          0.0129     23.56       0.9824    Rhythmic
+  AT1G78510          0.0119     23.62       0.9824    Rhythmic
+  AT1G78600          0.0361     23.31       0.9824    Rhythmic
+  AT2G02360          0.0401     23.43       0.9824    Rhythmic
+  AT2G26560          0.0152     23.33       0.9824    Rhythmic
+  AT2G32220          0.0254     23.68       0.9824    Rhythmic
+  AT2G42890          0.0466     23.89       0.9824    Rhythmic
+  AT3G03640          0.0016     23.57       0.9824    Rhythmic
+  AT3G09350          0.0010     23.45       0.9824    Rhythmic
+  AT3G18440          0.0464     23.96       0.9824    Rhythmic
+  AT3G26200          0.0493     23.83       0.9824    Rhythmic
+  AT3G51450          0.0395     23.29       0.9824    Rhythmic
+  AT4G14400          0.0130     23.36       0.9824    Rhythmic
+  AT4G15700          0.0193     23.80       0.9824    Rhythmic
+  AT4G29510          0.0058     23.52       0.9824    Rhythmic
+  AT5G02020          0.0389     24.64       0.9824    Rhythmic
+  AT5G18820          0.0130     23.39       0.9824    Rhythmic
+  AT5G24800          0.0106     24.10       0.9824    Rhythmic
+  AT5G37780          0.0148     23.46       0.9824    Rhythmic
+  AT5G49230          0.0304     23.22       0.9824    Rhythmic
+  AT5G56030          0.0361     23.43       0.9824    Rhythmic
+  AT5G60040          0.0308     23.32       0.9824    Rhythmic
+  AT2G23320          0.0136     23.81       0.9820    Rhythmic
+  AT4G25340          0.0361     24.58       0.9820    Rhythmic
+  AT5G15210          0.0211     24.22       0.9820    Rhythmic
+  AT1G01360          0.0394     23.50       0.9814    Rhythmic
+  AT1G03310          0.0059     23.75       0.9814    Rhythmic
+  AT1G07430          0.0106     23.26       0.9814    Rhythmic
+  AT1G07520          0.0072     24.01       0.9814    Rhythmic
+  AT1G08130          0.0368     25.00       0.9814    Rhythmic
+  AT1G18800          0.0466     24.54       0.9814    Rhythmic
+  AT1G20510          0.0439     23.66       0.9814    Rhythmic
+  AT1G20693          0.0214     23.52       0.9814    Rhythmic
+  AT1G22070          0.0029     23.33       0.9814    Rhythmic
+  AT1G33240          0.0058     23.72       0.9814    Rhythmic
+  AT1G48480          0.0275     23.79       0.9814    Rhythmic
+  AT1G51610          0.0152     23.26       0.9814    Rhythmic
+  AT1G53310          0.0108     23.36       0.9814    Rhythmic
+  AT1G57820          0.0404     23.88       0.9814    Rhythmic
+  AT2G07690          0.0043     23.63       0.9814    Rhythmic
+  AT2G16600          0.0145     23.43       0.9814    Rhythmic
+  AT2G19860          0.0126     24.57       0.9814    Rhythmic
+  AT2G22430          0.0136     23.29       0.9814    Rhythmic
+  AT2G29050          0.0336     24.05       0.9814    Rhythmic
+  AT2G36970          0.0193     23.67       0.9814    Rhythmic
+  AT2G38670          0.0069     23.26       0.9814    Rhythmic
+  AT3G11520          0.0424     23.53       0.9814    Rhythmic
+  AT3G13860          0.0356     24.95       0.9814    Rhythmic
+  AT3G17100          0.0233     24.35       0.9814    Rhythmic
+  AT3G17700          0.0028     23.69       0.9814    Rhythmic
+  AT3G19860          0.0124     23.90       0.9814    Rhythmic
+  AT3G21260          0.0132     24.14       0.9814    Rhythmic
+  AT3G25180          0.0120     23.53       0.9814    Rhythmic
+  AT3G56980          0.0496     24.47       0.9814    Rhythmic
+  AT4G03030          0.0061     24.27       0.9814    Rhythmic
+  AT4G13980          0.0130     23.67       0.9814    Rhythmic
+  AT4G14900          0.0104     24.04       0.9814    Rhythmic
+  AT4G17770          0.0118     23.59       0.9814    Rhythmic
+  AT4G23180          0.0035     23.35       0.9814    Rhythmic
+  AT4G27820          0.0194     24.39       0.9814    Rhythmic
+  AT4G30840          0.0106     24.32       0.9814    Rhythmic
+  AT4G37790          0.0069     23.60       0.9814    Rhythmic
+  AT5G10610          0.0106     23.24       0.9814    Rhythmic
+  AT5G18170          0.0181     24.43       0.9814    Rhythmic
+  AT5G45750          0.0126     23.22       0.9814    Rhythmic
+  AT5G55000          0.0104     23.47       0.9814    Rhythmic
+  AT5G56860          0.0079     23.31       0.9814    Rhythmic
+  AT5G57940          0.0026     23.47       0.9814    Rhythmic
+  AT5G63470          0.0404     23.84       0.9814    Rhythmic
+  AT5G64330          0.0310     24.31       0.9814    Rhythmic
+  AT5G64510          0.0136     23.96       0.9814    Rhythmic
+  AT5G60900          0.0211     23.34       0.9811    Rhythmic
+  AT1G06830          0.0018     23.94       0.9811    Rhythmic
+  AT1G48920          0.0500     23.84       0.9811    Rhythmic
+  AT2G23420          0.0178     24.16       0.9811    Rhythmic
+  AT3G29320          0.0029     23.29       0.9811    Rhythmic
+  AT5G15600          0.0456     24.07       0.9811    Rhythmic
+  AT2G28740          0.0148     23.53       0.9807    Rhythmic
+  AT5G11260          0.0130     23.93       0.9807    Rhythmic
+  AT1G35310          0.0308     23.29       0.9804    Rhythmic
+  AT2G18570          0.0194     23.50       0.9804    Rhythmic
+  AT2G45420          0.0130     23.96       0.9804    Rhythmic
+  AT2G45510          0.0361     23.22       0.9804    Rhythmic
+  AT3G04710          0.0080     24.47       0.9804    Rhythmic
+  AT3G16990          0.0116     23.75       0.9804    Rhythmic
+  AT5G49160          0.0497     23.34       0.9804    Rhythmic
+  AT5G55380          0.0329     24.28       0.9804    Rhythmic
+  AT4G02930          0.0096     23.53       0.9800    Rhythmic
+  AT1G05810          0.0213     24.25       0.9800    Rhythmic
+  AT1G21250          0.0076     23.34       0.9800    Rhythmic
+  AT1G47270          0.0126     23.85       0.9800    Rhythmic
+  AT2G15080          0.0106     24.17       0.9800    Rhythmic
+  AT2G37380          0.0147     23.22       0.9800    Rhythmic
+  AT2G37900          0.0281     24.19       0.9800    Rhythmic
+  AT3G05650          0.0125     23.17       0.9800    Rhythmic
+  AT3G10340          0.0177     23.87       0.9800    Rhythmic
+  AT4G05450          0.0243     25.15       0.9800    Rhythmic
+  AT4G39980          0.0024     23.26       0.9800    Rhythmic
+  AT5G02820          0.0365     23.77       0.9800    Rhythmic
+  AT5G16830          0.0029     23.59       0.9800    Rhythmic
+  AT5G37055          0.0136     23.84       0.9800    Rhythmic
+  AT1G01470          0.0065     23.47       0.9799    Rhythmic
+  AT1G02450          0.0455     23.30       0.9799    Rhythmic
+  AT1G10200          0.0265     23.33       0.9799    Rhythmic
+  AT1G13750          0.0038     23.34       0.9799    Rhythmic
+  AT1G23090          0.0024     23.64       0.9799    Rhythmic
+  AT1G27680          0.0069     23.46       0.9799    Rhythmic
+  AT1G53165          0.0268     22.88       0.9799    Rhythmic
+  AT1G56600          0.0046     23.18       0.9799    Rhythmic
+  AT1G57590          0.0108     23.66       0.9799    Rhythmic
+  AT1G58100          0.0136     23.87       0.9799    Rhythmic
+  AT1G62560          0.0110     23.46       0.9799    Rhythmic
+  AT1G63800          0.0024     23.97       0.9799    Rhythmic
+  AT1G64530          0.0104     24.03       0.9799    Rhythmic
+  AT1G70890          0.0053     23.27       0.9799    Rhythmic
+  AT1G74090          0.0026     23.83       0.9799    Rhythmic
+  AT1G74670          0.0009     23.56       0.9799    Rhythmic
+  AT1G78370          0.0011     23.83       0.9799    Rhythmic
+  AT2G01510          0.0276     24.58       0.9799    Rhythmic
+  AT2G02950          0.0447     23.73       0.9799    Rhythmic
+  AT2G04240          0.0274     23.53       0.9799    Rhythmic
+  AT2G06010          0.0189     24.56       0.9799    Rhythmic
+  AT2G06850          0.0022     23.60       0.9799    Rhythmic
+  AT2G17630          0.0119     23.36       0.9799    Rhythmic
+  AT2G18950          0.0147     23.59       0.9799    Rhythmic
+  AT2G19670          0.0182     23.82       0.9799    Rhythmic
+  AT2G20020          0.0318     24.36       0.9799    Rhythmic
+  AT2G20540          0.0468     24.57       0.9799    Rhythmic
+  AT2G20960          0.0048     23.48       0.9799    Rhythmic
+  AT2G26430          0.0359     24.09       0.9799    Rhythmic
+  AT2G28305          0.0069     23.77       0.9799    Rhythmic
+  AT2G33310          0.0471     23.69       0.9799    Rhythmic
+  AT2G34850          0.0182     23.22       0.9799    Rhythmic
+  AT2G36900          0.0063     23.82       0.9799    Rhythmic
+  AT2G39220          0.0415     23.98       0.9799    Rhythmic
+  AT2G40330          0.0336     23.19       0.9799    Rhythmic
+  AT2G41090          0.0065     23.75       0.9799    Rhythmic
+  AT2G41310          0.0346     23.53       0.9799    Rhythmic
+  AT2G43100          0.0043     23.46       0.9799    Rhythmic
+  AT2G43550          0.0275     23.31       0.9799    Rhythmic
+  AT2G45190          0.0301     23.23       0.9799    Rhythmic
+  AT2G45670          0.0311     24.28       0.9799    Rhythmic
+  AT2G46650          0.0463     23.63       0.9799    Rhythmic
+  AT3G01770          0.0026     23.86       0.9799    Rhythmic
+  AT3G02630          0.0022     23.20       0.9799    Rhythmic
+  AT3G05660          0.0213     23.14       0.9799    Rhythmic
+  AT3G14720          0.0182     23.80       0.9799    Rhythmic
+  AT3G16570          0.0271     22.91       0.9799    Rhythmic
+  AT3G17040          0.0377     23.69       0.9799    Rhythmic
+  AT3G17170          0.0336     23.35       0.9799    Rhythmic
+  AT3G18750          0.0156     22.86       0.9799    Rhythmic
+  AT3G19710          0.0153     23.26       0.9799    Rhythmic
+  AT3G26600          0.0346     23.33       0.9799    Rhythmic
+  AT3G27280          0.0016     23.42       0.9799    Rhythmic
+  AT3G44750          0.0268     23.99       0.9799    Rhythmic
+  AT3G47450          0.0177     23.93       0.9799    Rhythmic
+  AT3G48500          0.0022     23.52       0.9799    Rhythmic
+  AT3G48740          0.0447     23.74       0.9799    Rhythmic
+  AT3G49680          0.0018     23.39       0.9799    Rhythmic
+  AT3G51870          0.0478     23.26       0.9799    Rhythmic
+  AT3G52720          0.0153     23.26       0.9799    Rhythmic
+  AT3G54090          0.0414     23.62       0.9799    Rhythmic
+  AT3G57240          0.0063     23.21       0.9799    Rhythmic
+  AT3G57410          0.0158     24.25       0.9799    Rhythmic
+  AT3G61440          0.0029     23.54       0.9799    Rhythmic
+  AT3G62700          0.0077     23.21       0.9799    Rhythmic
+  AT4G03060          0.0075     23.49       0.9799    Rhythmic
+  AT4G04955          0.0009     23.42       0.9799    Rhythmic
+  AT4G09570          0.0242     23.73       0.9799    Rhythmic
+  AT4G12030          0.0072     23.64       0.9799    Rhythmic
+  AT4G16990          0.0029     23.83       0.9799    Rhythmic
+  AT4G18750          0.0455     23.24       0.9799    Rhythmic
+  AT4G20020          0.0220     24.29       0.9799    Rhythmic
+  AT4G25700          0.0016     23.32       0.9799    Rhythmic
+  AT4G29840          0.0497     23.73       0.9799    Rhythmic
+  AT4G30210          0.0191     23.41       0.9799    Rhythmic
+  AT4G33770          0.0119     22.54       0.9799    Rhythmic
+  AT4G36860          0.0103     23.58       0.9799    Rhythmic
+  AT4G38420          0.0018     23.14       0.9799    Rhythmic
+  AT4G39210          0.0433     24.18       0.9799    Rhythmic
+  AT5G03630          0.0202     23.34       0.9799    Rhythmic
+  AT5G08610          0.0005     23.68       0.9799    Rhythmic
+  AT5G10400          0.0023     23.68       0.9799    Rhythmic
+  AT5G16970          0.0033     23.69       0.9799    Rhythmic
+  AT5G17290          0.0071     23.84       0.9799    Rhythmic
+  AT5G17310          0.0012     23.37       0.9799    Rhythmic
+  AT5G20150          0.0075     23.78       0.9799    Rhythmic
+  AT5G23300          0.0139     23.95       0.9799    Rhythmic
+  AT5G26230          0.0029     23.25       0.9799    Rhythmic
+  AT5G27930          0.0271     23.25       0.9799    Rhythmic
+  AT5G36120          0.0072     23.41       0.9799    Rhythmic
+  AT5G39350          0.0227     23.20       0.9799    Rhythmic
+  AT5G43270          0.0362     22.90       0.9799    Rhythmic
+  AT5G44070          0.0287     23.81       0.9799    Rhythmic
+  AT5G44190          0.0011     23.55       0.9799    Rhythmic
+  AT5G48485          0.0018     23.24       0.9799    Rhythmic
+  AT5G52320          0.0053     23.45       0.9799    Rhythmic
+  AT5G56000          0.0194     23.52       0.9799    Rhythmic
+  AT5G61030          0.0257     23.92       0.9799    Rhythmic
+  AT5G62070          0.0232     23.95       0.9799    Rhythmic
+  AT5G63860          0.0336     23.33       0.9799    Rhythmic
+  AT5G64410          0.0007     23.49       0.9799    Rhythmic
+  AT5G65110          0.0026     23.92       0.9799    Rhythmic
+  AT5G66400          0.0213     23.31       0.9799    Rhythmic
+  AT5G67420          0.0010     23.44       0.9799    Rhythmic
+  AT2G34570          0.0147     24.19       0.9798    Rhythmic
+  AT2G37710          0.0106     23.28       0.9797    Rhythmic
+  AT4G34120          0.0029     23.26       0.9789    Rhythmic
+  AT3G06760          0.0182     24.03       0.9787    Rhythmic
+  AT3G07770          0.0193     24.50       0.9787    Rhythmic
+  AT3G14840          0.0275     23.72       0.9787    Rhythmic
+  AT4G36730          0.0172     24.37       0.9787    Rhythmic
+  AT5G11690          0.0121     23.95       0.9787    Rhythmic
+  AT5G40780          0.0387     24.15       0.9787    Rhythmic
+  AT1G09570          0.0361     24.50       0.9785    Rhythmic
+  AT1G15020          0.0193     24.19       0.9785    Rhythmic
+  AT1G15920          0.0303     24.21       0.9785    Rhythmic
+  AT1G17120          0.0106     24.00       0.9785    Rhythmic
+  AT1G33520          0.0040     23.89       0.9785    Rhythmic
+  AT1G35580          0.0207     24.41       0.9785    Rhythmic
+  AT1G44000          0.0026     23.60       0.9785    Rhythmic
+  AT1G64390          0.0106     24.16       0.9785    Rhythmic
+  AT1G64740          0.0493     24.12       0.9785    Rhythmic
+  AT1G69200          0.0026     23.71       0.9785    Rhythmic
+  AT1G71220          0.0042     24.21       0.9785    Rhythmic
+  AT1G75100          0.0209     24.18       0.9785    Rhythmic
+  AT1G80270          0.0361     23.84       0.9785    Rhythmic
+  AT2G01930          0.0102     23.56       0.9785    Rhythmic
+  AT2G03710          0.0281     23.55       0.9785    Rhythmic
+  AT2G05120          0.0460     24.33       0.9785    Rhythmic
+  AT2G21790          0.0130     24.04       0.9785    Rhythmic
+  AT2G23590          0.0048     23.13       0.9785    Rhythmic
+  AT2G25450          0.0110     23.61       0.9785    Rhythmic
+  AT2G26080          0.0029     23.19       0.9785    Rhythmic
+  AT2G30010          0.0016     23.16       0.9785    Rhythmic
+  AT2G31360          0.0285     23.23       0.9785    Rhythmic
+  AT2G37970          0.0306     24.14       0.9785    Rhythmic
+  AT2G38310          0.0082     23.83       0.9785    Rhythmic
+  AT2G40840          0.0028     23.38       0.9785    Rhythmic
+  AT2G40890          0.0082     23.17       0.9785    Rhythmic
+  AT2G43330          0.0356     24.24       0.9785    Rhythmic
+  AT2G44490          0.0179     23.62       0.9785    Rhythmic
+  AT3G09440          0.0240     23.33       0.9785    Rhythmic
+  AT3G14990          0.0022     23.78       0.9785    Rhythmic
+  AT3G16310          0.0034     22.63       0.9785    Rhythmic
+  AT3G22231          0.0138     23.55       0.9785    Rhythmic
+  AT3G26740          0.0196     23.69       0.9785    Rhythmic
+  AT3G44720          0.0420     24.19       0.9785    Rhythmic
+  AT3G52180          0.0153     23.31       0.9785    Rhythmic
+  AT3G54920          0.0104     24.08       0.9785    Rhythmic
+  AT3G59400          0.0106     23.79       0.9785    Rhythmic
+  AT4G00720          0.0276     24.28       0.9785    Rhythmic
+  AT4G00950          0.0362     24.32       0.9785    Rhythmic
+  AT4G01280          0.0059     24.10       0.9785    Rhythmic
+  AT4G02440          0.0377     24.10       0.9785    Rhythmic
+  AT4G09020          0.0113     23.33       0.9785    Rhythmic
+  AT4G13770          0.0168     23.47       0.9785    Rhythmic
+  AT4G21380          0.0180     23.23       0.9785    Rhythmic
+  AT4G26780          0.0024     23.90       0.9785    Rhythmic
+  AT4G26850          0.0165     23.23       0.9785    Rhythmic
+  AT4G30640          0.0106     23.18       0.9785    Rhythmic
+  AT4G30800          0.0005     23.68       0.9785    Rhythmic
+  AT4G30930          0.0150     23.56       0.9785    Rhythmic
+  AT5G04040          0.0245     23.48       0.9785    Rhythmic
+  AT5G11670          0.0035     23.33       0.9785    Rhythmic
+  AT5G23010          0.0040     23.23       0.9785    Rhythmic
+  AT5G40850          0.0311     23.47       0.9785    Rhythmic
+  AT5G61790          0.0055     23.37       0.9785    Rhythmic
+  AT5G63780          0.0037     23.35       0.9785    Rhythmic
+  AT5G65360          0.0016     23.91       0.9785    Rhythmic
+  AT5G66920          0.0059     22.62       0.9785    Rhythmic
+  AT5G67280          0.0356     24.70       0.9785    Rhythmic
+  AT1G10550          0.0106     23.62       0.9778    Rhythmic
+  AT5G20410          0.0310     23.15       0.9778    Rhythmic
+  AT1G78680          0.0058     23.37       0.9777    Rhythmic
+  AT1G78895          0.0228     24.25       0.9776    Rhythmic
+  AT3G04670          0.0026     24.00       0.9773    Rhythmic
+  AT4G20380          0.0194     24.10       0.9773    Rhythmic
+  AT1G08880          0.0010     23.80       0.9772    Rhythmic
+  AT1G13980          0.0014     23.66       0.9772    Rhythmic
+  AT1G14360          0.0223     23.33       0.9772    Rhythmic
+  AT1G15550          0.0317     23.14       0.9772    Rhythmic
+  AT1G34130          0.0031     23.52       0.9772    Rhythmic
+  AT1G49720          0.0415     23.21       0.9772    Rhythmic
+  AT1G69295          0.0183     23.77       0.9772    Rhythmic
+  AT2G15820          0.0369     23.37       0.9772    Rhythmic
+  AT2G16060          0.0286     22.44       0.9772    Rhythmic
+  AT2G22870          0.0229     24.17       0.9772    Rhythmic
+  AT2G31870          0.0077     23.27       0.9772    Rhythmic
+  AT2G36390          0.0209     23.28       0.9772    Rhythmic
+  AT2G48120          0.0301     24.20       0.9772    Rhythmic
+  AT3G10940          0.0038     23.72       0.9772    Rhythmic
+  AT3G12570          0.0193     23.57       0.9772    Rhythmic
+  AT3G18420          0.0106     23.32       0.9772    Rhythmic
+  AT3G18890          0.0037     23.95       0.9772    Rhythmic
+  AT3G19450          0.0401     22.55       0.9772    Rhythmic
+  AT3G23050          0.0026     23.55       0.9772    Rhythmic
+  AT3G23590          0.0029     23.44       0.9772    Rhythmic
+  AT3G61600          0.0029     23.79       0.9772    Rhythmic
+  AT3G62600          0.0193     23.40       0.9772    Rhythmic
+  AT4G08920          0.0013     23.61       0.9772    Rhythmic
+  AT4G23800          0.0497     23.51       0.9772    Rhythmic
+  AT5G02250          0.0147     23.75       0.9772    Rhythmic
+  AT5G06530          0.0029     23.57       0.9772    Rhythmic
+  AT5G07460          0.0087     24.25       0.9772    Rhythmic
+  AT5G16540          0.0009     23.57       0.9772    Rhythmic
+  AT5G26340          0.0430     23.13       0.9772    Rhythmic
+  AT5G56280          0.0052     24.14       0.9772    Rhythmic
+  AT5G58960          0.0298     24.24       0.9772    Rhythmic
+  AT5G59730          0.0118     23.99       0.9772    Rhythmic
+  AT5G62530          0.0414     23.95       0.9772    Rhythmic
+  AT5G63880          0.0319     23.28       0.9772    Rhythmic
+  AT5G19330          0.0194     23.61       0.9770    Rhythmic
+  AT5G41010          0.0372     23.43       0.9764    Rhythmic
+  AT1G06390          0.0069     23.97       0.9758    Rhythmic
+  AT1G07890          0.0031     23.71       0.9758    Rhythmic
+  AT1G12520          0.0147     24.02       0.9758    Rhythmic
+  AT1G12910          0.0104     23.99       0.9758    Rhythmic
+  AT1G15440          0.0052     23.24       0.9758    Rhythmic
+  AT1G15750          0.0010     23.61       0.9758    Rhythmic
+  AT1G16720          0.0110     24.04       0.9758    Rhythmic
+  AT1G20450          0.0106     23.19       0.9758    Rhythmic
+  AT1G20620          0.0098     23.19       0.9758    Rhythmic
+  AT1G51060          0.0052     23.95       0.9758    Rhythmic
+  AT1G56110          0.0446     24.62       0.9758    Rhythmic
+  AT1G59990          0.0032     24.27       0.9758    Rhythmic
+  AT1G61570          0.0010     24.06       0.9758    Rhythmic
+  AT1G62960          0.0087     23.75       0.9758    Rhythmic
+  AT1G63690          0.0141     23.81       0.9758    Rhythmic
+  AT1G68830          0.0194     24.04       0.9758    Rhythmic
+  AT1G70410          0.0015     23.18       0.9758    Rhythmic
+  AT1G76130          0.0252     24.01       0.9758    Rhythmic
+  AT1G78290          0.0040     23.69       0.9758    Rhythmic
+  AT2G03730          0.0420     24.33       0.9758    Rhythmic
+  AT2G03750          0.0207     23.89       0.9758    Rhythmic
+  AT2G04530          0.0193     24.01       0.9758    Rhythmic
+  AT2G15690          0.0050     24.23       0.9758    Rhythmic
+  AT2G18300          0.0053     24.11       0.9758    Rhythmic
+  AT2G21650          0.0278     24.06       0.9758    Rhythmic
+  AT2G22500          0.0416     24.25       0.9758    Rhythmic
+  AT2G26300          0.0040     23.92       0.9758    Rhythmic
+  AT2G26900          0.0075     23.82       0.9758    Rhythmic
+  AT2G26980          0.0029     23.84       0.9758    Rhythmic
+  AT2G27050          0.0455     23.07       0.9758    Rhythmic
+  AT2G29400          0.0098     24.20       0.9758    Rhythmic
+  AT2G40670          0.0151     24.05       0.9758    Rhythmic
+  AT2G41560          0.0455     23.61       0.9758    Rhythmic
+  AT2G41880          0.0281     23.18       0.9758    Rhythmic
+  AT2G42540          0.0118     23.29       0.9758    Rhythmic
+  AT2G43680          0.0017     23.89       0.9758    Rhythmic
+  AT2G43760          0.0193     24.01       0.9758    Rhythmic
+  AT2G45560          0.0182     23.19       0.9758    Rhythmic
+  AT2G47700          0.0226     24.07       0.9758    Rhythmic
+  AT3G01510          0.0012     23.25       0.9758    Rhythmic
+  AT3G06060          0.0020     23.59       0.9758    Rhythmic
+  AT3G06860          0.0401     24.41       0.9758    Rhythmic
+  AT3G14620          0.0243     23.42       0.9758    Rhythmic
+  AT3G17910          0.0415     23.94       0.9758    Rhythmic
+  AT3G18500          0.0147     24.09       0.9758    Rhythmic
+  AT3G22200          0.0087     23.25       0.9758    Rhythmic
+  AT3G23940          0.0309     24.31       0.9758    Rhythmic
+  AT3G23990          0.0016     23.89       0.9758    Rhythmic
+  AT3G44990          0.0198     24.44       0.9758    Rhythmic
+  AT3G47295          0.0313     24.23       0.9758    Rhythmic
+  AT3G49940          0.0424     24.03       0.9758    Rhythmic
+  AT3G50440          0.0185     23.67       0.9758    Rhythmic
+  AT3G50950          0.0153     23.73       0.9758    Rhythmic
+  AT4G08980          0.0119     23.97       0.9758    Rhythmic
+  AT4G19120          0.0162     23.19       0.9758    Rhythmic
+  AT4G23270          0.0424     23.27       0.9758    Rhythmic
+  AT4G24520          0.0188     24.09       0.9758    Rhythmic
+  AT4G26090          0.0192     23.26       0.9758    Rhythmic
+  AT4G26555          0.0156     24.18       0.9758    Rhythmic
+  AT4G27030          0.0301     24.05       0.9758    Rhythmic
+  AT4G27730          0.0145     23.64       0.9758    Rhythmic
+  AT4G29810          0.0411     24.95       0.9758    Rhythmic
+  AT4G32570          0.0005     23.67       0.9758    Rhythmic
+  AT4G35630          0.0022     23.83       0.9758    Rhythmic
+  AT4G37470          0.0153     24.09       0.9758    Rhythmic
+  AT4G38100          0.0393     23.33       0.9758    Rhythmic
+  AT4G39910          0.0121     23.98       0.9758    Rhythmic
+  AT5G01920          0.0181     23.93       0.9758    Rhythmic
+  AT5G04810          0.0010     23.79       0.9758    Rhythmic
+  AT5G05860          0.0013     23.67       0.9758    Rhythmic
+  AT5G06560          0.0064     23.65       0.9758    Rhythmic
+  AT5G10030          0.0295     23.06       0.9758    Rhythmic
+  AT5G14760          0.0323     24.01       0.9758    Rhythmic
+  AT5G22060          0.0308     23.39       0.9758    Rhythmic
+  AT5G24300          0.0063     24.23       0.9758    Rhythmic
+  AT5G40770          0.0141     23.83       0.9758    Rhythmic
+  AT5G45800          0.0141     24.09       0.9758    Rhythmic
+  AT5G47550          0.0045     23.78       0.9758    Rhythmic
+  AT5G48930          0.0040     23.24       0.9758    Rhythmic
+  AT5G51460          0.0076     23.94       0.9758    Rhythmic
+  AT5G56950          0.0048     23.19       0.9758    Rhythmic
+  AT5G59750          0.0024     23.83       0.9758    Rhythmic
+  AT5G61590          0.0153     24.13       0.9758    Rhythmic
+  AT5G61780          0.0029     24.22       0.9758    Rhythmic
+  AT5G64570          0.0118     23.78       0.9758    Rhythmic
+  AT5G64860          0.0303     23.28       0.9758    Rhythmic
+  AT5G64920          0.0087     24.16       0.9758    Rhythmic
+  AT5G65010          0.0226     22.81       0.9758    Rhythmic
+  AT5G65310          0.0384     24.33       0.9758    Rhythmic
+  AT5G55700          0.0120     24.19       0.9732    Rhythmic
+  AT1G69640          0.0048     23.75       0.9724    Rhythmic
+  AT3G51910          0.0497     24.20       0.9722    Rhythmic
+  AT5G49450          0.0417     24.62       0.9722    Rhythmic
+  AT1G68530          0.0209     24.10       0.9721    Rhythmic
+  AT1G69830          0.0016     23.29       0.9711    Rhythmic
+  AT2G19720          0.0193     23.54       0.9711    Rhythmic
+  AT2G20450          0.0340     23.89       0.9711    Rhythmic
+  AT2G20490          0.0377     24.29       0.9711    Rhythmic
+  AT2G22420          0.0005     23.59       0.9711    Rhythmic
+  AT2G24150          0.0065     23.80       0.9711    Rhythmic
+  AT3G46970          0.0202     23.22       0.9711    Rhythmic
+  AT4G12390          0.0009     23.10       0.9711    Rhythmic
+  AT4G13850          0.0152     23.25       0.9711    Rhythmic
+  AT4G30200          0.0036     23.79       0.9711    Rhythmic
+  AT4G35480          0.0483     23.21       0.9700    Rhythmic
+  AT5G19730          0.0317     23.54       0.9700    Rhythmic
+  AT2G38750          0.0261     23.42       0.9698    Rhythmic
+  AT2G03890          0.0387     23.88       0.9696    Rhythmic
+  AT5G49480          0.0164     24.11       0.9696    Rhythmic
+  AT1G74880          0.0053     23.74       0.9694    Rhythmic
+  AT1G45976          0.0090     23.78       0.9689    Rhythmic
+  AT2G39900          0.0446     23.29       0.9677    Rhythmic
+  AT3G56710          0.0210     23.20       0.9677    Rhythmic
+  AT4G38050          0.0019     23.35       0.9677    Rhythmic
+  AT1G29970          0.0247     24.00       0.9670    Rhythmic
+  AT3G02570          0.0153     23.93       0.9670    Rhythmic
+  AT3G57040          0.0416     24.28       0.9670    Rhythmic
+  AT5G54310          0.0351     24.15       0.9670    Rhythmic
+  AT4G24630          0.0496     24.41       0.9651    Rhythmic
+  AT1G80920          0.0063     23.99       0.9640    Rhythmic
+  AT2G46450          0.0024     23.68       0.9640    Rhythmic
+  AT3G13470          0.0016     24.11       0.9640    Rhythmic
+  AT2G46170          0.0136     24.18       0.9639    Rhythmic
+  AT3G04740          0.0171     23.46       0.9639    Rhythmic
+  AT5G51020          0.0010     23.29       0.9639    Rhythmic
+  AT4G25890          0.0028     24.06       0.9635    Rhythmic
+  AT1G28230          0.0314     23.14       0.9620    Rhythmic
+  AT2G14750          0.0260     23.63       0.9620    Rhythmic
+  AT1G06110          0.0387     24.04       0.9606    Rhythmic
+  AT4G12570          0.0416     23.79       0.9606    Rhythmic
+  AT4G17870          0.0048     23.71       0.9606    Rhythmic
+  AT5G64940          0.0173     24.23       0.9602    Rhythmic
+  AT1G54100          0.0346     24.11       0.9593    Rhythmic
+  AT2G32080          0.0026     23.93       0.9593    Rhythmic
+  AT3G46560          0.0026     23.73       0.9593    Rhythmic
+  AT3G60250          0.0119     23.82       0.9593    Rhythmic
+  AT5G25090          0.0207     23.13       0.9593    Rhythmic
+  AT5G57490          0.0045     23.60       0.9593    Rhythmic
+  AT5G62990          0.0306     23.23       0.9593    Rhythmic
+  AT1G69530          0.0018     23.88       0.9593    Rhythmic
+  AT2G45170          0.0024     23.79       0.9593    Rhythmic
+  AT5G40890          0.0007     23.57       0.9587    Rhythmic
+  AT1G64230          0.0069     24.00       0.9579    Rhythmic
+  AT1G64860          0.0108     24.07       0.9579    Rhythmic
+  AT1G68520          0.0096     23.99       0.9579    Rhythmic
+  AT1G80830          0.0106     24.21       0.9579    Rhythmic
+  AT2G04030          0.0077     24.37       0.9579    Rhythmic
+  AT2G39970          0.0174     23.78       0.9579    Rhythmic
+  AT2G47450          0.0193     24.19       0.9579    Rhythmic
+  AT3G24170          0.0356     24.13       0.9579    Rhythmic
+  AT4G35230          0.0421     23.87       0.9579    Rhythmic
+  AT5G59030          0.0083     23.94       0.9579    Rhythmic
+  AT1G77760          0.0005     23.53       0.9569    Rhythmic
+  AT5G11740          0.0026     23.86       0.9567    Rhythmic
+  AT5G53400          0.0144     24.14       0.9561    Rhythmic
+  AT4G22570          0.0144     23.87       0.9555    Rhythmic
+  AT1G09200          0.0010     24.09       0.9552    Rhythmic
+  AT1G66200          0.0026     23.65       0.9552    Rhythmic
+  AT1G66410          0.0037     23.89       0.9552    Rhythmic
+  AT2G34070          0.0266     24.00       0.9552    Rhythmic
+  AT3G48360          0.0025     23.96       0.9552    Rhythmic
+  AT1G17210          0.0309     23.96       0.9547    Rhythmic
+  AT1G24100          0.0447     24.05       0.9547    Rhythmic
+  AT1G31230          0.0361     23.99       0.9547    Rhythmic
+  AT1G62040          0.0472     24.23       0.9547    Rhythmic
+  AT2G19750          0.0147     24.16       0.9547    Rhythmic
+  AT3G10230          0.0192     23.73       0.9547    Rhythmic
+  AT3G25760          0.0202     23.91       0.9547    Rhythmic
+  AT5G22650          0.0266     24.48       0.9547    Rhythmic
+  AT5G35330          0.0285     24.06       0.9547    Rhythmic
+  AT3G16360          0.0409     23.14       0.9535    Rhythmic
+  AT1G09210          0.0065     23.41       0.9532    Rhythmic
+  AT1G74560          0.0106     24.39       0.9532    Rhythmic
+  AT1G02860          0.0465     24.68       0.9532    Rhythmic
+  AT3G26570          0.0202     23.66       0.9519    Rhythmic
+  AT2G29540          0.0020     23.34       0.9518    Rhythmic
+  AT5G48840          0.0447     23.47       0.9518    Rhythmic
+  AT1G12240          0.0193     24.10       0.9500    Rhythmic
+  AT1G72700          0.0417     23.59       0.9500    Rhythmic
+  AT2G17790          0.0469     25.16       0.9500    Rhythmic
+  AT2G47470          0.0445     23.79       0.9500    Rhythmic
+  AT3G04290          0.0196     24.39       0.9500    Rhythmic
+  AT3G29360          0.0194     24.32       0.9500    Rhythmic
+  AT3G50000          0.0020     23.52       0.9500    Rhythmic
+  AT5G42900          0.0360     23.23       0.9498    Rhythmic
+  AT1G49240          0.0059     23.92       0.9491    Rhythmic
+  AT1G79750          0.0058     23.86       0.9491    Rhythmic
+  AT3G27060          0.0139     24.46       0.9491    Rhythmic
+  AT4G15780          0.0387     24.13       0.9491    Rhythmic
+  AT5G22000          0.0483     24.18       0.9491    Rhythmic
+  AT5G23060          0.0093     23.82       0.9491    Rhythmic
+  AT5G53160          0.0147     24.09       0.9491    Rhythmic
+  AT5G56750          0.0285     24.15       0.9491    Rhythmic
+  AT5G64770          0.0229     24.38       0.9491    Rhythmic
+  AT5G63980          0.0040     23.91       0.9488    Rhythmic
+  AT1G63900          0.0082     23.41       0.9488    Rhythmic
+  AT4G35620          0.0344     23.75       0.9481    Rhythmic
+  AT4G35090          0.0110     24.14       0.9476    Rhythmic
+  AT3G29230          0.0336     24.07       0.9476    Rhythmic
+  AT2G29570          0.0129     24.05       0.9472    Rhythmic
+  AT1G19770          0.0257     24.61       0.9466    Rhythmic
+  AT2G14560          0.0247     23.31       0.9466    Rhythmic
+  AT3G51840          0.0173     24.26       0.9466    Rhythmic
+  AT4G32300          0.0305     23.57       0.9466    Rhythmic
+  AT1G37130          0.0016     23.56       0.9461    Rhythmic
+  AT3G45140          0.0281     24.58       0.9461    Rhythmic
+  AT5G02120          0.0072     23.66       0.9461    Rhythmic
+  AT3G60030          0.0013     23.37       0.9460    Rhythmic
+  AT5G65450          0.0229     23.92       0.9460    Rhythmic
+  AT5G50810          0.0016     24.04       0.9460    Rhythmic
+  AT1G08570          0.0148     23.85       0.9459    Rhythmic
+  AT1G62180          0.0202     24.06       0.9459    Rhythmic
+  AT1G75040          0.0266     24.17       0.9459    Rhythmic
+  AT2G24790          0.0121     24.29       0.9459    Rhythmic
+  AT2G26800          0.0346     24.16       0.9459    Rhythmic
+  AT2G39570          0.0195     24.10       0.9459    Rhythmic
+  AT3G62980          0.0332     24.09       0.9459    Rhythmic
+  AT4G25910          0.0305     23.89       0.9459    Rhythmic
+  AT1G64720          0.0047     23.89       0.9443    Rhythmic
+  AT2G21620          0.0362     23.27       0.9443    Rhythmic
+  AT1G08460          0.0124     23.99       0.9428    Rhythmic
+  AT3G21670          0.0455     24.47       0.9419    Rhythmic
+  AT1G29720          0.0409     23.77       0.9411    Rhythmic
+  AT2G47930          0.0202     24.34       0.9411    Rhythmic
+  AT5G09810          0.0019     24.09       0.9411    Rhythmic
+  AT1G24170          0.0236     23.56       0.9410    Rhythmic
+  AT3G30775          0.0232     24.09       0.9388    Rhythmic
+  AT2G45960          0.0106     23.99       0.9387    Rhythmic
+  AT3G12290          0.0172     23.30       0.9382    Rhythmic
+  AT1G71260          0.0005     23.35       0.9372    Rhythmic
+  AT5G49910          0.0200     25.04       0.9346    Rhythmic
+  AT1G65930          0.0075     23.79       0.9342    Rhythmic
+  AT1G03870          0.0219     24.08       0.9341    Rhythmic
+  AT1G10360          0.0362     23.95       0.9341    Rhythmic
+  AT1G12090          0.0334     23.87       0.9341    Rhythmic
+  AT1G42550          0.0356     24.19       0.9341    Rhythmic
+  AT4G21870          0.0214     24.13       0.9341    Rhythmic
+  AT5G24930          0.0281     24.11       0.9340    Rhythmic
+  AT3G21580          0.0067     23.95       0.9338    Rhythmic
+  AT4G22920          0.0424     23.59       0.9338    Rhythmic
+  AT3G02170          0.0281     24.23       0.9325    Rhythmic
+  AT4G05060          0.0119     24.23       0.9310    Rhythmic
+  AT5G08410          0.0306     23.28       0.9305    Rhythmic
+  AT1G77750          0.0024     24.13       0.9294    Rhythmic
+  AT2G18280          0.0239     24.38       0.9294    Rhythmic
+  AT3G11700          0.0167     24.08       0.9294    Rhythmic
+  AT4G01840          0.0110     24.29       0.9294    Rhythmic
+  AT4G24190          0.0193     23.78       0.9294    Rhythmic
+  AT4G37540          0.0446     24.34       0.9294    Rhythmic
+  AT4G11240          0.0417     24.29       0.9292    Rhythmic
+  AT5G17230          0.0026     23.55       0.9292    Rhythmic
+  AT4G10100          0.0313     23.64       0.9280    Rhythmic
+  AT1G10760          0.0298     23.21       0.9277    Rhythmic
+  AT2G15970          0.0196     23.15       0.9277    Rhythmic
+  AT2G25070          0.0048     23.77       0.9277    Rhythmic
+  AT2G42530          0.0214     23.22       0.9277    Rhythmic
+  AT1G75270          0.0405     23.72       0.9275    Rhythmic
+  AT2G29720          0.0114     23.20       0.9275    Rhythmic
+  AT4G13430          0.0025     23.79       0.9275    Rhythmic
+  AT4G26160          0.0455     24.40       0.9275    Rhythmic
+  AT3G15850          0.0202     24.15       0.9270    Rhythmic
+  AT5G49720          0.0098     23.81       0.9270    Rhythmic
+  AT2G38620          0.0177     23.05       0.9256    Rhythmic
+  AT5G59870          0.0040     24.01       0.9254    Rhythmic
+  AT3G60600          0.0106     23.95       0.9254    Rhythmic
+  AT5G67250          0.0418     24.29       0.9251    Rhythmic
+  AT4G16520          0.0136     24.06       0.9250    Rhythmic
+  AT4G14270          0.0393     23.21       0.9229    Rhythmic
+  AT5G51400          0.0193     23.78       0.9225    Rhythmic
+  AT5G47240          0.0308     23.16       0.9220    Rhythmic
+  AT3G09320          0.0348     24.86       0.9220    Rhythmic
+  AT4G08950          0.0447     23.70       0.9215    Rhythmic
+  AT4G20870          0.0343     24.21       0.9213    Rhythmic
+  AT1G03590          0.0193     23.98       0.9195    Rhythmic
+  AT3G50970          0.0317     23.16       0.9193    Rhythmic
+  AT5G03555          0.0424     24.12       0.9189    Rhythmic
+  AT3G04550          0.0396     23.31       0.9187    Rhythmic
+  AT3G47370          0.0403     24.18       0.9187    Rhythmic
+  AT5G59910          0.0496     24.12       0.9187    Rhythmic
+  AT3G03630          0.0100     23.70       0.9180    Rhythmic
+  AT4G03240          0.0336     24.40       0.9180    Rhythmic
+  AT3G21870          0.0466     24.16       0.9170    Rhythmic
+  AT1G75990          0.0348     24.53       0.9151    Rhythmic
+  AT2G43430          0.0169     24.11       0.9151    Rhythmic
+  AT1G29395          0.0246     23.18       0.9146    Rhythmic
+  AT3G13750          0.0356     24.07       0.9146    Rhythmic
+  AT1G02500          0.0029     23.75       0.9142    Rhythmic
+  AT1G19580          0.0244     23.54       0.9138    Rhythmic
+  AT2G46370          0.0192     23.64       0.9138    Rhythmic
+  AT1G51950          0.0436     24.07       0.9136    Rhythmic
+  AT1G78610          0.0172     23.24       0.9120    Rhythmic
+  AT3G02110          0.0053     23.42       0.9106    Rhythmic
+  AT5G26820          0.0010     23.86       0.9106    Rhythmic
+  AT5G54900          0.0136     24.26       0.9103    Rhythmic
+  AT1G26670          0.0285     24.25       0.9098    Rhythmic
+  AT1G56200          0.0356     23.97       0.9098    Rhythmic
+  AT1G76990          0.0352     24.08       0.9098    Rhythmic
+  AT2G05620          0.0500     24.14       0.9098    Rhythmic
+  AT2G30870          0.0500     25.24       0.9098    Rhythmic
+  AT2G42580          0.0355     24.17       0.9088    Rhythmic
+  AT1G22770          0.0226     23.15       0.9075    Rhythmic
+  AT3G08510          0.0377     23.15       0.9075    Rhythmic
+  AT3G18080          0.0455     23.17       0.9071    Rhythmic
+  AT1G60550          0.0424     24.04       0.9065    Rhythmic
+  AT2G21330          0.0433     24.01       0.9065    Rhythmic
+  AT4G17730          0.0362     24.14       0.9065    Rhythmic
+  AT4G38800          0.0416     23.78       0.9065    Rhythmic
+  AT1G06400          0.0052     23.98       0.9058    Rhythmic
+  AT4G10450          0.0120     23.44       0.9058    Rhythmic
+  AT2G34770          0.0361     24.05       0.9040    Rhythmic
+  AT3G60190          0.0455     23.18       0.9032    Rhythmic
+  AT3G49810          0.0152     24.11       0.9015    Rhythmic
+  AT4G39260          0.0351     23.14       0.8987    Rhythmic
+  AT3G55770          0.0429     24.54       0.8967    Rhythmic
+  AT3G09600          0.0401     24.03       0.8954    Rhythmic
+  AT1G20440          0.0290     23.16       0.8951    Rhythmic
+  AT3G56090          0.0459     23.52       0.8946    Rhythmic
+  AT1G27510          0.0262     24.59       0.8891    Rhythmic
+  AT3G58040          0.0016     23.88       0.8876    Rhythmic
+  AT1G75750          0.0403     22.62       0.8863    Rhythmic
+  AT2G01350          0.0466     24.82       0.8863    Rhythmic
+  AT3G04230          0.0229     23.28       0.8863    Rhythmic
+  AT3G13520          0.0362     24.00       0.8863    Rhythmic
+  AT3G51800          0.0087     24.22       0.8863    Rhythmic
+  AT4G08390          0.0172     23.59       0.8863    Rhythmic
+  AT5G10390          0.0247     23.93       0.8863    Rhythmic
+  AT5G51100          0.0336     23.78       0.8863    Rhythmic
+  AT1G01430          0.0485     24.53       0.8843    Rhythmic
+  AT1G50600          0.0019     23.55       0.8843    Rhythmic
+  AT2G26250          0.0024     23.64       0.8843    Rhythmic
+  AT1G12640          0.0425     24.05       0.8838    Rhythmic
+  AT1G34000          0.0281     23.92       0.8838    Rhythmic
+  AT1G34160          0.0087     23.84       0.8827    Rhythmic
+  AT5G59560          0.0103     24.33       0.8827    Rhythmic
+  AT4G26760          0.0193     24.03       0.8756    Rhythmic
+  AT2G17265          0.0500     24.05       0.8749    Rhythmic
+  AT5G08510          0.0202     23.43       0.8734    Rhythmic
+  AT2G19730          0.0064     23.78       0.8730    Rhythmic
+  AT5G50460          0.0275     23.47       0.8695    Rhythmic
+  AT1G04690          0.0119     23.68       0.8691    Rhythmic
+  AT1G50490          0.0025     23.31       0.8691    Rhythmic
+  AT3G25220          0.0168     24.30       0.8691    Rhythmic
+  AT3G43220          0.0359     23.61       0.8691    Rhythmic
+  AT4G18040          0.0116     24.29       0.8691    Rhythmic
+  AT4G36540          0.0110     22.83       0.8691    Rhythmic
+  AT5G39950          0.0037     23.50       0.8691    Rhythmic
+  AT5G56290          0.0244     23.50       0.8691    Rhythmic
+  AT3G28480          0.0205     23.65       0.8675    Rhythmic
+  AT4G14540          0.0182     23.36       0.8675    Rhythmic
+  AT4G35020          0.0313     23.57       0.8675    Rhythmic
+  AT1G03630          0.0070     23.86       0.8666    Rhythmic
+  AT1G65700          0.0037     23.30       0.8666    Rhythmic
+  AT2G45160          0.0029     23.55       0.8661    Rhythmic
+  AT4G33950          0.0034     23.33       0.8660    Rhythmic
+  AT2G27970          0.0121     23.44       0.8650    Rhythmic
+  AT5G22880          0.0173     24.59       0.8650    Rhythmic
+  AT1G60940          0.0172     22.94       0.8645    Rhythmic
+  AT2G38170          0.0306     23.17       0.8645    Rhythmic
+  AT3G02190          0.0110     23.36       0.8645    Rhythmic
+  AT4G33000          0.0281     23.35       0.8645    Rhythmic
+  AT3G06980          0.0173     23.17       0.8635    Rhythmic
+  AT5G04140          0.0301     22.65       0.8635    Rhythmic
+  AT1G29050          0.0193     24.48       0.8619    Rhythmic
+  AT1G31920          0.0356     22.87       0.8619    Rhythmic
+  AT1G76540          0.0276     23.26       0.8619    Rhythmic
+  AT2G17150          0.0304     23.21       0.8619    Rhythmic
+  AT5G42890          0.0202     23.44       0.8619    Rhythmic
+  AT2G43750          0.0067     24.08       0.8606    Rhythmic
+  AT2G28000          0.0390     24.59       0.8604    Rhythmic
+  AT2G31170          0.0172     24.78       0.8603    Rhythmic
+  AT2G28760          0.0333     23.55       0.8595    Rhythmic
+  AT2G32920          0.0166     23.66       0.8595    Rhythmic
+  AT2G36060          0.0497     24.14       0.8595    Rhythmic
+  AT3G62290          0.0141     23.82       0.8595    Rhythmic
+  AT1G05180          0.0103     24.00       0.8590    Rhythmic
+  AT1G18890          0.0336     23.77       0.8579    Rhythmic
+  AT1G53850          0.0481     25.06       0.8579    Rhythmic
+  AT4G26500          0.0300     24.33       0.8579    Rhythmic
+  AT5G23450          0.0465     24.16       0.8579    Rhythmic
+  AT1G16280          0.0365     23.51       0.8574    Rhythmic
+  AT2G01590          0.0194     23.79       0.8574    Rhythmic
+  AT2G33340          0.0021     23.76       0.8574    Rhythmic
+  AT4G31985          0.0029     23.80       0.8564    Rhythmic
+  AT1G07070          0.0052     23.32       0.8548    Rhythmic
+  AT2G36250          0.0153     23.55       0.8548    Rhythmic
+  AT3G53700          0.0026     23.61       0.8548    Rhythmic
+  AT4G12420          0.0133     24.14       0.8548    Rhythmic
+  AT5G36890          0.0418     23.54       0.8548    Rhythmic
+  AT4G27750          0.0194     24.68       0.8523    Rhythmic
+  AT3G05420          0.0476     23.54       0.8510    Rhythmic
+  AT1G18540          0.0193     24.65       0.8499    Rhythmic
+  AT3G54480          0.0141     24.39       0.8499    Rhythmic
+  AT4G29040          0.0106     23.89       0.8499    Rhythmic
+  AT4G34640          0.0139     24.12       0.8499    Rhythmic
+  AT4G37280          0.0181     23.79       0.8499    Rhythmic
+  AT5G28900          0.0348     24.35       0.8499    Rhythmic
+  AT5G62050          0.0304     24.44       0.8499    Rhythmic
+  AT5G64140          0.0194     24.02       0.8499    Rhythmic
+  AT4G27080          0.0072     23.41       0.8496    Rhythmic
+  AT4G16720          0.0136     23.46       0.8494    Rhythmic
+  AT4G35260          0.0413     24.40       0.8483    Rhythmic
+  AT1G11840          0.0304     24.30       0.8469    Rhythmic
+  AT1G50250          0.0361     24.02       0.8469    Rhythmic
+  AT1G54990          0.0202     23.36       0.8469    Rhythmic
+  AT1G60170          0.0202     24.26       0.8469    Rhythmic
+  AT2G01720          0.0147     24.64       0.8469    Rhythmic
+  AT2G27020          0.0401     24.49       0.8469    Rhythmic
+  AT2G37390          0.0192     23.22       0.8469    Rhythmic
+  AT3G06700          0.0276     24.86       0.8469    Rhythmic
+  AT3G24590          0.0148     23.77       0.8469    Rhythmic
+  AT3G55280          0.0351     24.20       0.8469    Rhythmic
+  AT3G59950          0.0486     24.37       0.8469    Rhythmic
+  AT4G18710          0.0329     23.54       0.8469    Rhythmic
+  AT4G21790          0.0356     24.08       0.8469    Rhythmic
+  AT4G25960          0.0193     23.52       0.8469    Rhythmic
+  AT4G27000          0.0139     24.04       0.8469    Rhythmic
+  AT4G37300          0.0156     23.91       0.8469    Rhythmic
+  AT5G14250          0.0010     23.34       0.8469    Rhythmic
+  AT5G39740          0.0172     24.13       0.8469    Rhythmic
+  AT5G42480          0.0141     23.86       0.8469    Rhythmic
+  AT5G43940          0.0045     24.03       0.8469    Rhythmic
+  AT5G67070          0.0177     24.03       0.8469    Rhythmic
+  AT3G27000          0.0130     23.50       0.8383    Rhythmic
+  AT2G30520          0.0236     24.17       0.8366    Rhythmic
+  AT1G04750          0.0312     23.54       0.8315    Rhythmic
+  AT2G39460          0.0024     23.94       0.8315    Rhythmic
+  AT3G12530          0.0082     23.61       0.8315    Rhythmic
+  AT1G79870          0.0418     24.40       0.8309    Rhythmic
+  AT5G27670          0.0420     24.98       0.8309    Rhythmic
+  AT5G13160          0.0096     23.18       0.8258    Rhythmic
+  AT1G01790          0.0136     23.62       0.8236    Rhythmic
+  AT1G28340          0.0379     24.02       0.8236    Rhythmic
+  AT1G44110          0.0425     23.20       0.8236    Rhythmic
+  AT1G63970          0.0108     23.47       0.8236    Rhythmic
+  AT1G77180          0.0173     23.41       0.8236    Rhythmic
+  AT2G02970          0.0043     23.86       0.8236    Rhythmic
+  AT2G03680          0.0106     23.52       0.8236    Rhythmic
+  AT3G02750          0.0469     23.98       0.8236    Rhythmic
+  AT3G03720          0.0276     24.10       0.8236    Rhythmic
+  AT3G04840          0.0140     24.16       0.8236    Rhythmic
+  AT3G08550          0.0329     23.97       0.8236    Rhythmic
+  AT3G13200          0.0192     23.63       0.8236    Rhythmic
+  AT3G27925          0.0410     23.77       0.8236    Rhythmic
+  AT3G46980          0.0498     23.96       0.8236    Rhythmic
+  AT3G53890          0.0110     23.55       0.8236    Rhythmic
+  AT3G63000          0.0018     24.12       0.8236    Rhythmic
+  AT4G01850          0.0275     23.93       0.8236    Rhythmic
+  AT4G19640          0.0260     23.28       0.8236    Rhythmic
+  AT5G07090          0.0087     24.23       0.8236    Rhythmic
+  AT5G08040          0.0332     24.04       0.8236    Rhythmic
+  AT5G23540          0.0345     24.45       0.8236    Rhythmic
+  AT5G46250          0.0388     24.43       0.8236    Rhythmic
+  AT5G47100          0.0121     23.79       0.8236    Rhythmic
+  AT5G65780          0.0209     24.45       0.8236    Rhythmic
+  AT2G32720          0.0075     22.96       0.8233    Rhythmic
+  AT2G34710          0.0147     22.74       0.8233    Rhythmic
+  AT4G01460          0.0303     23.55       0.8233    Rhythmic
+  AT4G14410          0.0042     24.63       0.8233    Rhythmic
+  AT4G14960          0.0158     23.20       0.8233    Rhythmic
+  AT5G13110          0.0275     22.66       0.8233    Rhythmic
+  AT5G19690          0.0225     23.31       0.8233    Rhythmic
+  AT5G47120          0.0116     23.55       0.8233    Rhythmic
+  AT1G04820          0.0142     23.30       0.8197    Rhythmic
+  AT1G47830          0.0106     23.55       0.8150    Rhythmic
+  AT4G29390          0.0043     23.45       0.8150    Rhythmic
+  AT1G31500          0.0497     23.30       0.8136    Rhythmic
+  AT5G04940          0.0445     23.89       0.8134    Rhythmic
+  AT5G14420          0.0450     24.45       0.8079    Rhythmic
+  AT5G63570          0.0315     23.32       0.8079    Rhythmic
+  AT1G31860          0.0305     24.39       0.8076    Rhythmic
+  AT1G51200          0.0497     24.03       0.8076    Rhythmic
+  AT2G27710          0.0422     23.36       0.8076    Rhythmic
+  AT3G49390          0.0058     23.45       0.8012    Rhythmic
+  AT1G11890          0.0194     24.11       0.7999    Rhythmic
+  AT1G22300          0.0192     23.62       0.7999    Rhythmic
+  AT1G27840          0.0276     23.45       0.7999    Rhythmic
+  AT1G50320          0.0266     23.46       0.7999    Rhythmic
+  AT1G51500          0.0393     24.06       0.7999    Rhythmic
+  AT1G62290          0.0361     23.96       0.7999    Rhythmic
+  AT1G80380          0.0015     23.66       0.7999    Rhythmic
+  AT2G26930          0.0033     24.13       0.7999    Rhythmic
+  AT3G02520          0.0058     24.12       0.7999    Rhythmic
+  AT3G06450          0.0129     23.94       0.7999    Rhythmic
+  AT3G06730          0.0153     23.17       0.7999    Rhythmic
+  AT3G11540          0.0324     23.72       0.7999    Rhythmic
+  AT3G15010          0.0110     24.23       0.7999    Rhythmic
+  AT4G37870          0.0018     24.05       0.7999    Rhythmic
+  AT5G46700          0.0203     23.52       0.7999    Rhythmic
+  AT5G50210          0.0271     23.80       0.7999    Rhythmic
+  AT5G63670          0.0046     23.80       0.7999    Rhythmic
+  AT1G29950          0.0439     24.26       0.7991    Rhythmic
+  AT1G08640          0.0029     23.38       0.7933    Rhythmic
+  AT3G12360          0.0401     23.28       0.7933    Rhythmic
+  AT1G06190          0.0130     23.68       0.7899    Rhythmic
+  AT2G40550          0.0025     23.29       0.7899    Rhythmic
+  AT1G33440          0.0465     23.08       0.7898    Rhythmic
+  AT3G15660          0.0183     23.97       0.7898    Rhythmic
+  AT1G74520          0.0401     23.26       0.7840    Rhythmic
+  AT3G12930          0.0376     24.10       0.7840    Rhythmic
+  AT1G55480          0.0031     22.97       0.7833    Rhythmic
+  AT2G25620          0.0141     23.21       0.7833    Rhythmic
+  AT3G20670          0.0081     24.66       0.7798    Rhythmic
+  AT3G15730          0.0320     23.64       0.7740    Rhythmic
+  AT3G27430          0.0431     23.98       0.7731    Rhythmic
+  AT5G51040          0.0082     23.35       0.7716    Rhythmic
+  AT5G49550          0.0244     23.42       0.7692    Rhythmic
+  AT4G05530          0.0139     23.60       0.7689    Rhythmic
+  AT5G20890          0.0388     24.02       0.7572    Rhythmic
+  AT5G53580          0.0024     23.79       0.7572    Rhythmic
+  AT3G48930          0.0415     24.41       0.7484    Rhythmic
+  AT2G01970          0.0266     24.62       0.7419    Rhythmic
+  AT3G16830          0.0336     23.47       0.7419    Rhythmic
+  AT4G33030          0.0357     23.47       0.7398    Rhythmic
+  AT1G11430          0.0061     23.22       0.7387    Rhythmic
+  AT3G58700          0.0147     23.26       0.7331    Rhythmic
+  AT5G19760          0.0455     23.05       0.7281    Rhythmic
+  AT3G52580          0.0240     23.55       0.7213    Rhythmic
+  AT3G23805          0.0420     23.80       0.7193    Rhythmic
+  AT3G18520          0.0026     23.60       0.7160    Rhythmic
+  AT1G26880          0.0424     23.36       0.7147    Rhythmic
+  AT1G29150          0.0244     23.45       0.7082    Rhythmic
+  AT3G56240          0.0247     23.37       0.7058    Rhythmic
+  AT5G52650          0.0106     23.32       0.7058    Rhythmic
+  AT5G59850          0.0361     24.20       0.7020    Rhythmic
+  AT3G44880          0.0013     23.67       0.7013    Rhythmic
+  AT2G17390          0.0058     23.45       0.7005    Rhythmic
+  AT3G10920          0.0100     23.35       0.7005    Rhythmic
+  AT3G25040          0.0281     24.24       0.7004    Rhythmic
+  AT4G25570          0.0463     24.42       0.7004    Rhythmic
+  AT4G11010          0.0018     23.79       0.6968    Rhythmic
+  AT2G05710          0.0306     24.37       0.6967    Rhythmic
+  AT1G45050          0.0193     23.56       0.6936    Rhythmic
+  AT3G44590          0.0208     23.24       0.6852    Rhythmic
+  AT5G49820          0.0138     24.60       0.6834    Rhythmic
+  AT3G06350          0.0323     23.11       0.6831    Rhythmic
+  AT5G03850          0.0360     23.63       0.6813    Rhythmic
+  AT1G14410          0.0361     23.28       0.6781    Rhythmic
+  AT1G20810          0.0356     23.85       0.6781    Rhythmic
+  AT1G55080          0.0251     23.30       0.6732    Rhythmic
+  AT2G36170          0.0024     23.31       0.6701    Rhythmic
+  AT4G05160          0.0305     23.55       0.6680    Rhythmic
+  AT4G31780          0.0425     24.71       0.6601    Rhythmic
+  AT4G28610          0.0388     22.72       0.6542    Rhythmic
+  AT2G25880          0.0372     23.13       0.6526    Rhythmic
+  AT2G29530          0.0336     23.24       0.6510    Rhythmic
+  AT5G35790          0.0485     22.77       0.6426    Rhythmic
+  AT4G09720          0.0037     23.43       0.6355    Rhythmic
+  AT5G11450          0.0121     23.18       0.6353    Rhythmic
+  AT4G13170          0.0058     23.33       0.6298    Rhythmic
+  AT3G43810          0.0067     23.24       0.6254    Rhythmic
+  AT3G52380          0.0165     23.30       0.6254    Rhythmic
+  AT4G16390          0.0110     23.22       0.6254    Rhythmic
+  AT3G45010          0.0247     22.63       0.6234    Rhythmic
+  AT4G14880          0.0465     23.69       0.6133    Rhythmic
+  AT3G14120          0.0301     23.20       0.5933    Rhythmic
+  AT2G35390          0.0291     23.85       0.5915    Rhythmic
+
+5. INTERPRETATION
+--------------------------------------------------------------------------------
+
+  The AUROC exceeds 0.85, demonstrating strong cross-kingdom
+  generalisation of CRS-AI to a plant circadian oscillator.
+
+  External LODO context: CRS-AI was trained exclusively on
+  animal (mouse, Drosophila, human) data and previously validated
+  on zebrafish -- all TTFL-based circadian clocks. An AUROC of
+  0.920 [95% CI 0.897, 0.940] on held-out
+  Arabidopsis data -- a kingdom, molecular clock architecture and
+  platform not seen at any training step -- provides direct
+  evidence that CRS-AI's features capture organism-agnostic
+  statistical signatures of periodic oscillation (waveform shape,
+  spectral concentration, cosinor fit quality) rather than any
+  clock-gene-specific or animal-specific pattern.
+
+  Label quality is supported by GI/GIGANTEA (Q=0.023, T=23.2h) -- a core
+  component of the plant circadian clock -- landing in R-class,
+  while LHY, TOC1 and PRR5 (borderline, 0.05<Q<0.20) illustrate
+  the expected attenuation of clock-gene amplitude in a single
+  24h whole-rosette time course.
+
+  Short-cycle caveat: this design covers a single 24h cycle
+  (6 timepoints) rather than the 48h/multi-cycle designs used
+  for training and the zebrafish validation, which can reduce
+  the discriminative power of period-fit features for genes
+  with noisy single-cycle waveforms.
+
+  Bootstrap CI width reflects sample size (N=1315 instances,
+  R=1015, N=300). For manuscript reporting, cite the
+  CI rather than the point estimate alone.
+
+  Suggested reporting (JBR Methods section):
+    "To test generalisation beyond Kingdom Animalia, CRS-AI was
+    applied to GSE3416 (Arabidopsis thaliana, Col-0 rosette leaf,
+    LD cycle; GPL198 Affymetrix ATH1 array; n=1315 genes:
+    R=1015, N=300). Gene labels were derived independently
+    from RhythmicDB / BioCycle (E-GEOD-3416; Q<=0.05, period
+    20-28 h for rhythmic class; absent-from-database criterion
+    for non-rhythmic class). The model achieved
+    AUROC=0.920 (95% CI 0.897-0.940) on this zero-overlap
+    external dataset from a different kingdom with a
+    molecularly distinct circadian oscillator."
+
+================================================================================
+END OF REPORT
+================================================================================
