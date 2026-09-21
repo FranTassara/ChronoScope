@@ -1,0 +1,44 @@
+==============================================================================
+CRS-AI availability gated on series length -- validation
+training window 6-48 timepoints; withheld above 96
+==============================================================================
+
+1. APPLICABILITY CLASSIFIER
+------------------------------------------------------------------------------
+  [PASS]  None timepoints -> unknown  (got unknown)
+  [PASS]     0 timepoints -> unknown  (got unknown)
+  [PASS]     5 timepoints -> too_short  (got too_short)
+  [PASS]     6 timepoints -> ok  (got ok)
+  [PASS]    48 timepoints -> ok  (got ok)
+  [PASS]    49 timepoints -> marginal  (got marginal)
+  [PASS]    96 timepoints -> marginal  (got marginal)
+  [PASS]    97 timepoints -> too_long  (got too_long)
+
+2. MODULE AVAILABILITY
+------------------------------------------------------------------------------
+  [PASS] typical transcriptomic series (24 tp)  (available=True, note=no)
+  [PASS] minimum of training window (6 tp)  (available=True, note=no)
+  [PASS] below training window (5 tp)  (available=False, note=no)
+  [PASS] top of training window (48 tp)  (available=True, note=no)
+  [PASS] just above window (49 tp)  (available=True, note=yes)
+  [PASS] twice the window (96 tp)  (available=True, note=yes)
+  [PASS] beyond twice the window (97 tp)  (available=False, note=no)
+  [PASS] 7-day bioluminescence, 10-min bins (1008)  (available=False, note=no)
+  [PASS] scRNA-seq, 6 timepoints  (available=True, note=no)
+  [PASS] DAM recording  (available=False, note=no)
+  [PASS] AWD recording  (available=False, note=no)
+
+3. THE CASE THE REVIEWER ASKED ABOUT
+------------------------------------------------------------------------------
+  [PASS] long bioluminescence trace as CSV is now withheld
+  [PASS] the previous loader-only rule would have allowed it  (confirms the gap this fix closes)
+
+4. NO REGRESSION FOR LOADERS THAT CANNOT REPORT LENGTH
+------------------------------------------------------------------------------
+  [PASS] length unknown leaves availability unchanged
+  [PASS] a failing get_timepoints() does not hide the module
+  [PASS] no loader at all does not hide the module
+
+==============================================================================
+RESULT: ALL CHECKS PASSED
+==============================================================================

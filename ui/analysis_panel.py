@@ -676,8 +676,58 @@ class AnalysisWorker(QThread):
                 message=f"Compare-all error: {str(e)}"
             )
 
+    def _activity_frame_from_table(self, data):
+        """Map a generic CSV/Excel table onto the canonical activity frame.
+
+        Returns (DataFrame, None) on success or (None, message) on failure. The
+        canonical frame has columns time, condition, activity and, when the
+        loader identified one, subject — the same layout the DAM and AWD
+        loaders produce, so the rest of the activity-profile code is unchanged.
+        """
+        import pandas as pd
+
+        time_col = self.loader.get_time_column() if hasattr(self.loader, 'get_time_column') else None
+        if not time_col or time_col not in data.columns:
+            return None, ("Locomotor Activity Analysis needs a numeric time column. "
+                          "Assign one in the Data tab before running this module.")
+
+        variables = [v for v in (self.config.variables or []) if v in data.columns]
+        if not variables:
+            return None, ("Select the column holding the activity measure in the variable "
+                          "list before running Locomotor Activity Analysis.")
+        activity_col = variables[0]
+
+        cond_col = self.loader.get_condition_column() if hasattr(self.loader, 'get_condition_column') else None
+        subject_col = getattr(self.loader, '_subject_col', None)
+
+        out = pd.DataFrame({
+            'time': pd.to_numeric(data[time_col], errors='coerce'),
+            'activity': pd.to_numeric(data[activity_col], errors='coerce'),
+        })
+        if cond_col and cond_col in data.columns:
+            out['condition'] = data[cond_col].astype(str).values
+        else:
+            out['condition'] = 'all'
+        if subject_col and subject_col in data.columns:
+            out['subject'] = data[subject_col].astype(str).values
+
+        out = out.dropna(subset=['time', 'activity'])
+        if out.empty:
+            return None, (f"Column '{activity_col}' contains no numeric values at valid "
+                          f"timepoints, so no activity profile can be computed.")
+
+        # The actogram and chi-square periodogram need more than one cycle to be
+        # meaningful; warn early rather than emit an empty or misleading plot.
+        span = float(out['time'].max() - out['time'].min())
+        if span < 24.0:
+            return None, (f"Locomotor Activity Analysis needs at least 24 h of recording; "
+                          f"the selected data spans {span:.1f} h.")
+
+        return out.sort_values('time').reset_index(drop=True), None
+
     def _run_activity_profile_visualization(self):
-        """Generate Activity Profile visualization for DAM / AWD data."""
+        """Generate Activity Profile visualization for DAM / AWD recordings and
+        for tabular (CSV / Excel) activity data."""
         try:
             import numpy as np
             from core.visualization_circadian_metrics import (
@@ -690,6 +740,16 @@ class AnalysisWorker(QThread):
             if data is None or data.empty:
                 self.finished.emit(False, None, "No data available for visualization")
                 return
+
+            # DAM and AWD loaders already emit the canonical long format this
+            # analysis expects (time / condition / subject / activity). A generic
+            # CSV or Excel table does not, so map the user's column choices onto
+            # that same shape and let everything downstream stay unchanged.
+            if self.source_type not in ('dam', 'awd'):
+                data, err = self._activity_frame_from_table(data)
+                if err:
+                    self.finished.emit(False, None, err)
+                    return
 
             params = self.config.parameters
             ld_end = int(params.get('viz_ld_end_day', 0))
@@ -737,9 +797,13 @@ class AnalysisWorker(QThread):
                 df_plot = df
 
             actogram_type = params.get('viz_actogram_type', 'population')
-            _loader_cfg = (getattr(self.loader, '_config', None) or
-                           getattr(self.loader, '_shared_config', None))
-            lights_on_hour = int(getattr(_loader_cfg, 'lights_on_hour', 0))
+            if self.source_type in ('dam', 'awd'):
+                _loader_cfg = (getattr(self.loader, '_config', None) or
+                               getattr(self.loader, '_shared_config', None))
+                lights_on_hour = int(getattr(_loader_cfg, 'lights_on_hour', 0))
+            else:
+                # Tabular data carries no acquisition config; take ZT0 from the UI.
+                lights_on_hour = int(params.get('viz_lights_on_hour', 0))
             chi_alpha = float(params.get('viz_chi_alpha', 0.05))
             dd_phase = lighting_phases.get('DD')
 
@@ -2460,6 +2524,22 @@ class AnalysisPanel(QWidget):
         _viz_tau_lay.addStretch()
         self._params_layout.addRow("τ search (h):", _viz_tau_w)
 
+        # ZT0 reference for tabular (CSV/Excel) activity data. DAM and AWD
+        # recordings carry lights_on_hour in their loader config; a generic
+        # table does not, so the user supplies it here.
+        self._viz_lights_on_spin = QSpinBox()
+        self._viz_lights_on_spin.setRange(0, 23)
+        self._viz_lights_on_spin.setValue(0)
+        self._viz_lights_on_spin.setSuffix(" h")
+        self._viz_lights_on_spin.setToolTip(
+            "Clock hour at which lights turn on (ZT0), used to place the light/dark\n"
+            "shading on the actogram and activity profile.\n"
+            "Only used for tabular (CSV/Excel) activity data; for DAM and AWD\n"
+            "recordings this is taken from the loader configuration instead.\n"
+            "Leave at 0 if the time column is already expressed in ZT."
+        )
+        self._params_layout.addRow("Lights on (ZT0):", self._viz_lights_on_spin)
+
         # Activity threshold method for α/ρ
         self._viz_threshold_combo = QComboBox()
         self._viz_threshold_combo.addItems(["mean", "percentile-25"])
@@ -3274,6 +3354,9 @@ class AnalysisPanel(QWidget):
             self._show_param("DD ends day:")
             self._show_param("LL ends day:")
             self._show_param("τ search (h):")
+            # DAM/AWD loaders already know ZT0; tabular data does not.
+            if self._source_type not in ('dam', 'awd'):
+                self._show_param("Lights on (ZT0):")
             self._show_param("α/ρ threshold:")
             self._show_checkbox(self._viz_normalize_check)
             self._show_param("Actogram:")
@@ -3989,6 +4072,7 @@ class AnalysisPanel(QWidget):
             'viz_actogram_type': ('individual' if (hasattr(self, '_viz_actogram_type_combo') and self._viz_actogram_type_combo.currentIndex() == 1) else 'population'),
             'viz_onset_min_duration': self._viz_onset_min_duration_spin.value() if hasattr(self, '_viz_onset_min_duration_spin') else 3,
             'viz_onset_threshold_k': self._viz_onset_threshold_k_spin.value() if hasattr(self, '_viz_onset_threshold_k_spin') else 0.5,
+            'viz_lights_on_hour': self._viz_lights_on_spin.value() if hasattr(self, '_viz_lights_on_spin') else 0,
         }
         return params
 
@@ -4195,16 +4279,69 @@ class AnalysisPanel(QWidget):
             print(f"[DEBUG] Error detecting data type: {e}")
             # self._data_info_frame.setVisible(False)
 
+    def _loaded_timepoint_count(self):
+        """Number of distinct timepoints in the loaded data, or None if unknown."""
+        loader = getattr(self, '_loader', None)
+        if loader is None or not hasattr(loader, 'get_timepoints'):
+            return None
+        try:
+            timepoints = loader.get_timepoints()
+        except Exception:
+            return None
+        if not timepoints:
+            return None
+        return len(timepoints)
+
+    def _crs_ai_availability(self, source_type: str):
+        """Decide whether CRS-AI should be offered for the loaded data.
+
+        Returns (available: bool, note: str). Availability is gated on series
+        length as well as loader type: the model was trained on 6-48 timepoints,
+        and a long, densely sampled trace loaded through the generic CSV pathway
+        (a multi-day bioluminescence recording, say) is just as far outside that
+        distribution as a DAM recording, even though it arrives as a plain table.
+        """
+        from core.meta_classifier import (
+            APPLICABLE_MAX_TIMEPOINTS,
+            TRAINING_MAX_TIMEPOINTS,
+            TRAINING_MIN_TIMEPOINTS,
+            timepoint_applicability,
+        )
+
+        if source_type in ('dam', 'awd'):
+            return False, ''
+
+        n = self._loaded_timepoint_count()
+        verdict = timepoint_applicability(n)
+
+        if verdict == 'too_long':
+            return False, ''
+        if verdict == 'too_short':
+            return False, ''
+        if verdict == 'marginal':
+            return True, (
+                f"Caution: this dataset has {n} timepoints, above the "
+                f"{TRAINING_MIN_TIMEPOINTS}-{TRAINING_MAX_TIMEPOINTS}-timepoint range "
+                f"CRS-AI was trained on. The probability is still computed but the "
+                f"model is extrapolating; treat it as indicative only.\n"
+                f"Above {APPLICABLE_MAX_TIMEPOINTS} timepoints the module is withheld."
+            )
+        return True, ''
+
     def _update_module_combo_for_source(self, source_type: str):
         """Add or remove modules based on data source type."""
-        # --- AI Consensus: hide for DAM data (model trained on gene expression) ---
+        # --- AI Consensus: withheld for DAM/AWD recordings and, independently of
+        # how the data was loaded, for series whose length falls outside the
+        # model's 6-48-timepoint training window (see _crs_ai_availability). ---
         ai_consensus_idx = None
         for i in range(self._module_combo.count()):
             if self._module_combo.itemText(i) == "AI Consensus (RandomForest)":
                 ai_consensus_idx = i
                 break
 
-        if source_type in ('dam', 'awd'):
+        crs_ai_available, crs_ai_note = self._crs_ai_availability(source_type)
+
+        if not crs_ai_available:
             if ai_consensus_idx is not None:
                 self._module_combo.removeItem(ai_consensus_idx)
         else:
@@ -4212,15 +4349,21 @@ class AnalysisPanel(QWidget):
                 # Re-insert AI Consensus at index 4 (after Classical Rhythm Analysis)
                 insert_pos = min(4, self._module_combo.count())
                 self._module_combo.insertItem(insert_pos, "AI Consensus (RandomForest)")
+                ai_consensus_idx = insert_pos
+            if ai_consensus_idx is not None:
+                self._module_combo.setItemData(
+                    ai_consensus_idx, crs_ai_note or None, Qt.ToolTipRole)
 
-        # --- Locomotor Activity Analysis: show for DAM and AWD data only ---
+        # --- Locomotor Activity Analysis: DAM/AWD recordings plus any tabular
+        # (CSV/Excel) activity table. Hidden for single-cell RNA-seq, which has
+        # no activity trace to profile.
         has_laa = False
         for i in range(self._module_combo.count()):
             if self._module_combo.itemText(i) == "Locomotor Activity Analysis":
                 has_laa = True
                 break
 
-        if source_type in ('dam', 'awd'):
+        if source_type in ('dam', 'awd', 'csv'):
             if not has_laa:
                 self._module_combo.addItem("Locomotor Activity Analysis")
         else:

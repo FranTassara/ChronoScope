@@ -26,11 +26,18 @@ def chi_square_periodogram(
     period_step: float = 0.1,
     alpha: float = 0.05,
 ) -> Dict:
-    """Sokolove-Bushell chi-square periodogram.
+    """Sokolove-Bushell chi-square periodogram ("greedy" variant).
 
     For each test period P the time series is folded into P/bin_size slots.
     The between-slot variance relative to the total variance gives Qp.
     τ is the period that maximises Qp.
+
+    Uses the non-integer row count (no flooring) and pads the incomplete
+    final row with NaN instead of discarding it, per the "greedy" chi-square
+    periodogram of Tackenberg & Hughey (2021, PLOS Comput Biol 17:e1008567),
+    which corrects the discontinuities the classic floor-based Sokolove &
+    Bushell (1978) formula produces at period lengths where N / n_slots
+    crosses an integer.
 
     Parameters
     ----------
@@ -76,43 +83,50 @@ def chi_square_periodogram(
     periods = np.arange(period_min, period_max + period_step * 0.5, period_step)
     qp_values = np.zeros(len(periods))
 
+    # Total sum of squares over ALL N points (denominator of Qp; fixed once).
+    total_ss = np.sum((activity - grand_mean) ** 2)
+
+    # "Greedy" chi-square periodogram (Tackenberg & Hughey, PLOS Comput Biol
+    # 2021; reference implementation: spectr::cspgram()). The classic
+    # Sokolove & Bushell (1978) periodogram folds the series into n_slots =
+    # round(P / bin_size) columns using only K = floor(N / n_slots) complete
+    # rows, discarding the remaining N - K*n_slots points. Because K is a
+    # step function of P, it drops by 1 every time N/n_slots crosses an
+    # integer, producing sawtooth discontinuities in Qp(P) whose exact
+    # location depends on the recording length N (Hughey lab's reported
+    # "breaks... at certain period lengths based on dataset length").
+    # The greedy fix keeps every point: it folds row-major into n_slots
+    # columns, pads the incomplete final row with NaN so nothing is
+    # discarded, and uses the non-integer row count k = N / n_slots
+    # directly (no floor) in the Qp scaling, making Qp continuous in P.
     for idx, P in enumerate(periods):
         n_slots = max(int(round(P / bin_size_h)), 2)
-        # Assign each measurement to a slot: slot = floor(t / bin_size) % n_slots
-        slot_indices = (np.floor(times / bin_size_h).astype(int)) % n_slots
-
-        slot_sums = np.zeros(n_slots)
-        slot_counts = np.zeros(n_slots, dtype=int)
-        for i, s in enumerate(slot_indices):
-            slot_sums[s] += activity[i]
-            slot_counts[s] += 1
-
-        # Only use slots that have at least one observation
-        occupied = slot_counts > 0
-        if occupied.sum() < 2:
+        if n_slots > N:
             continue
-        slot_means = slot_sums[occupied] / slot_counts[occupied]
+        k = N / n_slots  # real-valued row count — NOT floored
+        n_rows = int(np.ceil(k))
 
-        # Qp = N * between-slot variance / (n_slots * grand_variance)
-        between_var = np.sum((slot_means - grand_mean) ** 2 * slot_counts[occupied]) / N
-        qp_values[idx] = N * between_var / grand_var
+        padded = np.full(n_rows * n_slots, np.nan)
+        padded[:N] = activity
+        with np.errstate(invalid='ignore'):
+            col_means = np.nanmean(padded.reshape(n_rows, n_slots), axis=0)
 
-    # Significance threshold: Qp ~ chi²(n_slots - 1) / (n_slots - 1) * N
-    # Practical approach: use a fixed chi²-based threshold averaged over the
-    # period range; this matches the original Sokolove-Bushell 0.05 line.
+        ss_between = np.sum((col_means - grand_mean) ** 2)
+        qp_values[idx] = k * N * ss_between / total_ss
+
+    # Qp is now on the chi²(n_slots - 1) scale directly (no further
+    # rescaling), so both the significance threshold and the per-period
+    # p-values compare qp_values to the chi² distribution unmodified.
     from scipy import stats as _stats
-    # Use median n_slots across the search range for the threshold
+    # Use median n_slots across the search range for the threshold line.
     median_n_slots = max(int(round(np.median(periods) / bin_size_h)), 2)
     df = median_n_slots - 1
-    chi2_crit = _stats.chi2.ppf(1 - alpha, df=df)
-    # Normalised to Qp scale: threshold Qp ≈ chi2_crit / N
-    significance = chi2_crit / N * (N / median_n_slots) if N > 0 else None
+    significance = float(_stats.chi2.ppf(1 - alpha, df=df)) if N > 0 else None
 
-    # Approximate p-values
+    # Per-period p-values
     n_slots_per_period = np.array([max(int(round(P / bin_size_h)), 2) for P in periods])
-    # Use chi2 CDF per period
     p_values = np.array([
-        1 - _stats.chi2.cdf(qp * (n_sl - 1), df=n_sl - 1)
+        1 - _stats.chi2.cdf(qp, df=n_sl - 1)
         for qp, n_sl in zip(qp_values, n_slots_per_period)
     ])
 

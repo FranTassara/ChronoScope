@@ -33,6 +33,44 @@ except ImportError:
         SKLEARN_AVAILABLE = False
 
 
+# ---------------------------------------------------------------------------
+# Applicability window
+# ---------------------------------------------------------------------------
+# CRS-AI was trained on series of 6-48 timepoints. Outside that range the model
+# still returns a well-formed probability, but it is extrapolating and the value
+# should not be trusted. These constants let callers gate on series length
+# rather than on the kind of file the data came from: a long, densely sampled
+# bioluminescence trace loaded as CSV is just as far outside the training
+# distribution as a DAM recording, and used to reach the model unchecked.
+TRAINING_MIN_TIMEPOINTS = 6
+TRAINING_MAX_TIMEPOINTS = 48
+
+# Beyond twice the training maximum the extrapolation is large enough that the
+# module is withheld rather than merely flagged.
+APPLICABLE_MAX_TIMEPOINTS = 2 * TRAINING_MAX_TIMEPOINTS
+
+
+def timepoint_applicability(n_timepoints: Optional[int]) -> str:
+    """Classify a series length against CRS-AI's training window.
+
+    Returns one of:
+        'unknown'   – the length could not be determined; caller should not gate
+        'too_short' – below the training minimum; features are unreliable
+        'ok'        – inside the training window
+        'marginal'  – above the window but within twice the maximum; usable with caution
+        'too_long'  – far outside the window; CRS-AI should not be offered
+    """
+    if n_timepoints is None or n_timepoints <= 0:
+        return 'unknown'
+    if n_timepoints < TRAINING_MIN_TIMEPOINTS:
+        return 'too_short'
+    if n_timepoints <= TRAINING_MAX_TIMEPOINTS:
+        return 'ok'
+    if n_timepoints <= APPLICABLE_MAX_TIMEPOINTS:
+        return 'marginal'
+    return 'too_long'
+
+
 class ConsensusClassifier:
     """
     AI-based consensus rhythmicity classifier.

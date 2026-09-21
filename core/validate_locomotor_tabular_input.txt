@@ -1,0 +1,38 @@
+==============================================================================
+Locomotor Activity Analysis on tabular input -- validation
+==============================================================================
+
+1. COLUMN MAPPING
+------------------------------------------------------------------------------
+  [PASS] full table accepted
+  [PASS] canonical columns present  (time, activity, condition, subject)
+  [PASS] no rows lost  (1152 of 1152)
+  [PASS] sorted by time
+  [PASS] subjects preserved  (4 subjects)
+  [PASS] conditions preserved
+  [PASS] table without subject/condition accepted
+  [PASS] subject column omitted when unknown
+  [PASS] condition defaults to a single group
+
+2. REJECTED INPUTS
+------------------------------------------------------------------------------
+  [PASS] no variable selected is rejected  (Select the column holding the activity measure in the variable list before running Locomotor Activity Analysis.)
+  [PASS] missing time column is rejected  (Locomotor Activity Analysis needs a numeric time column. Assign one in the Data tab before running this module.)
+  [PASS] non-numeric activity is rejected  (Column 'counts' contains no numeric values at valid timepoints, so no activity profile can be computed.)
+  [PASS] recording under 24 h is rejected  (Locomotor Activity Analysis needs at least 24 h of recording; the selected data spans 11.5 h.)
+
+3. DOWNSTREAM ANALYSIS ON THE MAPPED FRAME
+------------------------------------------------------------------------------
+  [PASS] day index spans the recording  (6 days)
+  [PASS] chi-square periodogram returns a period
+  [PASS] recovered tau is close to the simulated period  (tau=23.80 h vs 23.7 h)
+  [PASS] IS/IV computed  (IS=0.9161077927515391, IV=0.21796521035527736)
+  [PASS] IS is high for a strongly rhythmic signal  (IS=0.916)
+  [PASS] alpha/rho computed  (alpha_mean=11.833333333333334, rho_mean=12.166666666666666)
+  [PASS] alpha + rho is one day by construction  (alpha+rho=24.0000 h)
+  [PASS] one alpha/rho value per recorded day  (6 days)
+  [PASS] day filtering restricts the window  (144 points in [24.0, 95.5] h)
+
+==============================================================================
+RESULT: ALL CHECKS PASSED
+==============================================================================
