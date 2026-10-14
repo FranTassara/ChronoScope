@@ -3669,11 +3669,14 @@ class AnalysisPanel(QWidget):
         elif module_name == "AI Consensus (RandomForest)":  # AI Consensus
             methods = [
                 ("Consensus Rhythmicity Score",
-                 "AI-powered meta-classifier that combines evidence from JTK_CYCLE, Cosinor, "
-                 "Lomb-Scargle, and Fourier F24 into a single rhythmicity "
-                 "probability score (0-1). Uses a pre-trained, calibrated Random Forest "
-                 "(11-feature schema) trained on 3,395 instances (1,696 synthetic + 1,699 "
-                 "real biological) with known ground truth.")
+                 "Meta-classifier that combines the outputs of JTK_CYCLE, Cosinor (OLS), "
+                 "Lomb-Scargle and Fourier F24 into a single calibrated probability (0-1) "
+                 "that a series belongs to the rhythmic class, as defined by its "
+                 "BioCycle/RhythmicDB-derived training labels. It is not a p-value. "
+                 "Uses a pre-trained, calibrated Random Forest (11 features) trained on "
+                 "5,649 series (1,696 synthetic + 3,953 real transcriptomic). Output regimes: "
+                 "Rhythmic (>= 0.70), Borderline (0.30-0.70), Arrhythmic (< 0.30). "
+                 "Trained and evaluated on transcriptomic and synthetic data only.")
             ]
         elif module_name == "Locomotor Activity Analysis":  # available for DAM / AWD data
             methods = [
