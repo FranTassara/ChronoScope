@@ -842,9 +842,11 @@ class AnalysisWorker(QThread):
                         t_s, a_s = _resample_30min(t_s, a_s)
                         if len(t_s) < 3:
                             continue
+                        # Only τ is needed here: skip the permutation test.
                         r = chi_square_periodogram(t_s, a_s,
                                                    period_min=tau_min, period_max=tau_max,
-                                                   period_step=0.1, alpha=chi_alpha)
+                                                   period_step=0.1, alpha=chi_alpha,
+                                                   n_perm=0)
                         if r['tau'] is not None:
                             subj_tau[subj] = r['tau']
                     if subj_tau:
@@ -1025,11 +1027,16 @@ class AnalysisWorker(QThread):
                     individual_results.append(r)
 
                 n_total = len(individual_results)
-                rhythmic = [r for r in individual_results
-                            if r['tau_qp'] is not None
-                            and r['significance'] is not None
-                            and r['tau_qp'] > r['significance']]
+                # Scan-wide permutation test (accounts for searching the
+                # whole period range), not a single-period chi² threshold.
+                rhythmic = [r for r in individual_results if r.get('rhythmic')]
                 n_rhythmic = len(rhythmic)
+                # Threshold curve shown on the plot: median across all tested
+                # individuals of each one's scan-wide threshold curve.
+                curves = [r['threshold_curve'] for r in individual_results
+                          if r.get('threshold_curve') is not None]
+                threshold_curve = (np.nanmedian(np.array(curves), axis=0)
+                                   if curves else None)
 
                 if rhythmic and len(rhythmic[0]['periods']) > 0:
                     qp_arrays = np.array([r['qp'] for r in rhythmic])
@@ -1049,7 +1056,8 @@ class AnalysisWorker(QThread):
                         'tau': tau_mean,
                         'tau_sem': tau_sem,
                         'tau_qp': float(qp_mean[tau_qp_idx]),
-                        'significance': rhythmic[0]['significance'],
+                        'threshold_curve': threshold_curve,
+                        'alpha': chi_alpha,
                         'n_rhythmic': n_rhythmic,
                         'n_total': n_total,
                         'phase_used': 'DD' if dd_phase else 'all',
@@ -1061,7 +1069,8 @@ class AnalysisWorker(QThread):
                         'qp': ref.get('qp', np.array([])),
                         'qp_sem': np.zeros_like(ref.get('qp', np.array([]))),
                         'tau': None, 'tau_sem': None, 'tau_qp': None,
-                        'significance': ref.get('significance'),
+                        'threshold_curve': threshold_curve,
+                        'alpha': chi_alpha,
                         'n_rhythmic': 0, 'n_total': n_total,
                         'phase_used': 'DD' if dd_phase else 'all',
                     }
@@ -2515,10 +2524,11 @@ class AnalysisPanel(QWidget):
         self._viz_chi_alpha_spin.setSingleStep(0.01)
         self._viz_chi_alpha_spin.setDecimals(3)
         self._viz_chi_alpha_spin.setToolTip(
-            "Significance level for rhythmicity classification.\n"
-            "An individual is considered rhythmic if its peak Qp exceeds\n"
-            "the chi² threshold at this alpha. Only rhythmic individuals\n"
-            "contribute to the reported τ mean ± SEM."
+            "Scan-wide significance level for rhythmicity classification.\n"
+            "An individual is considered rhythmic if its most significant\n"
+            "period passes a block-permutation test (1000 permutations of\n"
+            "2-h blocks) that accounts for scanning the whole τ range.\n"
+            "Only rhythmic individuals contribute to the reported τ mean ± SEM."
         )
         _viz_tau_lay.addWidget(self._viz_chi_alpha_spin)
         _viz_tau_lay.addStretch()

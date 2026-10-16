@@ -895,7 +895,8 @@ class PlotCanvas(FigureCanvas):
             tau = res.get('tau')
             tau_sem = res.get('tau_sem')
             tau_qp = res.get('tau_qp')
-            significance = res.get('significance')
+            threshold_curve = res.get('threshold_curve')
+            alpha = res.get('alpha', 0.05)
             n_rhythmic = res.get('n_rhythmic')
             n_total = res.get('n_total')
 
@@ -928,11 +929,12 @@ class PlotCanvas(FigureCanvas):
                               alpha=0.75, edgecolor=color, linewidth=0.8),
                 )
 
-            if significance is not None and not sig_drawn:
-                ax.axhline(significance, color='red', linestyle=':', linewidth=1.0,
-                           label=f'p<{significance:.2f} (Qp threshold)')
-                ax.text(periods[-1], significance, f' {significance:.2f}',
-                        color='red', fontsize=7, va='bottom', ha='right')
+            # Scan-wide threshold: rises with period because Qp's degrees of
+            # freedom (n_slots - 1) do. Drawn once (first condition with one).
+            if threshold_curve is not None and not sig_drawn:
+                ax.plot(periods, threshold_curve, color='red', linestyle=':',
+                        linewidth=1.0,
+                        label=f'Scan-wide α = {alpha:g} (block permutation)')
                 sig_drawn = True
 
             phase_used = res.get('phase_used', 'all')
@@ -1398,7 +1400,7 @@ class ResultsPanel(QWidget):
             if is_activity_profile:
                 columns = [
                     'condition', 'n_subjects', 'n_days',
-                    'tau_h', 'tau_significant', 'phase_used',
+                    'tau_h', 'n_rhythmic', 'phase_used',
                     'IS', 'IV',
                     'alpha_mean_h', 'alpha_sd_h',
                     'rho_mean_h', 'rho_sd_h',
@@ -1406,7 +1408,7 @@ class ResultsPanel(QWidget):
                 ]
                 headers = [
                     'Condition', 'n', 'Days',
-                    'τ (h)', 'τ sig. (p<0.05)', 'Phase (τ)',
+                    'τ (h)', 'Rhythmic (scan-wide)', 'Phase (τ)',
                     'IS', 'IV',
                     'α mean (h)', 'α SD (h)',
                     'ρ mean (h)', 'ρ SD (h)',
@@ -1571,45 +1573,11 @@ class ResultsPanel(QWidget):
         # Activity Profile: build one flat row per condition
         # ---------------------------------------------------------------
         if is_activity_profile:
-            result = self._results[0]
-            conditions_list = result.get('conditions', [])
-            n_subjects_map = result.get('n_subjects', {})
-            n_days_total = result.get('n_days', 0)
-            chi_sq_data = result.get('chi_sq_data', {})
-            is_iv_data = result.get('is_iv_data', {})
-            alpha_rho_data = result.get('alpha_rho_data', {})
+            conditions_list = self._results[0].get('conditions', [])
+            rows = self._activity_profile_rows(self._results[0])
 
-            self._results_table.setRowCount(len(conditions_list))
-            for i, cond in enumerate(conditions_list):
-                chi = chi_sq_data.get(cond, {})
-                iiv = is_iv_data.get(cond, {})
-                ar = alpha_rho_data.get(cond, {})
-
-                # τ significance: compare tau_qp against threshold
-                tau_qp = chi.get('tau_qp')
-                sig_thresh = chi.get('significance')
-                if tau_qp is not None and sig_thresh is not None:
-                    tau_sig = 'Yes' if tau_qp > sig_thresh else 'No'
-                else:
-                    tau_sig = 'N/A'
-
-                row_data = {
-                    'condition': cond,
-                    'n_subjects': n_subjects_map.get(cond, 'N/A'),
-                    'n_days': n_days_total,
-                    'tau_h': chi.get('tau'),
-                    'tau_significant': tau_sig,
-                    'phase_used': chi.get('phase_used', 'N/A'),
-                    'IS': iiv.get('IS'),
-                    'IV': iiv.get('IV'),
-                    'alpha_mean_h': ar.get('alpha_mean'),
-                    'alpha_sd_h': ar.get('alpha_sd'),
-                    'rho_mean_h': ar.get('rho_mean'),
-                    'rho_sd_h': ar.get('rho_sd'),
-                    'onset_sd_h': ar.get('onset_sd'),
-                    'offset_sd_h': ar.get('offset_sd'),
-                }
-
+            self._results_table.setRowCount(len(rows))
+            for i, row_data in enumerate(rows):
                 for j, col in enumerate(columns):
                     val = row_data.get(col, 'N/A')
                     if isinstance(val, float):
@@ -1621,12 +1589,9 @@ class ResultsPanel(QWidget):
                         cell = str(val)
 
                     item = QTableWidgetItem(cell)
-                    # Highlight τ significance
-                    if col == 'tau_significant':
-                        if cell == 'Yes':
-                            item.setBackground(QColor(144, 238, 144))  # light green
-                        elif cell == 'No':
-                            item.setBackground(QColor(255, 180, 180))  # light red
+                    # Flag conditions with no rhythmic individual
+                    if col == 'n_rhythmic' and cell.startswith('0/'):
+                        item.setBackground(QColor(255, 180, 180))  # light red
                     self._results_table.setItem(i, j, item)
 
             # Hide all-N/A columns
@@ -3060,14 +3025,53 @@ class ResultsPanel(QWidget):
     # EXPORT
     # =========================================================================
     
+    @staticmethod
+    def _activity_profile_rows(result: dict) -> list:
+        """One flat row per condition for an Activity Profile result (shared
+        by the results table and the table export)."""
+        n_subjects_map = result.get('n_subjects', {})
+        chi_sq_data = result.get('chi_sq_data', {})
+        is_iv_data = result.get('is_iv_data', {})
+        alpha_rho_data = result.get('alpha_rho_data', {})
+        rows = []
+        for cond in result.get('conditions', []):
+            chi = chi_sq_data.get(cond, {})
+            iiv = is_iv_data.get(cond, {})
+            ar = alpha_rho_data.get(cond, {})
+            # Individuals passing the scan-wide permutation test / tested
+            n_rh, n_tot = chi.get('n_rhythmic'), chi.get('n_total')
+            rows.append({
+                'condition': cond,
+                'n_subjects': n_subjects_map.get(cond, 'N/A'),
+                'n_days': result.get('n_days', 0),
+                'tau_h': chi.get('tau'),
+                'tau_sem_h': chi.get('tau_sem'),
+                'n_rhythmic': f'{n_rh}/{n_tot}' if n_rh is not None and n_tot else 'N/A',
+                'chi_sq_alpha': chi.get('alpha'),
+                'phase_used': chi.get('phase_used', 'N/A'),
+                'IS': iiv.get('IS'),
+                'IV': iiv.get('IV'),
+                'alpha_mean_h': ar.get('alpha_mean'),
+                'alpha_sd_h': ar.get('alpha_sd'),
+                'rho_mean_h': ar.get('rho_mean'),
+                'rho_sd_h': ar.get('rho_sd'),
+                'onset_sd_h': ar.get('onset_sd'),
+                'offset_sd_h': ar.get('offset_sd'),
+            })
+        return rows
+
     def _export_table(self, format: str):
         """Export results table to file."""
         if not self._results:
             QMessageBox.warning(self, "No Results", "No results to export.")
             return
-        
-        # Convert to DataFrame
-        df = pd.DataFrame(self._results)
+
+        # Convert to DataFrame. Activity Profile results hold nested
+        # per-condition dicts/arrays, so export the flat per-condition rows.
+        if self._results[0].get('type') == 'activity_profile':
+            df = pd.DataFrame(self._activity_profile_rows(self._results[0]))
+        else:
+            df = pd.DataFrame(self._results)
         
         # File dialog
         if format == 'csv':

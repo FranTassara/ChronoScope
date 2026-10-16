@@ -97,5 +97,63 @@ class TestSignificanceSelection(unittest.TestCase):
         self.assertIsNone(self._pick({'method': 'cosinor_ols'}))
 
 
+class TestChiSquarePeriodogramThreshold(unittest.TestCase):
+    """The chi-square periodogram reports τ as its most significant period and
+    calls rhythmicity with a scan-wide (block-permutation) threshold, not a
+    flat single-period chi² line."""
+
+    BIN = 0.5
+
+    def _series(self, rng, n_days=7, amp=0.0, period=24.0):
+        t = np.arange(int(n_days * 24 / self.BIN)) * self.BIN
+        a = 10 + amp * np.maximum(0, np.sin(2 * np.pi * t / period)) + rng.normal(0, 2.0, len(t))
+        return t, a
+
+    def test_rhythmic_series_is_called_rhythmic_at_the_right_period(self):
+        from core.visualization_circadian_metrics import chi_square_periodogram
+        t, a = self._series(np.random.default_rng(5), amp=4.0, period=23.6)
+        r = chi_square_periodogram(t, a, n_perm=199)
+        self.assertTrue(r['rhythmic'])
+        self.assertAlmostEqual(r['tau'], 23.6, delta=self.BIN)
+        self.assertGreater(r['tau_qp'], r['significance'])
+
+    def test_threshold_curve_rises_with_period(self):
+        """Qp ~ chi²(n_slots - 1) and n_slots grows with P, so a flat line
+        (the pre-fix behaviour) is anti-conservative at long periods."""
+        from core.visualization_circadian_metrics import chi_square_periodogram
+        t, a = self._series(np.random.default_rng(6))
+        r = chi_square_periodogram(t, a, n_perm=199)
+        curve = r['threshold_curve']
+        self.assertTrue(np.all(np.diff(curve) >= 0))
+        self.assertGreater(curve[-1], curve[0])
+
+    def test_fixed_seed_is_reproducible(self):
+        from core.visualization_circadian_metrics import chi_square_periodogram
+        t, a = self._series(np.random.default_rng(7), amp=1.0)
+        r1 = chi_square_periodogram(t, a, n_perm=199)
+        r2 = chi_square_periodogram(t, a, n_perm=199)
+        self.assertEqual(r1['global_p'], r2['global_p'])
+        self.assertEqual(r1['p_crit'], r2['p_crit'])
+
+    def test_n_perm_zero_skips_the_test(self):
+        from core.visualization_circadian_metrics import chi_square_periodogram
+        t, a = self._series(np.random.default_rng(8), amp=4.0)
+        r = chi_square_periodogram(t, a, n_perm=0)
+        self.assertIsNotNone(r['tau'])
+        self.assertIsNone(r['significance'])
+        self.assertIsNone(r['rhythmic'])
+
+    def test_false_positive_rate_on_noise_is_near_alpha(self):
+        """Regression guard: the pre-fix rule called ~97% of pure-noise
+        recordings rhythmic. At alpha = 0.05, more than 12/100 has
+        probability < 0.001 under correct calibration."""
+        from core.visualization_circadian_metrics import chi_square_periodogram
+        rng = np.random.default_rng(9)
+        hits = sum(bool(chi_square_periodogram(*self._series(rng, n_days=5),
+                                               n_perm=199, seed=i)['rhythmic'])
+                   for i in range(100))
+        self.assertLessEqual(hits, 12)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -49,12 +49,32 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   documents the period scan and the two p-value columns.
 - Chi-square periodogram: the significance threshold was too low by roughly a
   factor of `n_slots`, which made essentially any input come out "significantly
-  rhythmic". Corrected following Tackenberg & Hughey (2021), *PLOS Comput Biol*
-  17:e1008567. See `validation/methods/chi_square_periodogram_fix_validation.txt`.
+  rhythmic". Qp now follows the greedy formula of Tackenberg & Hughey (2021),
+  *PLOS Comput Biol* 17:e1008567. That alone did not fix the calibration: the
+  threshold was still one flat chi² line at the median degrees of freedom,
+  compared with the best Qp over the whole period scan, and still called ~97%
+  of pure-noise recordings rhythmic. Rhythmicity is now decided by a scan-wide
+  block-permutation test (1000 permutations of 2-h blocks, fixed seed), and the
+  plot shows the resulting threshold curve, which rises with period.
+  See `validation/methods/chi_square_periodogram_fix_validation.txt`.
 - Paper figure scripts and validation scripts now resolve the model and holdout
-  artifacts through the restructured paths.
+  artifacts through the restructured paths
+  (`validate_locomotor_tabular_input.py` still pointed at `validation/` as the
+  project root and failed to import `core`).
 
 ### Changed
+- Chi-square periodogram τ is now the period with the smallest per-period
+  p-value rather than the largest raw Qp. Qp's null mean grows with the period,
+  so the raw-Qp maximum drifted towards the longest periods scanned for weak
+  rhythms (median τ = 30.3 h on pure noise over an 18–32 h scan). Clearly
+  rhythmic recordings give the same τ either way.
+- Activity Profile results: the per-condition `τ sig.` Yes/No column is
+  replaced by `Rhythmic (scan-wide)`, the number of individuals passing the
+  test out of those analysed. The old column compared the mean Qp of the
+  individuals already classified as rhythmic against one individual's
+  threshold, so it was almost always "Yes". The table export for Activity
+  Profile now writes these per-condition rows (adding τ SEM and α) instead of
+  the nested result dictionary.
 - Repository restructure:
   - `core/` now holds only runtime analysis code, plus `core/models/` (the
     trained CRS-AI artifacts) and `core/vendor/` (third-party code that is

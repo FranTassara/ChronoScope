@@ -30,6 +30,6 @@ because of their size.
 
 | File | What it does |
 |---|---|
-| `validate_chi_square_periodogram_fix.py` | Monte-Carlo calibration of the corrected chi-square periodogram significance threshold against the old one. |
+| `validate_chi_square_periodogram_fix.py` | Monte-Carlo false-positive rate, power and τ bias of the chi-square periodogram: original code vs. the first (greedy-Qp) fix vs. the current scan-wide block-permutation threshold. |
 | `validate_crs_ai_length_gating.py` | Checks the 6–48 timepoint applicability window is enforced where CRS-AI is offered. |
 | `validate_locomotor_tabular_input.py` | Checks locomotor metrics computed from tabular input match those from the native DAM/AWD path. |

@@ -18,6 +18,56 @@ from typing import Dict, List, Optional, Tuple
 # Chi-square periodogram (Sokolove & Bushell, 1978)
 # ---------------------------------------------------------------------------
 
+def _greedy_qp(X: np.ndarray, n_slots_list: np.ndarray) -> np.ndarray:
+    """Greedy chi-square periodogram statistic for a batch of series.
+
+    X : (B, N) array, one series per row. Returns a (B, len(n_slots_list))
+    array of Qp values, one column per fold width.
+
+    "Greedy" chi-square periodogram (Tackenberg & Hughey, PLOS Comput Biol
+    2021; reference implementation: spectr::cspgram()). The classic
+    Sokolove & Bushell (1978) periodogram folds the series into n_slots =
+    round(P / bin_size) columns using only K = floor(N / n_slots) complete
+    rows, discarding the remaining N - K*n_slots points. Because K is a
+    step function of P, it drops by 1 every time N/n_slots crosses an
+    integer, producing sawtooth discontinuities in Qp(P) whose exact
+    location depends on the recording length N (Hughey lab's reported
+    "breaks... at certain period lengths based on dataset length").
+    The greedy fix keeps every point: it folds row-major into n_slots
+    columns, pads the incomplete final row with NaN so nothing is
+    discarded, and uses the non-integer row count k = N / n_slots
+    directly (no floor) in the Qp scaling, making Qp continuous in P.
+    """
+    B, N = X.shape
+    grand_mean = X.mean(axis=1, keepdims=True)
+    # Total sum of squares over ALL N points (denominator of Qp).
+    total_ss = np.sum((X - grand_mean) ** 2, axis=1)
+    out = np.zeros((B, len(n_slots_list)))
+    for j, n_slots in enumerate(n_slots_list):
+        if n_slots > N:
+            continue
+        k = N / n_slots  # real-valued row count — NOT floored
+        n_rows = int(np.ceil(k))
+        padded = np.full((B, n_rows * n_slots), np.nan)
+        padded[:, :N] = X
+        with np.errstate(invalid='ignore'):
+            col_means = np.nanmean(padded.reshape(B, n_rows, n_slots), axis=1)
+        ss_between = np.sum((col_means - grand_mean) ** 2, axis=1)
+        out[:, j] = k * N * ss_between / total_ss
+    return out
+
+
+def _block_permute(x: np.ndarray, block_len: int, rng: np.random.Generator) -> np.ndarray:
+    """Shuffle the order of contiguous blocks of ``block_len`` points, after
+    a random circular shift so block boundaries are not tied to t = 0."""
+    if block_len <= 1:
+        return rng.permutation(x)
+    x = np.roll(x, int(rng.integers(len(x))))
+    starts = np.arange(0, len(x), block_len)
+    order = rng.permutation(len(starts))
+    return np.concatenate([x[s:s + block_len] for s in starts[order]])
+
+
 def chi_square_periodogram(
     times: np.ndarray,
     activity: np.ndarray,
@@ -25,12 +75,19 @@ def chi_square_periodogram(
     period_max: float = 32.0,
     period_step: float = 0.1,
     alpha: float = 0.05,
+    n_perm: int = 1000,
+    block_h: float = 2.0,
+    seed: int = 0,
 ) -> Dict:
-    """Sokolove-Bushell chi-square periodogram ("greedy" variant).
+    """Sokolove-Bushell chi-square periodogram ("greedy" variant) with a
+    scan-wide, permutation-calibrated significance threshold.
 
     For each test period P the time series is folded into P/bin_size slots.
-    The between-slot variance relative to the total variance gives Qp.
-    τ is the period that maximises Qp.
+    The between-slot variance relative to the total variance gives Qp,
+    which under the null follows chi²(n_slots - 1). Because n_slots (and so
+    the null mean of Qp) grows with P, periods are compared on the p-value
+    scale: τ is the period with the smallest per-period p-value, not the
+    largest raw Qp (raw-Qp argmax is biased towards long periods).
 
     Uses the non-integer row count (no flooring) and pads the incomplete
     final row with NaN instead of discarding it, per the "greedy" chi-square
@@ -39,24 +96,44 @@ def chi_square_periodogram(
     Bushell (1978) formula produces at period lengths where N / n_slots
     crosses an integer.
 
+    Significance accounts for scanning the whole period range (max-statistic
+    permutation test): the series is block-permuted ``n_perm`` times
+    (contiguous blocks of ``block_h`` hours, which preserves short-range
+    autocorrelation while destroying circadian structure), the minimum
+    per-period p-value over the full scan is recorded for each permutation,
+    and its ``alpha`` quantile p* defines the threshold curve
+    Qp_crit(P) = chi²_isf(p*, n_slots(P) - 1). The recording is called
+    rhythmic when its global permutation p-value is <= alpha.
+
     Parameters
     ----------
     times, activity : uniform-interval 1-D arrays (hours, counts)
     period_min / max / step : search range for τ (hours)
-    alpha : significance level for the threshold line
+    alpha : scan-wide significance level
+    n_perm : number of block permutations (0 skips the significance test,
+             e.g. when only τ is needed)
+    block_h : permutation block length (hours)
+    seed : RNG seed for the permutations (fixed for reproducibility)
 
     Returns
     -------
     dict with keys:
-        periods      – array of tested periods
-        qp           – array of Qp statistics (one per period)
-        tau          – period at max Qp (hours)
-        tau_qp       – Qp value at τ
-        significance – Qp threshold at the requested alpha level
-        p_values     – approximate p-values for each period
-        bin_size_h   – inferred bin size (hours)
-        n_points     – number of data points used
+        periods         – array of tested periods
+        qp              – array of Qp statistics (one per period)
+        p_values        – per-period (uncorrected) chi² p-values
+        tau             – period with the smallest per-period p-value (hours)
+        tau_qp          – Qp value at τ
+        threshold_curve – scan-wide Qp threshold at each period (None if n_perm=0)
+        significance    – threshold_curve at τ (None if n_perm=0)
+        p_crit          – per-period p-value cut-off p* equivalent to the
+                          scan-wide alpha (None if n_perm=0)
+        global_p        – scan-wide permutation p-value (None if n_perm=0)
+        rhythmic        – global_p <= alpha (None if n_perm=0)
+        bin_size_h      – inferred bin size (hours)
+        n_points        – number of data points used
     """
+    from scipy import stats as _stats
+
     times = np.asarray(times, dtype=float)
     activity = np.asarray(activity, dtype=float)
 
@@ -65,82 +142,78 @@ def chi_square_periodogram(
     bin_size_h = float(np.median(diffs[diffs > 0])) if len(diffs) > 0 else 1.0
 
     N = len(activity)
-    grand_mean = np.mean(activity)
-    grand_var = np.var(activity, ddof=1)
+    grand_var = np.var(activity, ddof=1) if N > 1 else 0.0
 
     if grand_var == 0 or N < 3:
         return {
             'periods': np.array([]),
             'qp': np.array([]),
+            'p_values': np.array([]),
             'tau': None,
             'tau_qp': None,
+            'threshold_curve': None,
             'significance': None,
-            'p_values': np.array([]),
+            'p_crit': None,
+            'global_p': None,
+            'rhythmic': None,
             'bin_size_h': bin_size_h,
             'n_points': N,
         }
 
-    periods = np.arange(period_min, period_max + period_step * 0.5, period_step)
-    qp_values = np.zeros(len(periods))
-
-    # Total sum of squares over ALL N points (denominator of Qp; fixed once).
-    total_ss = np.sum((activity - grand_mean) ** 2)
-
-    # "Greedy" chi-square periodogram (Tackenberg & Hughey, PLOS Comput Biol
-    # 2021; reference implementation: spectr::cspgram()). The classic
-    # Sokolove & Bushell (1978) periodogram folds the series into n_slots =
-    # round(P / bin_size) columns using only K = floor(N / n_slots) complete
-    # rows, discarding the remaining N - K*n_slots points. Because K is a
-    # step function of P, it drops by 1 every time N/n_slots crosses an
-    # integer, producing sawtooth discontinuities in Qp(P) whose exact
-    # location depends on the recording length N (Hughey lab's reported
-    # "breaks... at certain period lengths based on dataset length").
-    # The greedy fix keeps every point: it folds row-major into n_slots
-    # columns, pads the incomplete final row with NaN so nothing is
-    # discarded, and uses the non-integer row count k = N / n_slots
-    # directly (no floor) in the Qp scaling, making Qp continuous in P.
-    for idx, P in enumerate(periods):
-        n_slots = max(int(round(P / bin_size_h)), 2)
-        if n_slots > N:
-            continue
-        k = N / n_slots  # real-valued row count — NOT floored
-        n_rows = int(np.ceil(k))
-
-        padded = np.full(n_rows * n_slots, np.nan)
-        padded[:N] = activity
-        with np.errstate(invalid='ignore'):
-            col_means = np.nanmean(padded.reshape(n_rows, n_slots), axis=0)
-
-        ss_between = np.sum((col_means - grand_mean) ** 2)
-        qp_values[idx] = k * N * ss_between / total_ss
-
-    # Qp is now on the chi²(n_slots - 1) scale directly (no further
-    # rescaling), so both the significance threshold and the per-period
-    # p-values compare qp_values to the chi² distribution unmodified.
-    from scipy import stats as _stats
-    # Use median n_slots across the search range for the threshold line.
-    median_n_slots = max(int(round(np.median(periods) / bin_size_h)), 2)
-    df = median_n_slots - 1
-    significance = float(_stats.chi2.ppf(1 - alpha, df=df)) if N > 0 else None
-
-    # Per-period p-values
+    periods = np.round(np.arange(period_min, period_max + period_step * 0.5, period_step), 10)
     n_slots_per_period = np.array([max(int(round(P / bin_size_h)), 2) for P in periods])
-    p_values = np.array([
-        1 - _stats.chi2.cdf(qp, df=n_sl - 1)
-        for qp, n_sl in zip(qp_values, n_slots_per_period)
-    ])
+    valid = n_slots_per_period <= N
 
-    best_idx = int(np.argmax(qp_values))
+    # Qp depends on P only through n_slots, so compute each fold width once.
+    uniq_slots, inverse = np.unique(n_slots_per_period, return_inverse=True)
+    uniq_df = uniq_slots - 1
+    uniq_valid = uniq_slots <= N
+
+    qp_uniq = _greedy_qp(activity[None, :], uniq_slots)[0]
+    qp_values = qp_uniq[inverse]
+
+    # Qp is on the chi²(n_slots - 1) scale directly (no further rescaling).
+    p_values = np.where(valid, _stats.chi2.sf(qp_values, n_slots_per_period - 1), 1.0)
+
+    # τ = most significant period. Ties on p (p underflowing to 0) are broken
+    # by the larger Qp relative to its df; ties within one fold width (all P
+    # that round to the same n_slots give the same Qp) by the P closest to
+    # n_slots * bin_size, the period that fold actually tests.
+    logp = np.where(valid, _stats.chi2.logsf(qp_values, n_slots_per_period - 1), 0.0)
+    fold_offset = np.abs(periods - n_slots_per_period * bin_size_h)
+    best_idx = int(np.lexsort(
+        (fold_offset, -(qp_values - (n_slots_per_period - 1)), logp))[0])
     tau = float(periods[best_idx])
     tau_qp = float(qp_values[best_idx])
+
+    threshold_curve = significance = p_crit = global_p = rhythmic = None
+    if n_perm and n_perm > 0 and uniq_valid.any():
+        rng = np.random.default_rng(seed)
+        block_len = max(int(round(block_h / bin_size_h)), 1)
+        X = np.array([_block_permute(activity, block_len, rng) for _ in range(n_perm)])
+        qp_null = _greedy_qp(X, uniq_slots[uniq_valid])
+        min_logp_null = _stats.chi2.logsf(qp_null, uniq_df[uniq_valid]).min(axis=1)
+        min_logp_obs = float(logp[valid].min())
+
+        global_p = float((1 + np.sum(min_logp_null <= min_logp_obs)) / (n_perm + 1))
+        rhythmic = bool(global_p <= alpha)
+        log_p_crit = float(np.quantile(min_logp_null, alpha))
+        p_crit = float(np.exp(log_p_crit))
+        threshold_curve = np.where(
+            valid, _stats.chi2.isf(p_crit, n_slots_per_period - 1), np.nan)
+        significance = float(threshold_curve[best_idx])
 
     return {
         'periods': periods,
         'qp': qp_values,
+        'p_values': p_values,
         'tau': tau,
         'tau_qp': tau_qp,
+        'threshold_curve': threshold_curve,
         'significance': significance,
-        'p_values': p_values,
+        'p_crit': p_crit,
+        'global_p': global_p,
+        'rhythmic': rhythmic,
         'bin_size_h': bin_size_h,
         'n_points': N,
     }
