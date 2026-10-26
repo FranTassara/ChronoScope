@@ -66,18 +66,28 @@ All analysis methods return typed dataclasses with standardized interfaces.
 Used by: JTK Cycle, AR-JTK, Cosine-Kendall
 
 Attributes:
-    p_value         : float   - Raw p-value from Kendall tau test
-    adj_p_value     : float   - Bonferroni-adjusted p-value
+    p_value         : float   - Raw p-value of the best template (Kendall tau test)
+    bonf_p_value    : float   - p_value × n_tests (Bonferroni over all templates)
+    bh_p_value      : float   - p_value × n_tests / k, k = rank of the best template's
+                                p-value among all templates; k = 1 unless several tie,
+                                so it almost always equals bonf_p_value (not a BH
+                                step-up adjustment)
+    adj_p_value     : float   - Alias of bh_p_value (backward compatibility)
     period          : float   - Best-fit period (hours)
     amplitude       : float   - Estimated amplitude (90th-10th percentile / 2)
     acrophase       : float   - Peak time in hours
     asymmetry       : float   - Waveform asymmetry parameter (0-1)
     tau             : float   - Kendall tau correlation coefficient
-    lag             : float   - Phase lag parameter
+    lag             : float   - Phase lag parameter (time of the template minimum)
+    n_tests         : int     - Number of period × lag × asymmetry templates tested
     method          : str     - Analysis method identifier
+    pvalue_method   : str     - "analytical" or "empirical"; with "empirical" the
+                                three p-values are the same permutation p-value
+    best_fit        : Optional[bool] - Set by the *_all_periods sweeps only: True
+                                for the period with the smallest unrounded p-value
 
 Methods:
-    is_significant(alpha=0.05) -> bool  : Check if adj_p_value < alpha
+    is_significant(alpha=0.05, method='bh') -> bool : bh / bonferroni / raw p < alpha
     to_dict() -> Dict[str, Any]         : Convert to dictionary
 
 -------------------------------------------------------------------------------
@@ -93,11 +103,16 @@ Attributes:
     period          : float   - Best-fit period (hours)
     p_value         : float   - F-test p-value
     adj_p_value     : float   - Bonferroni-adjusted p-value
-    amplitude_ci    : Tuple[float, float] - 95% CI for amplitude
-    acrophase_ci    : Tuple[float, float] - 95% CI for acrophase (radians)
-    amplitude_p     : float   - P-value for amplitude significance
-    acrophase_p     : float   - P-value for acrophase significance
+    amplitude_ci    : Tuple[float, float] - 95% CI for amplitude (delta method,
+                                amplitude ± 1.96 SE)
+    acrophase_ci    : Tuple[float, float] - 95% CI for acrophase (radians), both
+                                bounds wrapped to [0, 2π); lower > upper means the
+                                interval crosses 0; (0, 2π) if the half-width ≥ π
+    amplitude_p     : float   - t-test p-value of β_cos (not a test of the amplitude)
+    acrophase_p     : float   - t-test p-value of β_sin (not a test of the acrophase)
     method          : str     - "Cosinor"
+
+Note: acrophase_hours is in [0, period) and acrophase_rad in [0, 2π).
 
 Methods:
     is_significant(alpha=0.05) -> bool  : Check if adj_p_value < alpha
@@ -109,13 +124,23 @@ Methods:
 Used by: Harmonic Cosinor
 
 Attributes:
-    adj_p_value     : float   - Bonferroni-adjusted p-value
+    p_value         : float   - Raw F-test p-value at the best-fit period
+    adj_p_value     : float   - p_value × number of periods fitted (Bonferroni)
     period          : float   - Best-fit period (hours)
-    amplitudes      : List[float] - Amplitudes for each detected peak
-    acrophases      : List[float] - Acrophase times (hours) for each peak
+    amplitudes      : List[float] - Amplitude of each harmonic, harmonic order
+                                    (first = fundamental)
+    acrophases      : List[float] - First peak time (hours) of each harmonic, same
+                                    order; harmonic k is in [0, period/k)
     n_harmonics     : int     - Number of harmonics used
     method          : str     - "Harmonic-Cosinor"
-    fit_model       : Optional[Dict] - Model parameters for plotting
+    fit_model       : Optional[Dict] - Model parameters for plotting (incl. r_squared)
+    warning         : Optional[str] - Set when the extra harmonics do not improve
+                                      the fit (F-test p > 0.05)
+    harmonic_numbers: List[int]   - 1..n_harmonics
+    waveform_peaks  : List[float] - Peak times (hours, [0, period)) of the fitted
+                                    curve (sum of all harmonics), highest first
+    waveform_troughs: List[float] - Trough times of the fitted curve, lowest first
+    waveform_amplitude: float     - Half the peak-to-trough range of the fitted curve
 
 Methods:
     is_significant(alpha=0.05) -> bool  : Check if adj_p_value < alpha
@@ -134,15 +159,17 @@ Attributes:
     dominant_power  : float   - Power at dominant period
     target_period   : float   - The period tested (e.g., 24h)
     target_power    : float   - Power at the target period
-    correlation_r   : Optional[float] - Correlation between replicates
+    f24_norm        : Optional[float] - Fraction of variance at the target frequency (max 1)
+    p_f24           : Optional[float] - Permutation p-value (pF24)
     method          : str     - "Fourier-F24"
 
 Methods:
     is_rhythmic(threshold=2.0) -> bool  : Check if f24_score > threshold
     to_dict() -> Dict[str, Any]         : Convert to dictionary
 
-Note: F24 is an EFFECT SIZE measure, not a significance test.
-      Wijnen et al. (2006) used F24 > 2 or F24 > 3 as filters.
+Note: f24_score is an EFFECT SIZE whose scale grows with the number of time
+      points (≈ (n − 1)/2 for a pure sinusoid). f24_norm is the normalisation of
+      Wijnen et al. (2006) (max 1) and p_f24 their permutation p-value (pF24).
 
 -------------------------------------------------------------------------------
 3.5 LombScargleResult
@@ -210,14 +237,20 @@ Function Signature:
         series: pd.Series,
         period_range: List[float] = None,
         lag_range: Optional[np.ndarray] = None,
-        asymmetries: List[float] = None
+        asymmetries: List[float] = None,
+        n_permutations: int = 0,
+        seed: int = 42
     ) -> JTKResult
 
 Parameters:
-    series       : pd.Series with time as index, values as data
-    period_range : List of periods to test (default: [20, 21, ..., 28])
-    lag_range    : Array of lag/phase values to test (default: 0 to period)
-    asymmetries  : List of asymmetry values (default: [0.5] for symmetric)
+    series         : pd.Series with time as index, values as data
+    period_range   : List of periods to test (default: [20, 21, ..., 28])
+    lag_range      : Array of lag/phase values to test (default: 0 to period, 1 h steps)
+    asymmetries    : List of asymmetry values (default: [0.5] for symmetric)
+    n_permutations : > 0 for an empirical p-value (Hutchison et al., 2015): null
+                     distribution of the max |tau| over all templates for permuted
+                     data (Phipson & Smyth +1 correction). 0 = analytical.
+    seed           : RNG seed for the permutations
 
 Returns:
     JTKResult object
@@ -225,18 +258,29 @@ Returns:
 Algorithm:
     1. Rank-transform the data
     2. For each (period, lag, asymmetry) combination:
-       - Generate triangle template aligned to timepoints
+       - Generate triangle template aligned to timepoints (minimum at the lag,
+         peak at lag + asymmetry × period)
        - Compute Kendall's tau between ranked data and template
     3. Select best combination (lowest p-value)
-    4. Apply Bonferroni correction
+    4. Acrophase = lag + asymmetry × period if tau > 0; lag if tau < 0 (the data
+       peak at the template minimum)
+    5. Correct p for the n_tests templates (Bonferroni; see bh_p_value in 3.1), or
+       compute the empirical p-value
+
+Period sweeps:
+    _run_discrete_jtk_all_periods(series, period_range, lag_range, asymmetries,
+                                  n_permutations=0, seed=42) -> List[JTKResult]
+    One result per period (its best template); the corrections, and with
+    n_permutations > 0 the null distribution, cover all the templates of the
+    whole range. best_fit marks the period a single run would report.
 
 -------------------------------------------------------------------------------
 4.2 AR-JTK (_run_ar_jtk)
 -------------------------------------------------------------------------------
 
 Description:
-    JTK with autoregressive noise handling. Detects autocorrelation in
-    residuals and applies AR prewhitening before re-running JTK.
+    JTK with autoregressive noise handling. Detects autocorrelation in the
+    rank residuals and pre-whitens the ranked series before re-running JTK.
 
 Function Signature:
     _run_ar_jtk(
@@ -245,26 +289,41 @@ Function Signature:
         lag_range: Optional[np.ndarray] = None,
         asymmetries: List[float] = None,
         ar_lag: int = 1,
-        ljungbox_lag: int = 10
+        ljungbox_lag: int = 10,
+        force_prewhiten: bool = False,
+        n_permutations: int = 0,
+        seed: int = 42
     ) -> Tuple[JTKResult, bool]
 
 Parameters:
-    series        : pd.Series with time as index, values as data
-    period_range  : List of periods to test
-    lag_range     : Array of lag values
-    asymmetries   : List of asymmetry values
-    ar_lag        : AR model lag for prewhitening (default: 1)
-    ljungbox_lag  : Lag for Ljung-Box autocorrelation test (default: 10)
+    series          : pd.Series with time as index (in time order), values as data
+    period_range    : List of periods to test
+    lag_range       : Array of lag values
+    asymmetries     : List of asymmetry values
+    ar_lag          : AR model order for prewhitening (default: 1)
+    ljungbox_lag    : Lag for Ljung-Box autocorrelation test (default: 10)
+    force_prewhiten : Skip the Ljung-Box test and always prewhiten
+    n_permutations  : Empirical p-values (see 4.1), on the prewhitened series
 
 Returns:
     Tuple of (JTKResult, bool indicating if AR correction was applied)
 
-Algorithm:
-    1. Run initial JTK analysis
-    2. Compute rank-domain residuals
-    3. Test for autocorrelation using Ljung-Box test
-    4. If autocorrelated: fit AR model and prewhiten residuals
-    5. Reconstruct whitened series and re-run JTK
+Algorithm (step 1-4 in _ar_prewhitened_ranks):
+    1. Run initial JTK analysis on the original series
+    2. Regress the ranks of the data on the best-fitting template; residuals
+    3. Ljung-Box test on the residuals (series shorter than ljungbox_lag + 1
+       points count as white noise); skipped with force_prewhiten
+    4. If autocorrelated: fit AR(ar_lag) to the residuals and apply that filter
+       to the ranked series, r_t − Σ φ_j r_{t−j} (first ar_lag points dropped).
+       The template is NOT added back.
+    5. Re-run JTK on the prewhitened series: p-values (and n_tests) from it;
+       period, acrophase, tau, lag, asymmetry from step 1; amplitude from the
+       original data
+
+Calibration (48 hourly points, 400 null series per scenario, p < 0.05):
+    forced prewhitening 1.5 % white noise, 7.5 % AR(1) φ = 0.7
+    (plain JTK: 0.3 % and 30 %). The former version, which rebuilt the series
+    around the best template, gave 18 % and 100 %.
 
 -------------------------------------------------------------------------------
 4.3 Cosine-Kendall (_run_cosine_kendall)
@@ -278,13 +337,16 @@ Function Signature:
     _run_cosine_kendall(
         series: pd.Series,
         period_range: List[float] = None,
-        interval: float = 1.0
+        interval: float = 1.0,
+        n_permutations: int = 0,
+        seed: int = 42
     ) -> JTKResult
 
 Parameters:
-    series       : pd.Series with time as index, values as data
-    period_range : List of periods to test (default: circadian range)
-    interval     : Time interval for lag steps (default: 1.0)
+    series         : pd.Series with time as index, values as data
+    period_range   : List of periods to test (default: circadian range)
+    interval       : Time interval for lag steps (default: 1.0)
+    n_permutations : Empirical p-values (see 4.1)
 
 Returns:
     JTKResult object (method = "Cosine-Kendall")
@@ -295,7 +357,11 @@ Algorithm:
        - Generate cosine template: cos(2π(t-lag)/period)
        - Rank the template
        - Compute Kendall's tau
-    3. Select best combination, apply Bonferroni correction
+    3. Select best combination, apply the corrections of 4.1
+    4. Acrophase = lag if tau > 0; lag + period/2 if tau < 0
+
+Period sweeps: _run_cosine_kendall_all_periods(series, period_range, interval,
+    n_permutations=0, seed=42), as in 4.1.
 
 -------------------------------------------------------------------------------
 4.4 Cosinor OLS (_fit_cosinor)
@@ -328,7 +394,11 @@ Algorithm:
     2. Select best period (lowest AIC)
     3. Calculate amplitude = √(β_cos² + β_sin²)
     4. Calculate acrophase = atan2(β_sin, β_cos)
-    5. Compute confidence intervals using delta method
+    5. Compute confidence intervals using delta method:
+       Var(A) = (β_cos² Var(β_cos) + β_sin² Var(β_sin) + 2 β_cos β_sin Cov) / A²
+       Var(φ) = (β_sin² Var(β_cos) + β_cos² Var(β_sin) − 2 β_cos β_sin Cov) / A⁴
+       (the acrophase CI is wrapped to [0, 2π), see 3.2)
+    6. adj_p_value = p_value × number of periods tested (Bonferroni)
 
 Model:
     y = M + β_cos*cos(ωt) + β_sin*sin(ωt)
@@ -341,7 +411,7 @@ Model:
 
 Description:
     Detects multi-modal rhythms (e.g., bimodal with 2 peaks per cycle)
-    using multi-harmonic templates and Kendall's tau correlation.
+    with an OLS cosinor that includes the fundamental and its harmonics.
 
 Function Signature:
     _fit_harmonic_cosinor(
@@ -354,20 +424,26 @@ Function Signature:
 Parameters:
     times        : Array of time values
     values       : Array of measurement values
-    period_range : List of periods to test
-    n_harmonics  : Number of harmonics (1=unimodal, 2=bimodal, etc.)
+    period_range : List of periods to test (default: 20-28 h in 0.5 h steps)
+    n_harmonics  : Number of harmonics (1=unimodal, 2=bimodal, etc.; GUI: 1-6)
 
 Returns:
     HarmonicCosinorResult object
 
+Model:
+    y = M + Σ_k [β_k,cos cos(kωt) + β_k,sin sin(kωt)],  k = 1..n_harmonics, ω = 2π/period
+
 Algorithm:
-    1. For each period and lag:
-       - Generate harmonic template: Σ cos(2πh(t-lag)/period) for h=1..n
-       - Rank both data and template
-       - Compute Kendall's tau
-    2. Select best combination
-    3. Identify peaks in the model waveform
-    4. Estimate amplitude and acrophase for each peak
+    1. For each period: fit the model by OLS; keep the period with the highest R²
+       (same number of parameters at every period, so also the lowest AIC)
+    2. Overall F-test (H0: all coefficients except the intercept are zero);
+       adj_p_value = p × number of periods fitted
+    3. If n_harmonics > 1: F-test of the full model against one harmonic
+       (warning if p > 0.05)
+    4. Per harmonic k: A_k = √(β_k,cos² + β_k,sin²); acrophase = atan2(β_k,sin,
+       β_k,cos) · period / (2πk), the first of its k peaks per cycle
+    5. Peaks, troughs and half peak-to-trough range of the fitted curve (sum of
+       all harmonics) over one cycle, on a 30-s grid
 
 -------------------------------------------------------------------------------
 4.6 Fourier F24 (_compute_fourier_f24)
@@ -403,10 +479,13 @@ Algorithm:
     4. Generate permuted data n times
     5. Compute mean permutation power at target frequency
     6. F24 = target_power / mean_permutation_power
+    7. f24_norm = 2 · target_power / Σ(y − ȳ)²  (1 for a pure sinusoid)
+    8. p_f24 = (1 + #{permuted power ≥ target_power}) / (1 + n_permutations)
 
 Interpretation:
-    F24 > 2.0 : Typically considered rhythmic (Wijnen et al., 2006)
-    F24 > 3.0 : More stringent threshold
+    Use p_f24 for the rhythmic call (the GUI Notes column uses pF24 < α);
+    a fixed f24_score threshold is only comparable between designs with the
+    same number of time points.
 
 -------------------------------------------------------------------------------
 4.7 Lomb-Scargle (_compute_lomb_scargle)
@@ -525,8 +604,12 @@ Returns:
         'significant_peaks': List[float] - Periods above threshold
 
 Significance Threshold:
-    Based on Refinetti et al. (2007):
-    T = (1 - (0.05/N)^(1/(N-1))) × Σ(power)
+    Based on Refinetti et al. (2007), with Fisher's (1929) number of Fourier
+    frequencies m = max(2, (N - 1) // 2):
+    T = (1 - (0.05/m)^(1/(m-1))) × Σ(power over non-zero frequencies)
+    For 'lombscargle' (always mean-centred; periods from the Nyquist period of
+    the median sampling interval, at least 2 h, to max_per):
+    T = (1 - (0.05/m)^(1/(m-1))) × Σ(y - ȳ)² / 2
 
 -------------------------------------------------------------------------------
 4.10 Linear Mixed Effects (_fit_lme_model)
@@ -756,9 +839,10 @@ y = 10 + 3*np.cos(2*np.pi*t/24) + 2*np.cos(2*2*np.pi*t/24) + np.random.normal(0,
 result = _fit_harmonic_cosinor(t, y, n_harmonics=2)
 
 print(f"Period: {result.period} hours")
-print(f"Number of peaks: {len(result.acrophases)}")
-for i, (amp, acro) in enumerate(zip(result.amplitudes, result.acrophases), 1):
-    print(f"  Peak {i}: amplitude={amp:.2f}, time={acro:.2f}h")
+for k, amp, acro in zip(result.harmonic_numbers, result.amplitudes, result.acrophases):
+    print(f"  Harmonic {k}: amplitude={amp:.2f}, first peak={acro:.2f}h")
+print(f"Waveform peaks: {result.waveform_peaks} h (highest first)")
+print(f"Waveform amplitude: {result.waveform_amplitude:.2f}")
 
 ================================================================================
 END OF REFERENCE GUIDE

@@ -80,6 +80,10 @@ class PreprocessingConfig:
                                         # oscillations shorter than this value are attenuated
 
 
+class StageSkippedWarning(RuntimeWarning):
+    """A filter stage could not be applied and returned the series unchanged."""
+
+
 @dataclass
 class PreprocessingReport:
     """Summary of what the preprocessing pipeline applied."""
@@ -104,6 +108,7 @@ def _remove_outliers_array(
     valid = ~np.isnan(result)
 
     if valid.sum() < 4:
+        warnings.warn("Outlier removal skipped: fewer than 4 valid values.", StageSkippedWarning)
         return result
 
     if method == OutlierMethod.IQR:
@@ -144,6 +149,7 @@ def _detrend_array(
     valid = ~np.isnan(result)
 
     if valid.sum() < 4:
+        warnings.warn("Detrending skipped: fewer than 4 valid values.", StageSkippedWarning)
         return result
 
     t_valid = times[valid]
@@ -157,6 +163,11 @@ def _detrend_array(
     elif method == DetrendMethod.MOVING_AVERAGE:
         dt = float(np.median(np.diff(np.sort(times))))
         if dt <= 0:
+            warnings.warn(
+                "Moving-average detrending skipped: time points are repeated "
+                "(replicates or subjects), so the sampling interval is 0.",
+                StageSkippedWarning,
+            )
             return result
         window_samples = max(3, int(round(window_hours / dt)))
         s = pd.Series(result, dtype=float)
@@ -202,6 +213,7 @@ def _smooth_array(
     nan_mask = np.isnan(result)
 
     if nan_mask.all():
+        warnings.warn("Smoothing skipped: no valid values.", StageSkippedWarning)
         return result
 
     # Fill NaN so the smoother doesn't see gaps
@@ -228,10 +240,19 @@ def _smooth_array(
     else:  # BUTTERWORTH
         if times is None or len(filled) < 6:
             # Cannot compute cutoff without a time axis; return unfiltered
+            warnings.warn(
+                "Butterworth smoothing skipped: needs a time axis and at least 6 values.",
+                StageSkippedWarning,
+            )
             return result
 
         dt = float(np.median(np.diff(np.sort(times))))
         if dt <= 0:
+            warnings.warn(
+                "Butterworth smoothing skipped: time points are repeated "
+                "(replicates or subjects), so the sampling interval is 0.",
+                StageSkippedWarning,
+            )
             return result
 
         nyquist = 1.0 / (2.0 * dt)          # cycles / hour
@@ -242,7 +263,7 @@ def _smooth_array(
             warnings.warn(
                 f"Butterworth cutoff {butterworth_cutoff} h is outside the valid range "
                 f"for the sampling interval {dt} h. Smoothing skipped.",
-                RuntimeWarning,
+                StageSkippedWarning,
             )
             return result
 
@@ -261,17 +282,42 @@ def _smooth_array(
 # PUBLIC API
 # =============================================================================
 
+def _run_stage(report: PreprocessingReport, where: str, stage, *args, **kwargs):
+    """Run one filter stage; a skipped stage is recorded in *report*.
+
+    Returns (values, applied).
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', StageSkippedWarning)
+        values = stage(*args, **kwargs)
+    applied = True
+    for w in caught:
+        if issubclass(w.category, StageSkippedWarning):
+            report.warnings.append(f"{where}: {w.message}")
+            applied = False
+        else:
+            warnings.warn(w.message, w.category)
+    return values, applied
+
+
 def apply_preprocessing(
     df: pd.DataFrame,
     variables: List[str],
     config: PreprocessingConfig,
     time_col: str = 'time',
     condition_col: Optional[str] = 'condition',
+    subject_col: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, PreprocessingReport]:
     """Apply the preprocessing pipeline to *variables* in *df*.
 
-    Processes each (variable, condition) group independently.  The input
-    DataFrame is never modified; a transformed copy is returned.
+    Processes each (variable, condition) group independently, or each
+    (variable, condition, subject) series when *subject_col* is given.  The
+    input DataFrame is never modified; a transformed copy is returned.
+
+    Outlier removal acts on all values of the series.  Detrending and
+    smoothing act on the mean at each time point, sorted by time; the
+    correction is added to every value of that time point, so replicate
+    scatter is kept.
 
     Pipeline order: outlier removal → detrending → smoothing.
 
@@ -281,6 +327,8 @@ def apply_preprocessing(
         config:        Pipeline parameters.
         time_col:      Name of the time column (values in hours).
         condition_col: Name of the condition column.  Pass None if absent.
+        subject_col:   Name of the subject column (repeated-measures data).
+                       Pass None if absent.
 
     Returns:
         (preprocessed_df, report)
@@ -301,41 +349,63 @@ def apply_preprocessing(
         report.warnings.append(f"Time column '{time_col}' not found; preprocessing skipped.")
         return result_df, report
 
-    # Build list of (group_label, row_index) pairs
-    use_conditions = bool(condition_col and condition_col in df.columns)
-    if use_conditions:
-        groups = [(cond, grp.index) for cond, grp in df.groupby(condition_col, sort=False)]
+    # Build list of (group_label, row_index) pairs: one series per condition,
+    # or per condition x subject when a subject column is given
+    keys = [c for c in (condition_col, subject_col) if c and c in df.columns]
+    if keys:
+        groups = [(key if isinstance(key, tuple) else (key,), grp.index)
+                  for key, grp in df.groupby(keys, sort=False, dropna=False)]
     else:
-        groups = [('_all_', df.index)]
+        groups = [((), df.index)]
 
-    for _, idx in groups:
+    for label, idx in groups:
         times = df.loc[idx, time_col].to_numpy(dtype=float)
+        timed = np.isfinite(times)
+        # Unique sorted time points; inv maps each timed row to its time point
+        t_unique, inv = np.unique(times[timed], return_inverse=True)
 
         for var in vars_present:
-            values = df.loc[idx, var].to_numpy(dtype=float)
+            values = df.loc[idx, var].to_numpy(dtype=float, copy=True)
+            where = " / ".join([var] + [str(k) for k in label])
 
             if config.remove_outliers:
                 n_nan_before = int(np.isnan(values).sum())
-                values = _remove_outliers_array(values, config.outlier_method, config.outlier_threshold)
+                values, _ = _run_stage(
+                    report, where, _remove_outliers_array,
+                    values, config.outlier_method, config.outlier_threshold,
+                )
                 report.outliers_removed += int(np.isnan(values).sum()) - n_nan_before
 
-            if config.detrend:
-                values = _detrend_array(
-                    times, values,
-                    config.detrend_method,
-                    config.detrend_window,
-                    config.detrend_poly_degree,
-                )
-                report.detrend_applied = True
+            if config.detrend or config.smooth:
+                # Detrending and smoothing act on the time course: they filter the
+                # mean at each time point (sorted by time) and add the resulting
+                # correction to every value of that time point. With one value per
+                # time point this is the series itself.
+                mean = (pd.Series(values[timed]).groupby(inv).mean()
+                        .reindex(range(len(t_unique))).to_numpy(dtype=float))
+                filtered = mean
 
-            if config.smooth:
-                values = _smooth_array(
-                    values, config.smooth_method, config.smooth_window,
-                    times=times,
-                    butterworth_order=config.butterworth_order,
-                    butterworth_cutoff=config.butterworth_cutoff,
-                )
-                report.smooth_applied = True
+                if config.detrend:
+                    filtered, applied = _run_stage(
+                        report, where, _detrend_array,
+                        t_unique, filtered,
+                        config.detrend_method,
+                        config.detrend_window,
+                        config.detrend_poly_degree,
+                    )
+                    report.detrend_applied |= applied
+
+                if config.smooth:
+                    filtered, applied = _run_stage(
+                        report, where, _smooth_array,
+                        filtered, config.smooth_method, config.smooth_window,
+                        times=t_unique,
+                        butterworth_order=config.butterworth_order,
+                        butterworth_cutoff=config.butterworth_cutoff,
+                    )
+                    report.smooth_applied |= applied
+
+                values[timed] += (filtered - mean)[inv]
 
             result_df.loc[idx, var] = values
             report.series_processed += 1

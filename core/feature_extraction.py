@@ -60,6 +60,38 @@ def _compute_r_squared(times: np.ndarray, values: np.ndarray,
 # a user-supplied period_range can be honored.
 _TRAINED_PERIOD_LOW = 18.0
 _TRAINED_PERIOD_HIGH = 32.0
+# A requested range must overlap the training window by more than this (h)
+# to be honored; otherwise the training defaults are used.
+_MIN_PERIOD_OVERLAP = 1.0
+
+
+def period_range_notice(parameters: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    User-facing note when a requested period_range is not used as given.
+
+    Returns None when the range is absent or lies inside the training window.
+    _resolve_params emits the same text as a Python warning; ConsensusClassifier
+    returns it with the prediction so the GUI can show it (the app has no
+    console, so a warnings.warn alone never reaches the user).
+    """
+    user_range = (parameters or {}).get('period_range')
+    if user_range is None:
+        return None
+    lo, hi = float(user_range[0]), float(user_range[1])
+    safe_lo = max(_TRAINED_PERIOD_LOW, lo)
+    safe_hi = min(_TRAINED_PERIOD_HIGH, hi)
+    window = f"[{_TRAINED_PERIOD_LOW:g}, {_TRAINED_PERIOD_HIGH:g}] h"
+    if safe_lo >= safe_hi - _MIN_PERIOD_OVERLAP:
+        overlap = max(0.0, safe_hi - safe_lo)
+        where = (f"does not overlap the model's training window {window}" if overlap == 0
+                 else f"overlaps the model's training window {window} by only {overlap:g} h "
+                      f"(more than {_MIN_PERIOD_OVERLAP:g} h is required)")
+        return (f"CRS-AI: the requested period range [{lo:g}, {hi:g}] h {where}; the training "
+                f"defaults (JTK and Cosinor 20-28 h, Lomb-Scargle 18-32 h) were used instead.")
+    if (lo, hi) != (safe_lo, safe_hi):
+        return (f"CRS-AI: the requested period range [{lo:g}, {hi:g}] h was clipped to "
+                f"[{safe_lo:g}, {safe_hi:g}] h, its part inside the model's training window {window}.")
+    return None
 
 
 def _resolve_params(parameters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -67,10 +99,12 @@ def _resolve_params(parameters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     Filter user parameters for the AI consensus path.
 
     Policy:
-      - period_range: honored iff it intersects the training window
-        [18, 32]h. Clipped to that window if it spills out, falls back
-        to training defaults if it's entirely outside. Affects features
-        that are fed to the model (JTK, Cosinor, LS).
+      - period_range: honored iff it overlaps the training window
+        [18, 32]h by more than 1 h. Clipped to that window if it spills
+        out, falls back to training defaults otherwise (see
+        period_range_notice). Affects the JTK and Cosinor features fed
+        to the model; Lomb-Scargle always keeps its training range
+        (18-32 h).
       - n_harmonics: honored freely. Only affects harmonic_p_value /
         harmonic_r_squared, which are NO LONGER fed to the model — they
         only drive the UI's harmonic sub-method panel. Safe to expose.
@@ -102,23 +136,12 @@ def _resolve_params(parameters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     safe_lo = max(_TRAINED_PERIOD_LOW, lo)
     safe_hi = min(_TRAINED_PERIOD_HIGH, hi)
 
-    if safe_lo >= safe_hi - 1.0:
-        warnings.warn(
-            f"AI consensus model was trained on period range "
-            f"[{_TRAINED_PERIOD_LOW}, {_TRAINED_PERIOD_HIGH}]h; "
-            f"requested [{lo}, {hi}]h falls outside. Using training "
-            f"defaults — predictions for this range are not supported.",
-            stacklevel=2,
-        )
-        return defaults
+    notice = period_range_notice(parameters)
+    if notice:
+        warnings.warn(notice, stacklevel=2)
 
-    if (lo, hi) != (safe_lo, safe_hi):
-        warnings.warn(
-            f"AI consensus: clipping requested period range "
-            f"[{lo}, {hi}]h to [{safe_lo}, {safe_hi}]h "
-            f"(model's training window).",
-            stacklevel=2,
-        )
+    if safe_lo >= safe_hi - _MIN_PERIOD_OVERLAP:
+        return defaults
 
     jtk_periods = list(range(int(np.ceil(safe_lo)),
                               int(np.floor(safe_hi)) + 1))
@@ -127,7 +150,11 @@ def _resolve_params(parameters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         'jtk_periods':      jtk_periods,
         'cosinor_periods':  cosinor_periods,
-        'ls_range':         (safe_lo, safe_hi),
+        # Lomb-Scargle always searches its training range: following the user
+        # range cost more on the holdout (22-26 h: AUROC 0.9432 vs 0.9460;
+        # validation/crs_ai/parameter_override_validation.txt), and with the
+        # GUI's pre-filled 20-28 h the features now equal the training ones.
+        'ls_range':         defaults['ls_range'],
         'harmonic_periods': cosinor_periods,
         'n_harmonics':      n_harmonics,
     }

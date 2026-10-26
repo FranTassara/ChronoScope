@@ -18,9 +18,9 @@ n_components = [1, 2, 3, 4]
 
 def clean_data(df):
     df = df.dropna(subset=['X', 'Y'])
-    x = int(df['X'].unique().max() + 1)
 
-    for hour in range(0, x, 1):
+    # every sampled time point (not only integer hours)
+    for hour in df['X'].unique():
         df_hour = df.loc[df.X == hour].copy()
         # cleaning outliers
         df_hour = df_hour.loc[df_hour.Y >= df_hour.Y.quantile(0.15)].copy()
@@ -102,6 +102,39 @@ def cosinor_generate_independents(X, n_components, period=24):
     return X_fit, X_test, X_fit_test, X_fit_eval_params
 
 
+def fit_count_model(model, maxiter, maxfun, method, disp, **kwargs):
+    """Fit `model` by maximum likelihood with the statsmodels optimizer `method`.
+
+    method='multi' (ChronoScope): Nelder-Mead alone can stop at a worse optimum while
+    reporting convergence (N >= 2), and gradient optimizers can return llf = nan when a
+    dispersion parameter runs to its bound. Fit with BFGS and with Nelder-Mead (restarted
+    once from its own solution), polish the best fit with BFGS and keep the highest
+    finite log-likelihood.
+    """
+    if method != 'multi':
+        return model.fit(maxiter=maxiter, maxfun=maxfun, method=method, disp=disp, **kwargs)
+
+    def attempt(method, start_params=None):
+        extra = {'maxfun': maxfun} if method == 'nm' else {}
+        try:
+            results = model.fit(start_params=start_params, maxiter=maxiter, method=method, disp=disp,
+                                **extra, **kwargs)
+        except Exception:
+            return None
+        return results if np.isfinite(results.llf) else None
+
+    nm = attempt('nm')
+    candidates = [attempt('bfgs'), nm, attempt('nm', nm.params) if nm is not None else None]
+    candidates = [r for r in candidates if r is not None]
+    if not candidates:
+        return model.fit(maxiter=maxiter, maxfun=maxfun, method='nm', disp=disp, **kwargs)
+    best = max(candidates, key=lambda r: r.llf)
+    polished = attempt('bfgs', best.params)
+    if polished is not None and polished.llf > best.llf:
+        best = polished
+    return best
+
+
 def fit_to_model(df, n_components, count_model, period, maxiter, maxfun, method, disp):
     X_fit, X_test, X_fit_test, X_fit_eval_params = cosinor_generate_independents(df['X'], n_components=n_components, period=period)
     Y = df['Y'].to_numpy()
@@ -112,20 +145,20 @@ def fit_to_model(df, n_components, count_model, period, maxiter, maxfun, method,
 
     if count_model == 'poisson':
         model = statsmodels.discrete.discrete_model.Poisson(Y, X_fit)
-        results = model.fit(maxiter=maxiter, maxfun=maxfun, method=method, disp=disp)
+        results = fit_count_model(model, maxiter, maxfun, method, disp)
     elif count_model == 'gen_poisson':
         model = statsmodels.discrete.discrete_model.GeneralizedPoisson(Y, X_fit, p=1)
-        results = model.fit(maxiter=maxiter, maxfun=maxfun, method=method, disp=disp)
+        results = fit_count_model(model, maxiter, maxfun, method, disp)
     elif count_model == 'zero_poisson':
         model = statsmodels.discrete.count_model.ZeroInflatedPoisson(endog=Y, exog=X_fit, exog_infl=X_fit)
-        results = model.fit(maxiter=maxiter, maxfun=maxfun, skip_hessian=True, method=method, disp=disp)
+        results = fit_count_model(model, maxiter, maxfun, method, disp, skip_hessian=True)
     elif count_model == 'zero_nb':
         model = statsmodels.discrete.count_model.ZeroInflatedNegativeBinomialP(endog=Y, exog=X_fit, exog_infl=X_fit,
                                                                                p=1)
-        results = model.fit(maxiter=maxiter, maxfun=maxfun, skip_hessian=True, method=method, disp=disp)
+        results = fit_count_model(model, maxiter, maxfun, method, disp, skip_hessian=True)
     elif count_model == 'nb':
         model = statsmodels.discrete.discrete_model.NegativeBinomialP(Y, X_fit, p=1)
-        results = model.fit(maxiter=maxiter, maxfun=maxfun, method=method, disp=disp)
+        results = fit_count_model(model, maxiter, maxfun, method, disp)
     else:
         raise Exception("Invalid model type.")
 
@@ -138,7 +171,7 @@ def fit_to_model(df, n_components, count_model, period, maxiter, maxfun, method,
         Y_eval_params = results.predict(X_fit_eval_params)
         Y_fit = results.predict(X_fit)
 
-    rhythm_params = evaluate_rhythm_params(X_test, Y_eval_params)
+    rhythm_params = evaluate_rhythm_params(X_test, Y_eval_params, period)
     df_result = calculate_statistics(Y, Y_fit, n_components, results, model, count_model, rhythm_params)
     df_result.update({'data_mean': np.mean(Y)})
     df_result.update({'data_std': np.std(Y)})
@@ -175,8 +208,9 @@ def calculate_confidence_intervals(df, n_components, count_model, repetitions=20
 
 
 def evaluate_rhythm_params(X, Y, period=24):
-    X = X[:int(period) * 10]
-    Y = Y[:int(period) * 10]
+    # one full period, [0, period)
+    Y = Y[X < period]
+    X = X[X < period]
     m = min(Y)
     M = max(Y)
     A = M - m
@@ -198,6 +232,10 @@ def calculate_statistics(Y, Y_fit, n_components, results, model, count_model, rh
 
     # p
     p = results.llr_pvalue
+    if count_model == 'zero_nb' or count_model == 'zero_poisson':
+        # the null model (llnull) also drops the harmonics of the inflation part,
+        # which df_model does not count
+        p = stats.chi2.sf(results.llr, results.df_model + model.k_inflate - 1)
 
     # AIC
     aic = results.aic
@@ -308,6 +346,10 @@ def f_test(first_row, second_row):
     DF1 = n_points - (first_row.n_components * 2 + 1)
     DF2 = n_points - (second_row.n_components * 2 + 1)
 
+    if DF1 == DF2:
+        raise ValueError("The F test only compares models with different numbers of components; "
+                         "use AIC, BIC or Vuong to compare count models with the same N.")
+
     if DF2 < DF1:
         F = ((RSS1 - RSS2) / (DF1 - DF2)) / (RSS2 / DF2)
         f = 1 - stats.f.cdf(F, DF1 - DF2, DF2)
@@ -384,15 +426,16 @@ def compare_by_component(df, component, n_components, count_models, ax_indices, 
         df_name = df[df[component] == name]
 
         # fit
-        results = fit_to_models(df_name, count_models, n_components, plot_models=False)
+        results = fit_to_models(df_name, count_models, n_components, maxiter=maxiter, maxfun=maxfun,
+                                method=method, plot_models=False, period=period)
 
         # compare
         if eval_order:
             best_component = get_best_n_components(results, test)
             best = get_best_count_model(results, test, n_components=best_component['n_components'])
         else:
-            best_count_model = get_best_count_model(df_results, test)
-            best = get_best_n_components(df_results, test, count_model=best_count_model['count_model'])
+            best_count_model = get_best_count_model(results, test)
+            best = get_best_n_components(results, test, count_model=best_count_model['count_model'])
 
         count_model = best.count_model
         n_component = int(best.n_components)

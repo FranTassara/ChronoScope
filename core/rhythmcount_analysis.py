@@ -96,7 +96,7 @@ class RhythmCountParameters:
     eval_order: bool = True       # True: select best n_components first, then model
     maxiter: int = 5000
     maxfun: int = 5000
-    method: str = 'nm'            # Nelder-Mead (robust for count models)
+    method: str = 'multi'         # BFGS + Nelder-Mead, best log-likelihood (see dproc.fit_count_model)
     repetitions: int = 20         # Bootstrap repetitions for CIs
     precision_rate: float = 2.0   # Tolerance for peak matching in CIs
     clean_data: bool = False       # Apply quantile-based outlier removal
@@ -572,8 +572,8 @@ class RhythmCountAnalyzer:
 
         try:
             if plot_comparison:
-                rows = max(1, n_groups // 2)
-                cols = max(1, (n_groups + 1) // 2)
+                cols = min(2, n_groups)
+                rows = -(-n_groups // cols)
                 df_results = dproc.compare_by_component(
                     df,
                     component=group_column,
@@ -716,6 +716,26 @@ class RhythmCountAnalyzer:
     # -------------------------------------------------------------------------
     # INTERNAL HELPERS
     # -------------------------------------------------------------------------
+
+    def design_warning(self, n_components: int, period: float) -> str:
+        """
+        Return a warning if the loaded sampling times cannot resolve all harmonics.
+
+        E.g. 2-h sampling with period 12 h and N = 3: the 4-h harmonic has a
+        sine column equal to 0, so the design matrix is rank-deficient, its
+        coefficient is not identifiable and the log-likelihood (and AIC, BIC,
+        p, model selection) can depend on the optimizer. Empty string if fine.
+        """
+        X = self._data['X'].dropna().to_numpy(dtype=float)
+        X_fit, _, _, _ = dproc.cosinor_generate_independents(
+            X, n_components=int(n_components), period=period)
+        X_fit = np.column_stack([np.ones(len(X_fit)), X_fit])
+        rank = np.linalg.matrix_rank(X_fit)
+        if rank < X_fit.shape[1]:
+            return (f"Warning: N={int(n_components)} at period {period:g} h is not resolved by the "
+                    f"sampling times (design rank {rank} of {X_fit.shape[1]}); its fit statistics "
+                    f"are unreliable.")
+        return ''
 
     def _prepare_data(self, params: RhythmCountParameters) -> pd.DataFrame:
         """Apply optional cleaning and return a copy of the data."""

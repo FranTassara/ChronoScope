@@ -83,6 +83,8 @@ class ConsensusClassifier:
     # Classification thresholds
     RHYTHMIC_THRESHOLD = 0.7
     BORDERLINE_THRESHOLD = 0.3
+    # Classification of a series with any missing feature (no probability is given)
+    NOT_APPLICABLE = 'Not applicable'
 
     def __init__(self):
         self._model = None
@@ -181,12 +183,17 @@ class ConsensusClassifier:
 
         Returns:
             Dict with keys:
-            - 'probability': float 0-1
-            - 'classification': str ('Rhythmic', 'Borderline', 'Arrhythmic')
+            - 'probability': float 0-1, or None if any model feature is missing
+            - 'classification': str ('Rhythmic', 'Borderline', 'Arrhythmic',
+              or 'Not applicable' if any model feature is missing)
             - 'features': Dict of all extracted features
             - 'method_results': Dict for radar chart (method -> score 0-1)
             - 'feature_importances': Dict (feature name -> importance)
             - 'sub_method_details': List of per-method summaries
+            - 'notes': List of user-facing caveats (e.g. period range clipped)
+            - 'missing_features': model features that could not be computed
+            - 'probability_with_sentinel': raw model output when features are
+              missing (not interpretable; kept for the record), else None
         """
         if not self._model_loaded:
             if not self.load_model():
@@ -197,10 +204,16 @@ class ConsensusClassifier:
                     'method_results': {},
                     'feature_importances': {},
                     'sub_method_details': [],
+                    'notes': [],
                     'error': 'Model not loaded. Run train_consensus_model.py first.'
                 }
 
-        from .feature_extraction import extract_features
+        from .feature_extraction import extract_features, period_range_notice
+
+        notes = []
+        range_notice = period_range_notice(parameters)
+        if range_notice:
+            notes.append(range_notice)
 
         # Extract features by running all sub-methods
         features = extract_features(
@@ -215,8 +228,23 @@ class ConsensusClassifier:
         proba = self._model.predict_proba(X)[0]
         rhythmic_prob = float(proba[1])  # probability of class 1 (rhythmic)
 
+        # A missing feature is imputed with the -999 sentinel, which (almost) never
+        # occurred in training: no tree of the released model splits on it, so the
+        # output is not interpretable. Report the series as not applicable and keep
+        # the raw model output only for the record.
+        missing = [name for name, v in zip(self._feature_names, X[0]) if np.isnan(v)]
+        probability_with_sentinel = None
+        if missing:
+            probability_with_sentinel, rhythmic_prob = rhythmic_prob, None
+            classification = self.NOT_APPLICABLE
+            note = (f"Not applicable: {', '.join(missing)} could not be computed for this series; "
+                    f"the model was trained without missing features, so no probability is reported.")
+            if 'amplitude_relative' in missing:
+                note += (" Relative amplitude needs a non-zero MESOR: CRS-AI expects uncentred data "
+                         "(e.g. raw or log expression), not z-scores.")
+            notes.append(note)
         # Classification
-        if rhythmic_prob >= self.RHYTHMIC_THRESHOLD:
+        elif rhythmic_prob >= self.RHYTHMIC_THRESHOLD:
             classification = 'Rhythmic'
         elif rhythmic_prob >= self.BORDERLINE_THRESHOLD:
             classification = 'Borderline'
@@ -239,6 +267,9 @@ class ConsensusClassifier:
             'method_results': method_results,
             'feature_importances': importances,
             'sub_method_details': sub_method_details,
+            'notes': notes,
+            'missing_features': missing,
+            'probability_with_sentinel': probability_with_sentinel,
         }
 
     def _get_feature_importances(self) -> Dict[str, float]:

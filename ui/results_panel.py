@@ -449,7 +449,8 @@ class PlotCanvas(FigureCanvas):
         for cond in conditions:
             if cond in profile_data:
                 matrix = profile_data[cond]['activity_matrix']
-                all_values.extend([v for row in matrix for v in row if v is not None])
+                all_values.extend([v for row in matrix for v in row
+                                   if v is not None and not np.isnan(v)])
 
         if all_values:
             vmin, vmax = min(all_values), max(all_values)
@@ -554,9 +555,11 @@ class PlotCanvas(FigureCanvas):
             zt_times = np.array(data['zt_times'])
             matrix = np.array(data['activity_matrix'])  # [days][zt]
 
-            # Calculate mean and SEM across days (axis=0)
+            # Calculate mean and SEM across recorded days (axis=0); unrecorded
+            # cells are NaN
             mean = np.nanmean(matrix, axis=0)
-            sem = np.nanstd(matrix, axis=0) / np.sqrt(matrix.shape[0])
+            n_days_rec = np.maximum(np.sum(~np.isnan(matrix), axis=0), 1)
+            sem = np.nanstd(matrix, axis=0) / np.sqrt(n_days_rec)
 
             color = colors[i]
 
@@ -602,6 +605,8 @@ class PlotCanvas(FigureCanvas):
             conditions      : list of condition names
             lighting_phases : optional dict {phase: (start_day, end_day)}
             title           : plot title
+            lights_on_hour  : kept for compatibility; the x axis is ZT, so
+                              lights-on is always at 0 / 24
         """
         self.fig.clear()
 
@@ -643,9 +648,11 @@ class PlotCanvas(FigureCanvas):
             bin_width = 24.0 / n_bins_per_day if n_bins_per_day > 0 else 1
             max_val = np.max(matrix) if np.max(matrix) > 0 else 1
 
-            # Light-phase boundaries in clock time (assumes 12 h photoperiod)
-            lon = lights_on_hour          # e.g. 8
-            loff = lights_on_hour + 12    # e.g. 20
+            # Rows and x axis are in ZT (each row = one lights-on-to-lights-on
+            # day, in chronological order), so lights-on is at x = 0 and 24
+            # whatever the clock hour. Assumes a 12 h photoperiod.
+            lon = 0
+            loff = 12
 
             def _ld_shade(ax, y_bot, y_top, x_offset):
                 """Draw LD shading for one 24-h half, starting at x_offset."""
@@ -703,17 +710,15 @@ class PlotCanvas(FigureCanvas):
                 else:
                     _ld_shade(ax, y_bot, y_top, x_offset=24)
 
-            # --- Activity bars (shifted to clock time) ---
+            # --- Activity bars (ZT; left half = day, right half = next day) ---
             for i in range(n_rows):
                 row = matrix[i]
                 for j, val in enumerate(row):
                     if val > 0:
                         if j < n_bins_per_day:
-                            zt = j * bin_width
-                            x_pos = (zt + lights_on_hour) % 24
+                            x_pos = j * bin_width
                         else:
-                            zt = (j - n_bins_per_day) * bin_width
-                            x_pos = (zt + lights_on_hour) % 24 + 24
+                            x_pos = (j - n_bins_per_day) * bin_width + 24
                         height = 0.8 * (val / max_val)
                         ax.bar(x_pos, height, width=bin_width,
                                bottom=n_rows - i - 1,
@@ -725,7 +730,7 @@ class PlotCanvas(FigureCanvas):
             ax.set_ylim(0, n_rows)
             ax.set_xticks([0, 6, 12, 18, 24, 30, 36, 42, 48])
             ax.set_xticklabels(['0', '6', '12', '18', '24', '30', '36', '42', '48'], fontsize=self.style.font_tick())
-            ax.set_xlabel('Time (h)', fontsize=self.style.font_axis())
+            ax.set_xlabel('ZT (h)', fontsize=self.style.font_axis())
             ax.set_ylabel('Day', fontsize=self.style.font_axis())
             ax.set_title(f'{cond}', fontsize=self.style.font_title())
 
@@ -884,7 +889,7 @@ class PlotCanvas(FigureCanvas):
         ax = self.fig.add_subplot(111)
         any_plotted = False
 
-        sig_drawn = False
+        phases_used = set()
         for idx, cond in enumerate(conditions):
             if cond not in chi_sq_data:
                 continue
@@ -930,25 +935,34 @@ class PlotCanvas(FigureCanvas):
                 )
 
             # Scan-wide threshold: rises with period because Qp's degrees of
-            # freedom (n_slots - 1) do. Drawn once (first condition with one).
-            if threshold_curve is not None and not sig_drawn:
-                ax.plot(periods, threshold_curve, color='red', linestyle=':',
+            # freedom (n_slots - 1) do. Each condition has its own curve
+            # (its own individuals and recording length).
+            if threshold_curve is not None:
+                multi = len(conditions) > 1
+                ax.plot(periods, threshold_curve,
+                        color=color if multi else 'red', linestyle=':',
                         linewidth=1.0,
-                        label=f'Scan-wide α = {alpha:g} (block permutation)')
-                sig_drawn = True
+                        label=(f'{cond}: scan-wide α = {alpha:g}' if multi else
+                               f'Scan-wide α = {alpha:g} (block permutation)'))
 
-            phase_used = res.get('phase_used', 'all')
-            if phase_used != 'all' and idx == 0:
-                ax.set_title(f"{title}\n(computed on {phase_used} phase)", fontsize=self.style.font_title())
-
+            phases_used.add(res.get('phase_used', 'all'))
             any_plotted = True
 
         if not any_plotted:
             ax.text(0.5, 0.5, 'No periodogram data available',
                     ha='center', va='center', transform=ax.transAxes)
         else:
-            if ax.get_title() == '':
-                ax.set_title(title, fontsize=self.style.font_title())
+            # Which data τ was computed on (see AnalysisWorker: individuals
+            # with < 10 points in the DD window fall back to the full recording)
+            if phases_used == {'DD'}:
+                subtitle = "\n(computed on DD phase)"
+            elif phases_used == {'all'}:
+                subtitle = "\n(computed on full recording)"
+            elif phases_used:
+                subtitle = "\n(DD phase; some individuals on full recording)"
+            else:
+                subtitle = ""
+            ax.set_title(f"{title}{subtitle}", fontsize=self.style.font_title())
             ax.set_xlabel('Period (h)', fontsize=self.style.font_axis())
             ax.set_ylabel('Qp statistic', fontsize=self.style.font_axis())
             if self.style.show_legend:
@@ -1288,7 +1302,8 @@ class ResultsPanel(QWidget):
         is_consensus = any(r.get('method') == 'consensus_ai' for r in results)
         if is_consensus:
             n_rhythmic = sum(1 for r in results if r.get('r_squared') is not None and r.get('r_squared') >= 0.7)
-            return f"{len(results)} results ({n_rhythmic} rhythmic)"
+            n_na = sum(1 for r in results if r.get('method') == 'consensus_ai' and r.get('r_squared') is None)
+            return f"{len(results)} results ({n_rhythmic} rhythmic" + (f", {n_na} not applicable)" if n_na else ")")
         n_sig = 0
         for r in results:
             p = self._significance_p(r)
@@ -1388,6 +1403,24 @@ class ResultsPanel(QWidget):
                           'MESOR-1', 'MESOR-2', 'MESOR-Diff', 'p-MESOR', 'q-MESOR', 'CI-MESOR',
                           'ME', 'Resid-SE', 'AIC', 'BIC']
 
+                # Condition 2 period, when it differs (nonlinear Independent Models)
+                if any(r.get('period2') is not None for r in self._results):
+                    columns.insert(6, 'period2')
+                    headers[5] = 'Period-1 (h)'
+                    headers.insert(6, 'Period-2 (h)')
+
+                # Joint-model F-test (nonlinear Pooled Model): model vs. constant mean, not a difference test
+                if any(r.get('model_p') is not None for r in self._results):
+                    i = columns.index('p1')
+                    columns[i:i] = ['model_p', 'model_q']
+                    headers[i:i] = ['p-Model (joint F)', 'q-Model (joint F)']
+
+                # LimoRhyde joint tests: condition coefficients and extra-sum-of-squares F-test
+                if any(r.get('p_params') is not None for r in self._results):
+                    i = columns.index('p1')
+                    columns[i:i] = ['p_params', 'q_params', 'p_ftest', 'q_ftest']
+                    headers[i:i] = ['p-Params (min)', 'q-Params', 'p (F test)', 'q (F test)']
+
                 # Add nonlinear comparison columns if present
                 if has_nonlinear_comparison:
                     columns.extend(['amplification_g0', 'amplification_g1', 'amplification_diff', 'p_amplification', 'q_amplification', 'amplification_diff_ci',
@@ -1420,8 +1453,8 @@ class ResultsPanel(QWidget):
                 headers = ['Variable', 'Condition', 'Method', 'Status']
             # For Fourier F24 (effect size, no p-value)
             elif has_f24:
-                columns = ['variable', 'condition', 'method', 'period', 'dominant_period', 'power', 'dominant_power', 'target_power', 'correlation_r', 'message']
-                headers = ['Variable', 'Condition', 'Method', 'Target Period (h)', 'Dominant Period (h)', 'F24 Score', 'Dominant Power', 'Target Power', 'Correlation r', 'Notes']
+                columns = ['variable', 'condition', 'method', 'period', 'dominant_period', 'power', 'f24_norm', 'p_f24', 'dominant_power', 'target_power', 'message']
+                headers = ['Variable', 'Condition', 'Method', 'Target Period (h)', 'Dominant Period (h)', 'F24 Score', 'F24 (norm)', 'pF24', 'Dominant Power', 'Target Power', 'Notes']
             # For Spectral Analysis (Periodogram)
             elif has_spectral:
                 columns = ['variable', 'condition', 'method', 'dominant_period', 'power', 'threshold', 'significant_peaks', 'message']
@@ -1457,8 +1490,8 @@ class ResultsPanel(QWidget):
                 headers = ['Variable', 'Condition', 'Method', 'Dominant Period (h)', 'Mean Power', 'Period Variation (h)', 'Amp. Modulations']
             # For Consensus AI results
             elif has_consensus_ai:
-                columns = ['variable', 'condition', 'method', 'ai_probability', 'ai_classification']
-                headers = ['Variable', 'Condition', 'Method', 'Probability', 'Classification']
+                columns = ['variable', 'condition', 'method', 'ai_probability', 'ai_classification', 'ai_notes']
+                headers = ['Variable', 'Condition', 'Method', 'Probability', 'Classification', 'Notes']
             # For JTK-family methods (JTK, AR-JTK, Cosine-Kendall)
             elif has_jtk:
                 columns = ['variable', 'condition', 'method', 'period', 'amplitude',
@@ -1481,9 +1514,11 @@ class ResultsPanel(QWidget):
             # For RhythmCount: Parameter Confidence Intervals
             elif has_rhythmcount_cis:
                 columns = ['variable', 'condition', 'method', 'period', 'n_components',
-                           'amplitude_ci', 'mesor_ci', 'message']
+                           'amplitude_ci', 'mesor_ci', 'peak_times', 'peak_cis', 'peak_height_cis',
+                           'message']
                 headers = ['Variable', 'Condition', 'Method', 'Period (h)', 'Components',
-                           'CI (Amplitude)', 'CI (MESOR)', 'Notes']
+                           'CI (Amplitude)', 'CI (MESOR)', 'Peaks (h)', 'CI (Peaks, h)',
+                           'CI (Peak Heights)', 'Notes']
             # For RhythmCount: Fit Single / All Models / Best Model
             elif has_rhythmcount:
                 columns = ['variable', 'condition', 'method', 'period', 'n_components',
@@ -1496,11 +1531,13 @@ class ResultsPanel(QWidget):
             elif any(r.get('method') == 'harmonic_cosinor' for r in self._results):
                 columns = ['variable', 'condition', 'method', 'period', 'n_components',
                            'amplitude', 'acrophase_hours',
-                           'trough_times', 'peak_times',
+                           'harmonic_amplitudes', 'harmonic_acrophases',
+                           'waveform_amplitude', 'peak_times', 'trough_times',
                            'p_value', 'bonf_p_value', 'message']
                 headers = ['Variable', 'Condition', 'Method', 'Period (h)', 'Harmonics',
-                           'Primary Amplitude (H1)', 'Primary Acrophase H1 (h)',
-                           'All Amplitudes', 'All Acrophases (h)',
+                           'Amplitude H1', 'Acrophase H1 (h)',
+                           'Amplitudes (H1, H2, …)', 'Acrophases (h) (H1, H2, …)',
+                           'Waveform Amplitude', 'Waveform Peaks (h)', 'Waveform Troughs (h)',
                            'p (raw)', 'p (Bonf adj)', 'Notes']
             # For Cosinor OLS
             elif any(r.get('method') == 'cosinor_ols' for r in self._results):
@@ -1526,6 +1563,12 @@ class ResultsPanel(QWidget):
                 # Basic statistics (from fit_group)
                 columns.extend(['p_value', 'q_value', 'p_reject', 'q_reject'])
                 headers.extend(['p', 'q', 'p_reject', 'q_reject'])
+
+                # Selected model of a period / n_components scan: p x number of models fitted
+                # (the q-values of these rows are computed from it; see core/multiple_testing.py)
+                if any(r.get('bonf_p_value') is not None for r in self._results):
+                    columns.insert(columns.index('q_value'), 'bonf_p_value')
+                    headers.insert(headers.index('q'), 'p (Bonf, models)')
 
                 # Fit quality metrics
                 columns.extend(['rss', 'r_squared', 'r_squared_adj', 'log_likelihood', 'aic', 'bic', 'me', 'resid_se'])
@@ -1699,6 +1742,14 @@ class ResultsPanel(QWidget):
                             value = details.get('classification', 'N/A')
                         except (ValueError, TypeError):
                             pass
+                elif col == 'ai_notes':
+                    # Consensus AI: caveats (e.g. period range clipped) from message JSON
+                    value = ''
+                    try:
+                        import json as _json_mod
+                        value = '; '.join(_json_mod.loads(result.get('message') or '{}').get('notes', []))
+                    except (ValueError, TypeError, AttributeError):
+                        pass
                 elif col == 'acrophase_diff_ci_hours':
                     ci_rad = result.get('acrophase_diff_ci')
                     period = result.get('period', 24.0)
@@ -1724,7 +1775,8 @@ class ResultsPanel(QWidget):
                         # Check for NaN first
                         if math.isnan(value):
                             value = 'N/A'
-                        elif col.startswith('p_') or col.startswith('q_') or col == 'p_value':
+                        elif col.startswith('p_') or col.startswith('q_') or col in (
+                                'p_value', 'model_p', 'model_q', 'bonf_p_value', 'p1', 'q1', 'p2', 'q2'):
                             value = f'{value:.2e}' if value < 0.001 else f'{value:.4f}'
                         else:
                             value = f'{value:.3f}'
@@ -1753,6 +1805,12 @@ class ResultsPanel(QWidget):
                 if col.startswith('sig_'):
                     if value == 'Yes':
                         item.setBackground(Qt.green)
+
+                # Lack-of-fit test: a small p_reject means the cosinor model does NOT fit the data
+                elif col in ('p_reject', 'q_reject'):
+                    p_val = result.get(col)
+                    if p_val is not None and p_val < 0.05:
+                        item.setBackground(QColor(255, 180, 180))  # light red
 
                 # Color code p-values and q-values
                 elif col.startswith('p_') or col.startswith('q_') or col == 'p_value' or col == 'significant':
@@ -1833,7 +1891,8 @@ class ResultsPanel(QWidget):
             if filter_idx == 1:  # Significant / Rhythmic
                 return [r for r in self._results if r.get('r_squared') is not None and r.get('r_squared') >= 0.7]
             else:  # Non-significant / Not Rhythmic
-                return [r for r in self._results if r.get('r_squared') is not None and r.get('r_squared') < 0.7]
+                # includes 'Not applicable' rows (no probability)
+                return [r for r in self._results if not (r.get('r_squared') is not None and r.get('r_squared') >= 0.7)]
         else:
             scored = [(r, self._significance_p(r)) for r in self._results]
             if filter_idx == 1:  # Significant
@@ -2669,8 +2728,7 @@ class ResultsPanel(QWidget):
         fig.clear()
         ax = fig.add_subplot(111)
 
-        if probability is None:
-            probability = 0.0
+        # None = 'Not applicable' (a model feature is missing): no needle, no score
 
         # Draw semicircular gauge background arcs
         theta_arrhythmic = np.linspace(np.pi, np.pi * 0.7, 50)
@@ -2693,15 +2751,16 @@ class ResultsPanel(QWidget):
             )
 
         # Needle
-        needle_angle = np.pi * (1 - probability)
-        ax.plot([0, 0.85 * np.cos(needle_angle)],
-                [0, 0.85 * np.sin(needle_angle)],
-                'k-', linewidth=3, solid_capstyle='round')
-        ax.plot(0, 0, 'ko', markersize=8, zorder=5)
+        if probability is not None:
+            needle_angle = np.pi * (1 - probability)
+            ax.plot([0, 0.85 * np.cos(needle_angle)],
+                    [0, 0.85 * np.sin(needle_angle)],
+                    'k-', linewidth=3, solid_capstyle='round')
+            ax.plot(0, 0, 'ko', markersize=8, zorder=5)
 
         # Score text
         color_map = {'Rhythmic': '#2d8a2d', 'Borderline': '#cc8800', 'Arrhythmic': '#cc2222'}
-        ax.text(0, -0.1, f'{probability:.1%}',
+        ax.text(0, -0.1, f'{probability:.1%}' if probability is not None else 'N/A',
                 ha='center', va='top', fontsize=28, fontweight='bold')
         ax.text(0, -0.25, classification,
                 ha='center', va='top', fontsize=16,
@@ -2832,6 +2891,7 @@ class ResultsPanel(QWidget):
         condition1 = result.get('condition1', '')
         condition2 = result.get('condition2', '')
         period = result.get('period', 24.0)
+        period2 = result.get('period2') or period  # condition 2 period, if it differs
 
         # Get parameters for both groups
         mesor_g0 = result.get('mesor_g0')
@@ -2873,7 +2933,7 @@ class ResultsPanel(QWidget):
         method = result.get('method', '')
         if method.startswith('cosinorpy_'):
             acrophase_g0 = (-acrophase_g0 * period / (2 * np.pi)) % period * (2 * np.pi / period)
-            acrophase_g1 = (-acrophase_g1 * period / (2 * np.pi)) % period * (2 * np.pi / period)
+            acrophase_g1 = (-acrophase_g1 * period2 / (2 * np.pi)) % period2 * (2 * np.pi / period2)
 
         # Check if we have valid data to plot
         if amplitude_g0 == 0 and amplitude_g1 == 0:
@@ -2923,7 +2983,7 @@ class ResultsPanel(QWidget):
         ax.plot(t_fit, y_fit_g0, '-', linewidth=style.line_width, label=f'{condition1} fit', color=style.primary_color, zorder=2)
 
         # Plot fit curve for condition 2 (group 1)
-        y_fit_g1 = mesor_g1 + amplitude_g1 * np.cos(2 * np.pi * t_fit / period - acrophase_g1)
+        y_fit_g1 = mesor_g1 + amplitude_g1 * np.cos(2 * np.pi * t_fit / period2 - acrophase_g1)
         ax.plot(t_fit, y_fit_g1, '-', linewidth=style.line_width, label=f'{condition2} fit', color=style.secondary_color, zorder=2)
 
         # Add horizontal lines at MESORs if they are not zero

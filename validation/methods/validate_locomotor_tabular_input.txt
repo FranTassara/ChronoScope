@@ -25,7 +25,7 @@ Locomotor Activity Analysis on tabular input -- validation
 ------------------------------------------------------------------------------
   [PASS] day index spans the recording  (6 days)
   [PASS] chi-square periodogram returns a period
-  [PASS] recovered tau is close to the simulated period  (tau=23.80 h vs 23.7 h)
+  [PASS] recovered tau is close to the simulated period  (tau=23.50 h vs 23.7 h)
   [PASS] IS/IV computed  (IS=0.9161077927515391, IV=0.21796521035527736)
   [PASS] IS is high for a strongly rhythmic signal  (IS=0.916)
   [PASS] alpha/rho computed  (alpha_mean=11.833333333333334, rho_mean=12.166666666666666)

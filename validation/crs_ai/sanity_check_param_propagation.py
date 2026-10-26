@@ -163,7 +163,7 @@ def main():
     def _ok(cond):
         return "OK" if cond else "FAIL"
 
-    has_clip_warning_C = any('outside' in w.lower() for w in wC)
+    has_clip_warning_C = any('does not overlap' in w.lower() for w in wC)
     print(f"  Warnings firing:")
     print(f"    A1 (defaults, 24h):     count={len(wA)}   expected 0   "
           f"{_ok(len(wA) == 0)}")

@@ -37,6 +37,7 @@ if str(APP_DIR) not in sys.path:
 
 from utils.data_loader import CircadianDataLoader
 from core.analysis_engine import AnalysisEngine, AnalysisType
+from core.multiple_testing import bh_across_variables
 
 
 def parse_args():
@@ -108,10 +109,24 @@ def main():
     if not variables:
         sys.exit("No numeric variable columns detected; pass --variable explicitly.")
 
+    # Subject column detected at load time (dependent-data methods), as in the GUI
+    info = loader.get_dataset_info()
+    parameters.setdefault('subject_col', info.subject_column if info else None)
+
     engine = AnalysisEngine()
     available, message = engine.check_method_available(analysis_type)
     if not available:
         sys.exit(f"Method '{args.method}' is not available: {message}")
+
+    # Compare-conditions methods compare every pair of conditions in one call, so
+    # they run once per variable (as in the GUI); everything else per condition.
+    compare_all = analysis_type in (
+        AnalysisType.COSINORPY_COMPARE_INDEPENDENT, AnalysisType.COSINORPY_COMPARE_DEPENDENT,
+        AnalysisType.COSINORPY_NONLINEAR_COMPARE_INDEPENDENT, AnalysisType.COSINORPY_NONLINEAR_COMPARE_DEPENDENT,
+        AnalysisType.RHYTHMCOUNT_COMPARE_GROUPS,
+    )
+    if compare_all:
+        conditions = conditions[:1]
 
     rows = []
     total = len(variables) * len(conditions)
@@ -132,9 +147,12 @@ def main():
             result_list = result if isinstance(result, list) else [result]
             rows.extend(asdict(r) for r in result_list)
             done += 1
-            ok = all(r.success for r in result_list)
-            status = 'OK' if ok else f"FAILED ({result_list[0].message})"
+            failed = [r for r in result_list if not r.success]
+            status = 'OK' if not failed else f"FAILED ({failed[0].message})"
             print(f"[{done}/{total}] {variable} x {condition}: {status} ({len(result_list)} row(s))")
+
+    # CosinorPy q-values: Benjamini-Hochberg across all variables of this run
+    bh_across_variables(rows, parameters)
 
     out_path = args.output or f"{Path(args.input).stem}_{args.method}_results.csv"
     pd.DataFrame(rows).to_csv(out_path, index=False)

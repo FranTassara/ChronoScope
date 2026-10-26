@@ -31,6 +31,26 @@ import numpy as np
 from .data_loader import DatasetInfo, DataSourceType, ColumnInfo, ColumnRole
 
 
+def _zt_hours(dt, raw_data: Optional[pd.DataFrame], lights_on_hour: int,
+              lights_on_minute: int) -> float:
+    """Hours elapsed since ZT0 of day 1 (shared by the DAM and AWD loaders).
+
+    ZT0 of day 1 is the last lights-on at or before the first recorded
+    sample. Without raw data to anchor to, falls back to time of day.
+    """
+    lights_on = timedelta(hours=lights_on_hour, minutes=lights_on_minute)
+    if raw_data is not None and 'datetime' in raw_data.columns:
+        first_dt = pd.Timestamp(raw_data['datetime'].min()).to_pydatetime()
+        zt0 = datetime.combine(first_dt.date(), datetime.min.time()) + lights_on
+        if zt0 > first_dt:
+            zt0 -= timedelta(days=1)
+    else:
+        zt0 = datetime.combine(dt.date(), datetime.min.time()) + lights_on
+        if zt0 > dt:
+            zt0 -= timedelta(days=1)
+    return round((dt - zt0).total_seconds() / 3600, 4)
+
+
 @dataclass
 class DAMConfig:
     """Configuration for DAM data processing."""
@@ -440,7 +460,10 @@ class DAMDataLoader:
         """
         Convert datetime to ZT (Zeitgeber Time) hours.
 
-        ZT0 is defined by lights_on_hour in config.
+        ZT0 is defined by lights_on_hour in config. Time is counted
+        continuously from the last lights-on at or before the first sample,
+        so ZT is monotonic in clock time and ZT // 24 indexes lights-on days
+        (samples between midnight and lights-on belong to the previous day).
 
         Args:
             dt: datetime object
@@ -448,25 +471,8 @@ class DAMDataLoader:
         Returns:
             ZT time in decimal hours (0.0 - 24.0+)
         """
-        # Calculate hours since midnight
-        hours_since_midnight = dt.hour + dt.minute / 60 + dt.second / 3600
-
-        # Calculate ZT (relative to lights on)
-        lights_on = self._config.lights_on_hour + self._config.lights_on_minute / 60
-        zt = hours_since_midnight - lights_on
-
-        # Handle negative values (before lights on)
-        if zt < 0:
-            zt += 24
-
-        # Add full days
-        # Get start of first day
-        if self._raw_data is not None and 'datetime' in self._raw_data.columns:
-            first_dt = self._raw_data['datetime'].min()
-            days_elapsed = (dt.date() - first_dt.date()).days
-            zt += days_elapsed * 24
-
-        return round(zt, 4)
+        return _zt_hours(dt, self._raw_data, self._config.lights_on_hour,
+                         self._config.lights_on_minute)
 
     # =========================================================================
     # ChronoScope Compatibility Interface

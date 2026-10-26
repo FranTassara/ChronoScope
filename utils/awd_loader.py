@@ -26,6 +26,7 @@ import numpy as np
 import re
 
 from .data_loader import DatasetInfo, DataSourceType, ColumnInfo, ColumnRole
+from .dam_loader import _zt_hours
 
 
 @dataclass
@@ -33,7 +34,7 @@ class AWDConfig:
     """Configuration for AWD data processing."""
 
     # Binning settings
-    # AWD files typically have a native bin size (e.g., 6 or 10 min).
+    # The native bin size (epoch) is read from the AWD header.
     # target_bin_size_minutes allows re-binning if needed.
     target_bin_size_minutes: Optional[int] = None 
 
@@ -55,7 +56,7 @@ class AWDSummary:
     """Summary information about a loaded AWD file."""
     filepath: str
     subject_id: str
-    native_bin_size_minutes: int
+    native_bin_size_minutes: float
     start_datetime: datetime
     end_datetime: datetime
     total_days: float
@@ -79,7 +80,7 @@ class AWDDataLoader:
         
         self._header_subject_id: str = ""
         self._header_start_dt: Optional[datetime] = None
-        self._native_bin_min: int = 6  # Standard fallback for rodent wheels
+        self._native_bin_min: float = 6  # Read from the header in load_awd()
 
         # ChronoScope compatibility
         self._time_col: str = "time"
@@ -117,12 +118,14 @@ class AWDDataLoader:
             if not self._header_start_dt:
                 raise ValueError(f"Could not parse start date/time: {date_str} {time_str}")
 
-            # Locate the start of the numeric data stream robustly
+            # Locate the start of the numeric data stream robustly. A data line
+            # is "count" or "count,light" (optional light level after a comma).
+            data_line = r'^-?\d+(\s*,\s*-?[\d.]+)?$'
             start_line = -1
             for i in range(3, min(20, len(lines)-2)):
-                if (re.match(r'^-?\d+$', lines[i]) and 
-                    re.match(r'^-?\d+$', lines[i+1]) and 
-                    re.match(r'^-?\d+$', lines[i+2])):
+                if (re.match(data_line, lines[i]) and
+                    re.match(data_line, lines[i+1]) and
+                    re.match(data_line, lines[i+2])):
                     start_line = i
                     break
             
@@ -136,8 +139,9 @@ class AWDDataLoader:
             missing_count = 0
             for val in data_str:
                 try:
-                    # 'M' is sometimes appended to marked data in ClockLab, strip non-digits
-                    clean_val = re.sub(r'[^\d\-]', '', val)
+                    # Keep only the count (drop an optional ",light" field); 'M' is
+                    # sometimes appended to marked data in ClockLab, strip non-digits
+                    clean_val = re.sub(r'[^\d\-]', '', val.split(',')[0])
                     v = int(clean_val)
                     if v < 0:
                         raw_values.append(np.nan)
@@ -150,10 +154,13 @@ class AWDDataLoader:
 
             # Build Raw DataFrame
             df = pd.DataFrame({'raw_activity': raw_values})
-            
-            # Use target bin size if set, otherwise fallback to native default
-            self._native_bin_min = self._config.target_bin_size_minutes if self._config.target_bin_size_minutes else 6 
-            
+
+            # Native epoch from header line 4: the sample interval in minutes
+            # multiplied by 4 (Actimetrics text-based ClockLab format), so
+            # "4" = 1 min, "24" = 6 min. Re-binning to target_bin_size_minutes
+            # happens in process().
+            self._native_bin_min = self._parse_awd_epoch(lines[3])
+
             timestamps = [self._header_start_dt + timedelta(minutes=i * self._native_bin_min) for i in range(len(df))]
             df['datetime'] = timestamps
             
@@ -164,6 +171,18 @@ class AWDDataLoader:
 
         except Exception as e:
             raise ValueError(f"Failed to load AWD file {filepath}: {e}")
+
+    def _parse_awd_epoch(self, interval_str: str) -> float:
+        """Native epoch in minutes from the header INTERVAL line (minutes x 4).
+
+        Falls back to 6 min (the previous fixed assumption) if the line is
+        not a positive integer.
+        """
+        try:
+            code = int(interval_str.strip())
+        except ValueError:
+            return 6
+        return code / 4 if code > 0 else 6
 
     def _parse_awd_datetime(self, date_str: str, time_str: str) -> Optional[datetime]:
         """Parses ClockLab specific date and time strings."""
@@ -257,19 +276,10 @@ class AWDDataLoader:
         return self._processed_data.copy()
 
     def _datetime_to_zt(self, dt: datetime) -> float:
-        hours_since_midnight = dt.hour + dt.minute / 60 + dt.second / 3600
-        lights_on = self._config.lights_on_hour + self._config.lights_on_minute / 60
-        zt = hours_since_midnight - lights_on
-
-        if zt < 0:
-            zt += 24
-
-        if self._raw_data is not None and 'datetime' in self._raw_data.columns:
-            first_dt = self._raw_data['datetime'].min()
-            days_elapsed = (dt.date() - first_dt.date()).days
-            zt += days_elapsed * 24
-
-        return round(zt, 4)
+        # Continuous hours since the last lights-on at or before the first
+        # sample (see dam_loader._zt_hours).
+        return _zt_hours(dt, self._raw_data, self._config.lights_on_hour,
+                         self._config.lights_on_minute)
 
     # =========================================================================
     # ChronoScope Compatibility Interface

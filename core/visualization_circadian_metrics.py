@@ -313,6 +313,14 @@ def compute_is_iv(
 # Activity duration (α), rest duration (ρ), and onset/offset variability
 # ---------------------------------------------------------------------------
 
+def _circular_sd_h(values, period: float = 24.0) -> float:
+    """Circular SD (sqrt(-2 ln R), in hours) of clock-like values, so that
+    e.g. ZT 23.5 and ZT 0.5 are 1 h apart rather than 23 h."""
+    ang = np.asarray(values, dtype=float) * 2 * np.pi / period
+    R = np.hypot(np.cos(ang).mean(), np.sin(ang).mean())
+    return float(np.sqrt(-2 * np.log(np.clip(R, 1e-12, 1.0))) * period / (2 * np.pi))
+
+
 def compute_alpha_rho(
     times: np.ndarray,
     activity: np.ndarray,
@@ -320,7 +328,8 @@ def compute_alpha_rho(
 ) -> Dict:
     """Compute α (active phase duration), ρ (rest duration), and variability.
 
-    For each day:
+    For each complete day (days with fewer bins than a full 24 h, typically
+    the first and last day of a recording, are skipped):
       1. Average activity profile across subjects (already averaged if input is
          per-condition mean series).
       2. Threshold = mean (or 25th-percentile) of that day's profile.
@@ -342,8 +351,8 @@ def compute_alpha_rho(
         rho_h         – ρ per day (hours)
         onset_zt      – activity onset per day (ZT hours)
         offset_zt     – activity offset per day (ZT hours)
-        onset_sd      – SD of onset times (hours)
-        offset_sd     – SD of offset times (hours)
+        onset_sd      – circular SD of onset times (hours)
+        offset_sd     – circular SD of offset times (hours)
         alpha_mean    – mean α across days (hours)
         alpha_sd      – SD of α across days (hours)
         rho_mean      – mean ρ across days (hours)
@@ -355,6 +364,14 @@ def compute_alpha_rho(
     df = pd.DataFrame({'time': times, 'activity': activity})
     df['zt'] = df['time'] % 24.0
     df['day'] = (df['time'] // 24).astype(int) + 1
+
+    # Only complete days are used: a partial first/last day would put its
+    # onset/offset at the recording edge rather than at the animal's.
+    diffs = np.diff(np.unique(times))
+    bin_h = float(np.median(diffs)) if len(diffs) else 24.0
+    bins_per_day = max(1, int(round(24.0 / bin_h)))
+    n_bins = df.groupby('day')['zt'].nunique()
+    df = df[df['day'].isin(n_bins[n_bins >= bins_per_day].index)]
 
     days_list: List[int] = []
     alpha_h: List[Optional[float]] = []
@@ -405,8 +422,8 @@ def compute_alpha_rho(
         'rho_h': rho_h,
         'onset_zt': onset_zt,
         'offset_zt': offset_zt,
-        'onset_sd': float(np.std(valid_onsets)) if len(valid_onsets) > 1 else 0.0,
-        'offset_sd': float(np.std(valid_offsets)) if len(valid_offsets) > 1 else 0.0,
+        'onset_sd': _circular_sd_h(valid_onsets) if len(valid_onsets) > 1 else 0.0,
+        'offset_sd': _circular_sd_h(valid_offsets) if len(valid_offsets) > 1 else 0.0,
         'alpha_mean': float(np.mean(valid_alpha)) if valid_alpha else None,
         'alpha_sd': float(np.std(valid_alpha)) if len(valid_alpha) > 1 else 0.0,
         'rho_mean': float(np.mean(valid_rho)) if valid_rho else None,

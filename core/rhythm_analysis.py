@@ -214,6 +214,8 @@ class JTKResult:
         lag: Phase lag parameter
         n_tests: Number of period/lag/asymmetry combinations tested
         method: Analysis method identifier
+        best_fit: Set only by the *_all_periods sweeps: True for the one period
+            holding the smallest unrounded p-value (the period a single run picks)
 
     Note:
         - bonf_p_value is very conservative (may miss true rhythms)
@@ -235,6 +237,7 @@ class JTKResult:
     # Keep adj_p_value as alias for backward compatibility (points to bh_p_value)
     adj_p_value: float = None
     pvalue_method: str = "analytical"
+    best_fit: Optional[bool] = None
 
     def __post_init__(self):
         # For backward compatibility, adj_p_value defaults to bh_p_value
@@ -349,12 +352,19 @@ class HarmonicCosinorResult:
             number of periods scanned. Conservative, because neighbouring
             periods are strongly correlated rather than independent tests.
         period: Best-fit period
-        amplitudes: List of amplitudes for each peak
-        acrophases: List of acrophase times (hours) for each peak
+        amplitudes: Amplitude of each harmonic component, in harmonic order
+            (first entry = fundamental)
+        acrophases: Acrophase (hours) of each harmonic component, in harmonic
+            order: the first peak of harmonic k, in [0, period/k)
         n_harmonics: Number of harmonics used
         method: Analysis method identifier
         fit_model: Dictionary with fitted model parameters for plotting
         warning: Optional warning message (e.g., if extra harmonics don't improve fit)
+        harmonic_numbers: Harmonic number k of each entry of amplitudes/acrophases
+        waveform_peaks: Peak times (hours, [0, period)) of the fitted waveform, the
+            sum of all harmonics, from the highest peak to the lowest
+        waveform_troughs: Trough times of the fitted waveform, from the lowest up
+        waveform_amplitude: Half the peak-to-trough range of the fitted waveform
     """
     p_value: float
     adj_p_value: float
@@ -365,6 +375,10 @@ class HarmonicCosinorResult:
     method: str = "Harmonic-Cosinor"
     fit_model: Optional[Dict[str, Any]] = None
     warning: Optional[str] = None
+    harmonic_numbers: Optional[List[int]] = None
+    waveform_peaks: Optional[List[float]] = None
+    waveform_troughs: Optional[List[float]] = None
+    waveform_amplitude: Optional[float] = None
 
     def is_significant(self, alpha: float = 0.05) -> bool:
         """Check if the rhythm is statistically significant."""
@@ -403,7 +417,10 @@ class FourierF24Result:
         dominant_power: Power at dominant period
         target_period: The period that was tested (e.g., 24h)
         target_power: Power at the target period
-        correlation_r: Correlation between replicates (if applicable)
+        f24_norm: Fraction of the variance at the target frequency, 2·P / Σ(y − ȳ)²
+            (1 for a pure sinusoid at a Fourier frequency; the normalisation of
+            Wijnen et al., 2006)
+        p_f24: Permutation p-value (pF24): (1 + #{permuted power ≥ observed}) / (1 + B)
         method: Analysis method identifier
     """
     f24_score: float
@@ -413,7 +430,8 @@ class FourierF24Result:
     dominant_power: float
     target_period: float
     target_power: float
-    correlation_r: Optional[float] = None
+    f24_norm: Optional[float] = None
+    p_f24: Optional[float] = None
     method: str = "Fourier-F24"
     
     def is_rhythmic(self, threshold: float = 2.0) -> bool:
@@ -433,7 +451,8 @@ class FourierF24Result:
             'dominant_power': self.dominant_power,
             'target_period': self.target_period,
             'target_power': self.target_power,
-            'correlation_r': self.correlation_r,
+            'f24_norm': self.f24_norm,
+            'p_f24': self.p_f24,
             'method': self.method
         }
 
@@ -533,6 +552,8 @@ class LMEResult:
         bic: Bayesian Information Criterion
         random_effect_var: Variance of random effect
         residual_var: Residual variance
+        lr_stat: Likelihood-ratio statistic of the rhythm test (ML fits, unrounded;
+            used to pick the best period when p-values underflow to 0)
         method: Analysis method identifier
     """
     mesor: float
@@ -550,6 +571,7 @@ class LMEResult:
     bic: Optional[float] = None
     random_effect_var: Optional[float] = None
     residual_var: Optional[float] = None
+    lr_stat: Optional[float] = None
     method: str = "LME-Cosinor"
 
     def is_significant(self, alpha: float = 0.05) -> bool:
@@ -675,6 +697,56 @@ def _generate_triangle_template_time(
     return pd.Series(template).rank().values
 
 
+def _permutation_max_abs_tau(
+    y: np.ndarray,
+    templates: np.ndarray,
+    n_permutations: int,
+    seed: int = 42
+) -> np.ndarray:
+    """
+    Null distribution of the maximum |Kendall tau-b| across `templates` for
+    random permutations of `y` (Hutchison et al., 2015).
+
+    tau-b is computed from pairwise signs, Σ sign(Δy)·sign(Δt) / √(n_y·n_t) with
+    n = number of untied pairs, which is the statistic scipy.stats.kendalltau
+    returns; done as matrix products in blocks instead of one kendalltau call per
+    template and permutation. The permutations are drawn in the same order as the
+    former per-template loop, so the null distribution is the same.
+
+    Args:
+        y: Ranked data
+        templates: (n_templates, n) array of ranked templates
+        n_permutations: Number of permutations
+        seed: RNG seed
+
+    Returns:
+        Array of length n_permutations with the max |tau| of each permutation
+    """
+    rng = np.random.default_rng(seed)
+    perms = np.array([rng.permutation(y) for _ in range(n_permutations)], dtype=float)
+    i, j = np.triu_indices(len(y), 1)
+    block = max(1, int(4e6 // len(i)))          # rows per block, ~32 MB per sign matrix
+    tmpl_signs = [np.sign(templates[k:k + block, j] - templates[k:k + block, i])
+                  for k in range(0, len(templates), block)]
+    null = np.zeros(n_permutations)
+    for a in range(0, n_permutations, block):
+        s = np.sign(perms[a:a + block, j] - perms[a:a + block, i])
+        n_s = np.sum(s ** 2, axis=1)
+        for ts in tmpl_signs:
+            den = np.sqrt(np.outer(n_s, np.sum(ts ** 2, axis=1)))
+            with np.errstate(divide='ignore', invalid='ignore'):
+                tau = np.where(den > 0, (s @ ts.T) / den, 0.0)
+            null[a:a + block] = np.maximum(null[a:a + block], np.max(np.abs(tau), axis=1))
+    return null
+
+
+def _empirical_p(null_max_abs_tau: np.ndarray, tau: float) -> float:
+    """Phipson & Smyth (2010) +1 permutation p-value of an observed tau. The small
+    tolerance keeps ties when scipy's tau and the matrix tau differ in the last digit."""
+    n = len(null_max_abs_tau)
+    return min(1.0, (np.sum(null_max_abs_tau >= abs(tau) - 1e-12) + 1) / (n + 1))
+
+
 def _run_discrete_jtk(
     series: pd.Series,
     period_range: List[float] = None,
@@ -720,12 +792,14 @@ def _run_discrete_jtk(
     best_idx = 0
 
     test_results = []
+    templates = []
 
     for period in period_range:
         lags = lag_range if lag_range is not None else np.arange(0, period, 1)
         for asym in asymmetries:
             for lag in lags:
                 ref = _generate_triangle_template_time(times, period, lag, asym)
+                templates.append(ref)
                 tau, pval = kendalltau(y, ref)
                 test_results.append((pval, tau, period, lag, asym))
                 if pval < best_p:
@@ -755,9 +829,10 @@ def _run_discrete_jtk(
 
     amp = (np.percentile(series.values, 90) - np.percentile(series.values, 10)) / 2
 
-    # Correct acrophase based on tau sign
+    # Correct acrophase based on tau sign: the template peaks at lag + asym·P and
+    # has its trough at lag, so with tau < 0 the data peak at lag (for any asym)
     acrophase = (
-        (best_lag + best_asym * best_per + best_per / 2) % best_per if best_tau < 0
+        best_lag % best_per if best_tau < 0
         else (best_lag + best_asym * best_per) % best_per
     )
 
@@ -765,24 +840,8 @@ def _run_discrete_jtk(
     # Null distribution: max |tau| across all templates under permuted data.
     # This accounts for the maximisation over templates without further correction.
     if n_permutations > 0:
-        rng = np.random.default_rng(seed)
-        null_max_abs_tau = np.empty(n_permutations)
-        for i in range(n_permutations):
-            perm_y = rng.permutation(y)
-            perm_max = 0.0
-            for period in period_range:
-                lags = lag_range if lag_range is not None else np.arange(0, period, 1)
-                for asym in asymmetries:
-                    for lag in lags:
-                        ref = _generate_triangle_template_time(times, period, lag, asym)
-                        tau_p, _ = kendalltau(perm_y, ref)
-                        abs_tau_p = abs(tau_p)
-                        if abs_tau_p > perm_max:
-                            perm_max = abs_tau_p
-            null_max_abs_tau[i] = perm_max
-
-        # Phipson & Smyth (2010) +1 correction for non-zero minimum p-value
-        p_emp = min(1.0, (np.sum(null_max_abs_tau >= abs(best_tau)) + 1) / (n_permutations + 1))
+        null_max_abs_tau = _permutation_max_abs_tau(y, np.array(templates), n_permutations, seed)
+        p_emp = _empirical_p(null_max_abs_tau, best_tau)
 
         return JTKResult(
             p_value=round(p_emp, 6),
@@ -819,7 +878,9 @@ def _run_discrete_jtk_all_periods(
     series: pd.Series,
     period_range: List[float] = None,
     lag_range: Optional[np.ndarray] = None,
-    asymmetries: List[float] = None
+    asymmetries: List[float] = None,
+    n_permutations: int = 0,
+    seed: int = 42
 ) -> List['JTKResult']:
     """
     Run JTK for each period in period_range and return one JTKResult per period.
@@ -827,6 +888,11 @@ def _run_discrete_jtk_all_periods(
     p-value corrections (BH and Bonferroni) are computed globally across ALL
     period/lag/asymmetry combinations, keeping the same statistical rigor as
     the standard single-result run.
+
+    n_permutations > 0 gives empirical p-values instead (Hutchison et al., 2015):
+    one null distribution of the maximum |tau| over all the templates of the
+    whole range, so each row's p-value is already corrected for the full scan,
+    and the Best Fit row gets the p-value of a single run over the same range.
 
     Returns:
         List of JTKResult objects (one per period), ordered by period.
@@ -841,6 +907,7 @@ def _run_discrete_jtk_all_periods(
 
     # Collect ALL tests globally (same pool as _run_discrete_jtk)
     all_test_results = []  # (pval, tau, period, lag, asym)
+    templates = []
 
     # Per-period tracking: best (p, tau, lag, asym, global_idx)
     per_period_best = {p: (1.0, 0.0, 0.0, 0.5, -1) for p in period_range}
@@ -850,6 +917,7 @@ def _run_discrete_jtk_all_periods(
         for asym in asymmetries:
             for lag in lags:
                 ref = _generate_triangle_template_time(times, period, lag, asym)
+                templates.append(ref)
                 tau, pval = kendalltau(y, ref)
                 idx = len(all_test_results)
                 all_test_results.append((pval, tau, period, lag, asym))
@@ -865,20 +933,30 @@ def _run_discrete_jtk_all_periods(
     ranks = np.empty_like(sorted_indices)
     ranks[sorted_indices] = np.arange(1, n_tests + 1)
 
+    # Compare unrounded p-values: rounded to 6 decimals, strong rhythms tie at 0
+    best_period = min(period_range, key=lambda p: per_period_best[p][0])
+
+    null_max_abs_tau = (_permutation_max_abs_tau(y, np.array(templates), n_permutations, seed)
+                        if n_permutations > 0 else None)
+
     results = []
     for period in period_range:
         best_p, best_tau, best_lag, best_asym, best_idx = per_period_best[period]
 
         bonf_p = min(1.0, best_p * n_tests)
         bh_p = min(1.0, best_p * n_tests / ranks[best_idx]) if best_idx >= 0 else best_p
+        p_raw = best_p
+        if null_max_abs_tau is not None:
+            p_raw = bonf_p = bh_p = _empirical_p(null_max_abs_tau, best_tau)
 
+        # tau < 0: data peak at the template trough, lag (see _run_discrete_jtk)
         acrophase = (
-            (best_lag + best_asym * period + period / 2) % period if best_tau < 0
+            best_lag % period if best_tau < 0
             else (best_lag + best_asym * period) % period
         )
 
         results.append(JTKResult(
-            p_value=round(best_p, 6),
+            p_value=round(p_raw, 6),
             bonf_p_value=round(bonf_p, 6),
             bh_p_value=round(bh_p, 6),
             period=round(float(period), 2),
@@ -888,7 +966,9 @@ def _run_discrete_jtk_all_periods(
             tau=round(best_tau, 4),
             lag=round(best_lag, 2),
             n_tests=n_tests,
-            method='Python-JTK'
+            method='Python-JTK',
+            pvalue_method='empirical' if null_max_abs_tau is not None else 'analytical',
+            best_fit=period == best_period
         ))
 
     return results
@@ -920,35 +1000,75 @@ def _is_white_noise_ranked(residuals: pd.Series, lags: int = 10) -> bool:
         return True
 
 
-def _prewhiten_ranked_residuals(residuals: pd.Series, maxlag: int = 1) -> pd.Series:
+def _fit_ar_coefficients(residuals: pd.Series, maxlag: int = 1) -> Optional[np.ndarray]:
     """
-    Fit AR model to rank residuals and return whitened residuals.
-    
+    Fit an AR(maxlag) model to rank residuals.
+
     Args:
         residuals: Residual series (rank-domain noise)
-        maxlag: Maximum AR lag
-    
+        maxlag: AR order
+
     Returns:
-        Prewhitened residuals
+        AR coefficients φ_1..φ_maxlag, or None if the series is too short or the fit fails
     """
     e = residuals.dropna()
     if len(e) < maxlag + 2:
-        return residuals
-
+        return None
     try:
-        model = AutoReg(e, lags=maxlag, old_names=False).fit()
-        phi = model.params.values
-
-        e_pw = e.copy()
-        for i in range(maxlag, len(e)):
-            e_pw.iloc[i] = e.iloc[i] - np.dot(phi[1:], e.iloc[i-maxlag:i][::-1])
-
-        e_pw = pd.Series(e_pw, index=e.index)
-        return e_pw
-
+        return AutoReg(e.reset_index(drop=True), lags=maxlag, old_names=False).fit().params.values[1:]
     except Exception as ex:
         warnings.warn(f"AR prewhitening failed: {ex}")
-        return residuals
+        return None
+
+
+def _ar_prewhitened_ranks(
+    series: pd.Series,
+    period_range: List[float],
+    lag_range: Optional[np.ndarray],
+    asymmetries: List[float],
+    ar_lag: int = 1,
+    ljungbox_lag: int = 10,
+    force_prewhiten: bool = False
+) -> Tuple[JTKResult, Optional[pd.Series]]:
+    """
+    AR-JTK pre-whitening step.
+
+    Runs JTK on the series, regresses its ranks on the best-fitting template and
+    tests the residuals with Ljung-Box (skipped when force_prewhiten). If they are
+    autocorrelated, an AR(ar_lag) model is fitted to them and that filter is applied
+    to the rank series itself, r_t − Σ φ_j r_{t−j} (the first ar_lag points are
+    lost). The template is not added back: re-testing a series rebuilt around the
+    winning template finds that template again (null false-positive rate 17-100 %).
+
+    Residuals come from the regression, not from r − template: that difference still
+    holds most of the rhythm whenever |tau| < 1, so the AR fitted to it whitens the
+    rhythm away.
+
+    Returns:
+        (JTK result on the original series, pre-whitened rank series or None when no
+        AR correction is applied)
+    """
+    temp_res = _run_discrete_jtk(series, period_range=period_range,
+                                 lag_range=lag_range, asymmetries=asymmetries)
+    if temp_res.period is None:
+        return temp_res, None
+
+    template_rank = pd.Series(_generate_triangle_template_time(
+        series.index.to_numpy(), temp_res.period, temp_res.lag, temp_res.asymmetry
+    )).rank().values
+    r = series.rank().values
+    X = np.column_stack([np.ones(len(r)), template_rank])
+    e = pd.Series(r - X @ np.linalg.lstsq(X, r, rcond=None)[0], index=series.index)
+
+    # Autocorrelation test on rank-residuals (skipped when force_prewhiten=True)
+    if not force_prewhiten and _is_white_noise_ranked(e, lags=ljungbox_lag):
+        return temp_res, None
+    phi = _fit_ar_coefficients(e, maxlag=ar_lag)
+    if phi is None:
+        return temp_res, None
+
+    r_pw = r[ar_lag:] - sum(phi[k - 1] * r[ar_lag - k:len(r) - k] for k in range(1, ar_lag + 1))
+    return temp_res, pd.Series(r_pw, index=series.index[ar_lag:])
 
 
 def _run_ar_jtk(
@@ -986,51 +1106,27 @@ def _run_ar_jtk(
         period_range = DefaultPeriodRanges.CIRCADIAN_INT
     if asymmetries is None:
         asymmetries = [0.5]
-    
-    # Initial JTK (empirical p-values propagated; used directly if no AR applied)
-    temp_res = _run_discrete_jtk(series, period_range=period_range,
-                                  lag_range=lag_range, asymmetries=asymmetries,
-                                  n_permutations=n_permutations, seed=seed)
-    
-    if temp_res.period is None:
+
+    temp_res, r_pw = _ar_prewhitened_ranks(series, period_range, lag_range, asymmetries,
+                                           ar_lag, ljungbox_lag, force_prewhiten)
+    if r_pw is None:
+        # No AR correction: plain JTK (with empirical p-values if requested)
+        if n_permutations > 0:
+            temp_res = _run_discrete_jtk(series, period_range=period_range,
+                                         lag_range=lag_range, asymmetries=asymmetries,
+                                         n_permutations=n_permutations, seed=seed)
         return temp_res, False
 
-    times = series.index.to_numpy()
-
-    # Best template for that PER/LAG/ASYM
-    template_vals = _generate_triangle_template_time(
-        times, temp_res.period, temp_res.lag, temp_res.asymmetry
-    )
-    template_rank = pd.Series(template_vals, index=series.index).rank()
-
-    # Rank series & compute rank-residuals
-    r = series.rank()
-    e = r - template_rank
-
-    # Autocorrelation test on rank-residuals (skipped when force_prewhiten=True)
-    if not force_prewhiten and _is_white_noise_ranked(e, lags=ljungbox_lag):
-        return temp_res, False  # No AR detected
-
-    # AR prewhiten residuals only
-    e_pw = _prewhiten_ranked_residuals(e, maxlag=ar_lag)
-
-    # Reconstruct whitened rank-series
-    r_pw = template_rank + e_pw
-
-    # JTK on reconstructed prewhitened series (empirical p-values on whitened data)
+    # JTK on the pre-whitened ranks (empirical p-values on whitened data)
     jtk_res = _run_discrete_jtk(r_pw, period_range=period_range,
-                                 lag_range=lag_range, asymmetries=asymmetries,
-                                 n_permutations=n_permutations, seed=seed)
+                                lag_range=lag_range, asymmetries=asymmetries,
+                                n_permutations=n_permutations, seed=seed)
 
     # Update method and recalculate amplitude from original data
     amp = (np.percentile(series.values, 90) - np.percentile(series.values, 10)) / 2
 
-    # Use phase parameters from temp_res (original data JTK), not jtk_res (prewhitened JTK).
-    # The prewhitening builds r_pw from the best template of temp_res. If temp_res.tau < 0,
-    # that template anti-correlates with the original data, so r_pw peaks where the original
-    # data troughs. The second JTK on r_pw then finds tau > 0 for that same template and
-    # computes acrophase at the data TROUGH (wrong by T/2). Using temp_res preserves the
-    # correct phase estimate while still benefiting from the prewhitened p-values.
+    # Phase and shape from temp_res (JTK on the original data): filtering shifts
+    # the phase of the rhythm in the pre-whitened series
     return JTKResult(
         p_value=jtk_res.p_value,
         bonf_p_value=jtk_res.bonf_p_value,
@@ -1092,12 +1188,14 @@ def _run_cosine_kendall(
     best_idx = 0
 
     test_results = []
+    templates = []
 
     for period in period_range:
         for lag in np.arange(0, period, interval):
             radians = 2 * np.pi * (t - lag) / period
             ref = np.cos(radians)
             ref_ranked = pd.Series(ref).rank().values
+            templates.append(ref_ranked)
             tau, pval = kendalltau(y, ref_ranked)
             test_results.append((pval, tau, period, lag))
             if pval < best_p:
@@ -1130,22 +1228,8 @@ def _run_cosine_kendall(
 
     # Empirical p-value via permutation (Hutchison et al., 2015, PLoS Comput. Biol.)
     if n_permutations > 0:
-        rng = np.random.default_rng(seed)
-        null_max_abs_tau = np.empty(n_permutations)
-        for i in range(n_permutations):
-            perm_y = rng.permutation(y)
-            perm_max = 0.0
-            for period in period_range:
-                for lag in np.arange(0, period, interval):
-                    radians = 2 * np.pi * (t - lag) / period
-                    ref_ranked = pd.Series(np.cos(radians)).rank().values
-                    tau_p, _ = kendalltau(perm_y, ref_ranked)
-                    abs_tau_p = abs(tau_p)
-                    if abs_tau_p > perm_max:
-                        perm_max = abs_tau_p
-            null_max_abs_tau[i] = perm_max
-
-        p_emp = min(1.0, (np.sum(null_max_abs_tau >= abs(best_tau)) + 1) / (n_permutations + 1))
+        null_max_abs_tau = _permutation_max_abs_tau(y, np.array(templates), n_permutations, seed)
+        p_emp = _empirical_p(null_max_abs_tau, best_tau)
 
         return JTKResult(
             p_value=round(p_emp, 6),
@@ -1181,12 +1265,16 @@ def _run_cosine_kendall(
 def _run_cosine_kendall_all_periods(
     series: pd.Series,
     period_range: List[float] = None,
-    interval: float = 1.0
+    interval: float = 1.0,
+    n_permutations: int = 0,
+    seed: int = 42
 ) -> List['JTKResult']:
     """
     Run Cosine-Kendall for each period and return one JTKResult per period.
 
     p-value corrections are global (same pool as the standard single-result run).
+    n_permutations > 0 gives empirical p-values against one null distribution
+    over the whole range (see _run_discrete_jtk_all_periods).
 
     Returns:
         List of JTKResult objects (one per period), ordered by period.
@@ -1198,6 +1286,7 @@ def _run_cosine_kendall_all_periods(
     t = series.index.to_numpy().astype(float)
 
     all_test_results = []  # (pval, tau, period, lag)
+    templates = []
     per_period_best = {p: (1.0, 0.0, 0.0, -1) for p in period_range}
 
     for period in period_range:
@@ -1205,6 +1294,7 @@ def _run_cosine_kendall_all_periods(
             radians = 2 * np.pi * (t - lag) / period
             ref = np.cos(radians)
             ref_ranked = pd.Series(ref).rank().values
+            templates.append(ref_ranked)
             tau, pval = kendalltau(y, ref_ranked)
             idx = len(all_test_results)
             all_test_results.append((pval, tau, period, lag))
@@ -1219,17 +1309,26 @@ def _run_cosine_kendall_all_periods(
     ranks = np.empty_like(sorted_indices)
     ranks[sorted_indices] = np.arange(1, n_tests + 1)
 
+    # Compare unrounded p-values (see _run_discrete_jtk_all_periods)
+    best_period = min(period_range, key=lambda p: per_period_best[p][0])
+
+    null_max_abs_tau = (_permutation_max_abs_tau(y, np.array(templates), n_permutations, seed)
+                        if n_permutations > 0 else None)
+
     results = []
     for period in period_range:
         best_p, best_tau, best_lag, best_idx = per_period_best[period]
 
         bonf_p = min(1.0, best_p * n_tests)
         bh_p = min(1.0, best_p * n_tests / ranks[best_idx]) if best_idx >= 0 else best_p
+        p_raw = best_p
+        if null_max_abs_tau is not None:
+            p_raw = bonf_p = bh_p = _empirical_p(null_max_abs_tau, best_tau)
 
         corrected_lag = (best_lag + period / 2) % period if best_tau < 0 else best_lag
 
         results.append(JTKResult(
-            p_value=round(best_p, 6),
+            p_value=round(p_raw, 6),
             bonf_p_value=round(bonf_p, 6),
             bh_p_value=round(bh_p, 6),
             period=round(float(period), 2),
@@ -1239,7 +1338,9 @@ def _run_cosine_kendall_all_periods(
             tau=round(best_tau, 4),
             lag=round(best_lag, 2),
             n_tests=n_tests,
-            method='Cosine-Kendall'
+            method='Cosine-Kendall',
+            pvalue_method='empirical' if null_max_abs_tau is not None else 'analytical',
+            best_fit=period == best_period
         ))
 
     return results
@@ -1302,20 +1403,26 @@ def _fit_cosinor(
 
             cov = model.cov_params()
             
-            # Amplitude CI using delta method
-            var_amp = (beta_cos**2 * cov[2, 2] +
-                       beta_sin**2 * cov[1, 1] +
+            # Amplitude CI using delta method: dA/dβ_cos = β_cos/A, dA/dβ_sin = β_sin/A
+            var_amp = (beta_cos**2 * cov[1, 1] +
+                       beta_sin**2 * cov[2, 2] +
                        2 * beta_cos * beta_sin * cov[1, 2]) / (amp**2 + 1e-10)
             se_amp = np.sqrt(max(var_amp, 0))
             ci_amp = (amp - 1.96 * se_amp, amp + 1.96 * se_amp)
 
-            # Acrophase CI
+            # Acrophase CI, wrapped to [0, 2π) like the acrophase itself: a lower
+            # bound above the upper one means the interval crosses 0. Half-width
+            # ≥ π covers the whole cycle.
             var_phase = ((beta_sin**2 * cov[1, 1] +
                           beta_cos**2 * cov[2, 2] -
                           2 * beta_cos * beta_sin * cov[1, 2]) /
                          ((beta_cos**2 + beta_sin**2)**2 + 1e-10))
             se_phase = np.sqrt(max(var_phase, 0))
-            ci_phase = (phase - 1.96 * se_phase, phase + 1.96 * se_phase)
+            if 1.96 * se_phase >= np.pi:
+                ci_phase = (0.0, 2 * np.pi)
+            else:
+                ci_phase = ((phase - 1.96 * se_phase) % (2 * np.pi),
+                            (phase + 1.96 * se_phase) % (2 * np.pi))
 
             best_aic = model.aic
             best_p = pval
@@ -1348,7 +1455,8 @@ def _fit_cosinor(
         mesor=round(best_result['mesor'], 4),
         amplitude=round(best_result['amplitude'], 4),
         acrophase_rad=round(best_result['acrophase_rad'], 4),
-        acrophase_hours=round(best_result['acrophase_hours'], 2),
+        # % period after rounding, so a peak just before the period end reads 0, not 24.0
+        acrophase_hours=round(round(best_result['acrophase_hours'], 2) % best_result['period'], 2),
         period=round(best_result['period'], 2),
         p_value=round(best_result['p_value'], 6),
         adj_p_value=round(bonf_p, 6),
@@ -1468,8 +1576,10 @@ def _fit_harmonic_cosinor(
         amplitudes.append(float(amp))
         acrophases_rad.append(float(phase))
 
-    # Convert acrophases to hours
-    acrophases_hours = [(phi / (2 * np.pi)) * best_period for phi in acrophases_rad]
+    # Convert acrophases to hours: cos(kωt - φₖ) first peaks at t = φₖ/(kω), and
+    # repeats every period/k
+    acrophases_hours = [(phi / (2 * np.pi)) * best_period / k
+                        for k, phi in enumerate(acrophases_rad, 1)]
 
     # F-test for overall model significance
     # H0: all β (except intercept) = 0
@@ -1508,28 +1618,40 @@ def _fit_harmonic_cosinor(
         except np.linalg.LinAlgError:
             pass
 
-    # Sort harmonics by amplitude (descending) for reporting
-    amp_phase_pairs = list(zip(amplitudes, acrophases_hours))
-    amp_phase_pairs_sorted = sorted(amp_phase_pairs, key=lambda x: x[0], reverse=True)
-    amplitudes_sorted = [round(a, 4) for a, _ in amp_phase_pairs_sorted]
-    acrophases_sorted = [round(p, 2) for _, p in amp_phase_pairs_sorted]
+    # Report harmonics in harmonic order (H1 = fundamental); % (period/k) after
+    # rounding so a peak at the cycle end reads 0
+    amplitudes_out = [round(a, 4) for a in amplitudes]
+    acrophases_out = [round(round(p, 2) % (best_period / k), 2)
+                      for k, p in enumerate(acrophases_hours, 1)]
+    harmonic_numbers = list(range(1, n_harmonics + 1))
+
+    omega = 2 * np.pi / best_period
+
+    def wave(t):
+        w = mesor * np.ones_like(t)
+        for k in range(1, n_harmonics + 1):
+            w += beta[2*k - 1] * np.cos(k * omega * t) + beta[2*k] * np.sin(k * omega * t)
+        return w
+
+    # Peaks and troughs of the fitted waveform (sum of all harmonics) over one
+    # cycle: circular local extrema on a 0.5-min grid; peaks from highest to lowest,
+    # troughs from lowest to highest
+    t_cyc = np.linspace(0, best_period, 2880, endpoint=False)
+    w_cyc = wave(t_cyc)
+    prev, nxt = np.roll(w_cyc, 1), np.roll(w_cyc, -1)
+    peak_idx = np.where((w_cyc > prev) & (w_cyc >= nxt))[0]
+    trough_idx = np.where((w_cyc < prev) & (w_cyc <= nxt))[0]
+    waveform_peaks = [round(float(t_cyc[i]), 2) for i in peak_idx[np.argsort(-w_cyc[peak_idx])]]
+    waveform_troughs = [round(float(t_cyc[i]), 2) for i in trough_idx[np.argsort(w_cyc[trough_idx])]]
+    waveform_amplitude = round(float((w_cyc.max() - w_cyc.min()) / 2), 4)
 
     # Generate fit curve for plotting (one cycle)
     t_grid = np.linspace(0, best_period, 1000)
-    y_grid = mesor * np.ones_like(t_grid)
-    omega = 2 * np.pi / best_period
-    for k in range(1, n_harmonics + 1):
-        beta_cos = beta[2*k - 1]
-        beta_sin = beta[2*k]
-        y_grid += beta_cos * np.cos(k * omega * t_grid) + beta_sin * np.sin(k * omega * t_grid)
+    y_grid = wave(t_grid)
 
     # Generate fit curve for full time range
     t_grid_full = np.linspace(x.min(), x.max(), 1000)
-    y_grid_full = mesor * np.ones_like(t_grid_full)
-    for k in range(1, n_harmonics + 1):
-        beta_cos = beta[2*k - 1]
-        beta_sin = beta[2*k]
-        y_grid_full += beta_cos * np.cos(k * omega * t_grid_full) + beta_sin * np.sin(k * omega * t_grid_full)
+    y_grid_full = wave(t_grid_full)
 
     # Prepare fit model for plotting
     fit_model = {
@@ -1542,8 +1664,9 @@ def _fit_harmonic_cosinor(
         'params': {
             'period': best_period,
             'beta': beta.tolist(),
-            'acrophases': acrophases_sorted,
-            'amplitudes': amplitudes_sorted,
+            'acrophases': acrophases_out,
+            'amplitudes': amplitudes_out,
+            'harmonic_numbers': harmonic_numbers,
             'p_value': p_value
         }
     }
@@ -1560,12 +1683,16 @@ def _fit_harmonic_cosinor(
         p_value=round(float(p_value), 6),
         adj_p_value=round(bonf_p, 6),
         period=round(float(best_period), 2),
-        amplitudes=amplitudes_sorted,
-        acrophases=acrophases_sorted,
+        amplitudes=amplitudes_out,
+        acrophases=acrophases_out,
         n_harmonics=n_harmonics,
         method='Harmonic-Cosinor',
         fit_model=fit_model,
-        warning=warning_msg
+        warning=warning_msg,
+        harmonic_numbers=harmonic_numbers,
+        waveform_peaks=waveform_peaks,
+        waveform_troughs=waveform_troughs,
+        waveform_amplitude=waveform_amplitude
     )
 
 
@@ -1664,6 +1791,12 @@ def _compute_fourier_f24(
     # F24 score
     f24_score = target_power / (mean_perm_power + 1e-10)
 
+    # Normalised score and permutation p-value (Wijnen et al., 2006); they reuse
+    # the permutations above, so f24_score is unchanged
+    ss = np.sum(y_centered**2)
+    f24_norm = 2 * target_power / ss if ss > 0 else np.nan
+    p_f24 = (1 + np.sum(np.array(perm_powers) >= target_power)) / (1 + n_permutations)
+
     return FourierF24Result(
         f24_score=round(f24_score, 4),
         power_spectrum=power_spectrum,
@@ -1672,7 +1805,8 @@ def _compute_fourier_f24(
         dominant_power=round(dominant_power, 4),
         target_period=target_period,
         target_power=round(target_power, 4),
-        correlation_r=None,
+        f24_norm=round(float(f24_norm), 4),
+        p_f24=round(float(p_f24), 6),
         method='Fourier-F24'
     )
 
@@ -1688,9 +1822,10 @@ def _compute_fourier_f24_with_replicates(
 ) -> FourierF24Result:
     """
     Compute F24 score using two replicates (Wijnen et al., 2006 method).
-    
-    Uses correlation between replicates' Fourier coefficients at the target frequency.
-    
+
+    The power spectra of the two replicates (and their permutation baselines)
+    are averaged.
+
     Args:
         times_rep1: Time values for replicate 1
         values_rep1: Values for replicate 1
@@ -1729,18 +1864,7 @@ def _compute_fourier_f24_with_replicates(
     target_freq = 1 / target_period
     freq_idx = np.argmin(np.abs(frequencies - target_freq))
     target_power = avg_power[freq_idx]
-    
-    # Correlation between replicates at target frequency
-    # Using complex coefficients
-    if freq_idx < len(fft1) and freq_idx < len(fft2):
-        coef1 = fft1[freq_idx]
-        coef2 = fft2[freq_idx]
-        # Correlation of real and imaginary parts
-        correlation_r = np.corrcoef([coef1.real, coef1.imag], 
-                                     [coef2.real, coef2.imag])[0, 1]
-    else:
-        correlation_r = None
-    
+
     # Find dominant period
     valid_mask = (periods > 0) & (periods < np.inf)
     if valid_mask.any():
@@ -1767,7 +1891,13 @@ def _compute_fourier_f24_with_replicates(
     
     mean_perm_power = np.mean(perm_powers)
     f24_score = target_power / (mean_perm_power + 1e-10)
-    
+
+    # Normalised score (fraction of the pooled variance at the target frequency)
+    # and permutation p-value (Wijnen et al., 2006)
+    ss = (np.sum(y1**2) + np.sum(y2**2)) / 2
+    f24_norm = 2 * target_power / ss if ss > 0 else np.nan
+    p_f24 = (1 + np.sum(np.array(perm_powers) >= target_power)) / (1 + n_permutations)
+
     return FourierF24Result(
         f24_score=round(f24_score, 4),
         power_spectrum=avg_power,
@@ -1776,7 +1906,8 @@ def _compute_fourier_f24_with_replicates(
         dominant_power=round(dominant_power, 4),
         target_period=target_period,
         target_power=round(target_power, 4),
-        correlation_r=round(correlation_r, 4) if correlation_r is not None else None,
+        f24_norm=round(float(f24_norm), 4),
+        p_f24=round(float(p_f24), 6),
         method='Fourier-F24'
     )
 
@@ -1954,6 +2085,8 @@ def _compute_cwt(
         # If still too few periods, use even finer resolution
         step = 0.1
         period_array = np.arange(min_period, max_period + step, step)
+    # arange's last point can overshoot max_period by up to one step
+    period_array = period_array[period_array <= max_period + 1e-9]
     if len(period_array) == 0:
         period_array = np.array([min_period])
 
@@ -2010,11 +2143,15 @@ def _compute_lme_ic(result, nobs: int) -> tuple:
 
     Uses log-likelihood directly to avoid statsmodels version differences.
     k = fixed effects + 1 random intercept variance + 1 residual variance.
+    Pass an ML fit (reml=False): REML likelihoods are not comparable between
+    models with different fixed effects (e.g., different periods).
     Returns (aic, bic) as floats, or (None, None) on failure.
     """
     try:
         llf = float(result.llf)
-        k = len(result.params) + 2  # fixed effects + random var + residual var
+        # result.params already holds the random-effect variance ('Group Var'),
+        # so count the fixed effects explicitly
+        k = len(result.fe_params) + 2  # fixed effects + random var + residual var
         aic = round(-2 * llf + 2 * k, 2)
         bic = round(-2 * llf + np.log(nobs) * k, 2)
         return aic, bic
@@ -2039,7 +2176,8 @@ def _fit_lme_model(
     With covariates: y ~ cos(2πt/T) + sin(2πt/T) + cov1 + cov2 + ... + (1|group)
 
     The LRT always tests rhythm significance (cos + sin), so the p-value is
-    unaffected by the presence of additional fixed-effect covariates.
+    unaffected by the presence of additional fixed-effect covariates. The LRT
+    and AIC/BIC use ML fits; all other outputs come from the REML fit.
 
     Args:
         times: Time values in hours
@@ -2082,7 +2220,7 @@ def _fit_lme_model(
 
     import warnings as _warnings
 
-    def _fit_with_fallback(model):
+    def _fit_with_fallback(model, reml=True):
         """Try fitting with lbfgs, falling back to powell/bfgs/nm on failure.
 
         lbfgs can return a result with llf=+inf without raising an exception when
@@ -2093,7 +2231,7 @@ def _fit_lme_model(
             try:
                 with _warnings.catch_warnings():
                     _warnings.simplefilter("ignore")
-                    r = model.fit(method=method, maxiter=2000)
+                    r = model.fit(reml=reml, method=method, maxiter=2000)
                 if np.isfinite(r.llf):
                     return r
             except Exception:
@@ -2107,16 +2245,22 @@ def _fit_lme_model(
     formula      = "y ~ cos_t + sin_t" + covariate_str
     null_formula = "y ~ 1"             + covariate_str
 
+    # Reported estimates (MESOR, amplitude, acrophase, Wald p, variance
+    # components, R²) come from the REML fit, which gives unbiased variances.
     model = smf.mixedlm(formula, df, groups=df['group'])
     result = _fit_with_fallback(model)
 
+    # The LRT and AIC/BIC need ML fits: REML likelihoods are not comparable
+    # between models with different fixed effects (as in lme4's anova()).
+    ml_result = _fit_with_fallback(model, reml=False)
+
     # Fit null model (no rhythm, same covariates) for likelihood ratio test
     null_model = smf.mixedlm(null_formula, df, groups=df['group'])
-    null_result = _fit_with_fallback(null_model)
+    null_result = _fit_with_fallback(null_model, reml=False)
 
     # Likelihood ratio test for rhythm significance
     # LR = -2 * (log_lik_null - log_lik_full)
-    lr_stat = -2 * (null_result.llf - result.llf)
+    lr_stat = max(0.0, float(-2 * (null_result.llf - ml_result.llf)))
     # Chi-squared test with 2 degrees of freedom (cos and sin terms)
     from scipy.stats import chi2
     p_value = chi2.sf(lr_stat, df=2)
@@ -2157,13 +2301,17 @@ def _fit_lme_model(
 
     # Calculate marginal R² (proportion of variance explained by fixed effects)
     # R²_marginal = var(fixed) / (var(fixed) + var(random) + var(residual))
+    # (Nakagawa & Schielzeth 2013). fittedvalues would include the random
+    # effects, so the fixed-effects prediction is built from exog @ fe_params.
     try:
-        y_pred_fixed = result.fittedvalues
+        y_pred_fixed = result.model.exog @ result.fe_params.values
         var_fixed = np.var(y_pred_fixed)
-        var_total = np.var(df['y'])
+        var_total = var_fixed + random_effect_var + residual_var
         r_squared = var_fixed / var_total if var_total > 0 else None
     except Exception:
         r_squared = None
+
+    aic, bic = _compute_lme_ic(ml_result, len(df))
 
     return LMEResult(
         mesor=round(float(intercept), 4),
@@ -2177,10 +2325,11 @@ def _fit_lme_model(
         beta_cos=round(float(beta_cos), 4),
         beta_sin=round(float(beta_sin), 4),
         r_squared=round(float(r_squared), 4) if r_squared is not None else None,
-        aic=_compute_lme_ic(result, len(df))[0],
-        bic=_compute_lme_ic(result, len(df))[1],
+        aic=aic,
+        bic=bic,
         random_effect_var=round(float(random_effect_var), 4) if random_effect_var is not None else None,
         residual_var=round(float(residual_var), 4) if residual_var is not None else None,
+        lr_stat=lr_stat,
         method='LME-Cosinor'
     )
 
@@ -2887,9 +3036,13 @@ class RhythmAnalyzer:
 
         elif per_type == 'lombscargle':
             # Lomb-Scargle can handle uneven sampling and replicates
-            min_per = 2
+            # Shortest period: Nyquist period of the median spacing of the distinct
+            # time points (shorter periods are aliases), and at least 2 h
+            time_diffs = np.diff(np.unique(X))
+            min_per = max(2.0, 2 * float(np.median(time_diffs))) if len(time_diffs) else 2.0
             f = np.linspace(1/max_per, 1/min_per, 1000)
-            Pxx_den = signal.lombscargle(X, Y, f)
+            # signal.lombscargle expects angular frequencies (rad/hr); always mean-centred
+            Pxx_den = signal.lombscargle(X, Y - np.mean(Y), 2 * np.pi * f)
         else:
             raise ValueError(f"Invalid periodogram type: {per_type}")
 
@@ -2905,10 +3058,18 @@ class RhythmAnalyzer:
         Pxx = Pxx[per <= max_per]
         per = per[per <= max_per]
 
-        # Calculate significance threshold (Refinetti et al. 2007)
+        # Calculate significance threshold (Refinetti et al. 2007, eq. 4); the
+        # mean (DC) bin is not part of the sum. For Lomb-Scargle the analogue
+        # of g is the fraction of variance W = 2P / sum((y - mean)^2). As in
+        # Fisher's (1929) test, m = (N-1)//2 Fourier frequencies, not N.
         p_t = 0.05
         N = len(Y_u) if per_type in ['per', 'welch'] else len(Y)
-        T = (1 - (p_t/N)**(1/(N-1))) * sum(Pxx_den)
+        m = max(2, (N - 1) // 2)
+        g_crit = 1 - (p_t/m)**(1/(m-1))
+        if per_type == 'lombscargle':
+            T = g_crit * np.sum((Y - np.mean(Y))**2) / 2
+        else:
+            T = g_crit * np.sum(Pxx_den[f > 0])
 
         result = {
             'periods': per,

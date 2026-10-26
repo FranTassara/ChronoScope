@@ -9,8 +9,9 @@ MODEL TRAINING REPORT
 --------------------------------------------------------------------------------
 
 The Consensus Rhythmicity Score (CRS-AI) is a meta-classifier that
-integrates the outputs of five established circadian rhythm detection
-methods into a single binary prediction (rhythmic vs. non-rhythmic).
+integrates the outputs of four established circadian rhythm detection
+methods (JTK_CYCLE, Cosinor OLS, Lomb-Scargle and Fourier F24) into a
+single binary prediction (rhythmic vs. non-rhythmic).
 A Random Forest classifier is trained on features extracted from each
 sub-method, enabling robust detection that combines the strengths of
 multiple independent algorithms.
@@ -32,10 +33,13 @@ multiple independent algorithms.
     Strategy:      constant (fill_value = -999)
     Rationale:     Sentinel value for structurally-missing features
                    (i.e., any sub-method that fails on a given time
-                   series, e.g., Harmonic Cosinor on very short
-                   series). Avoids bias from median imputation. The
-                   RF learns to split on 'feature <= -500' as
-                   'feature was unavailable'.
+                   series). Avoids bias from median imputation.
+    Caveat:        At most 2 of 5649 instances per feature
+                   are missing (NaN analysis, Section 4), too few for
+                   the RF to learn a split on the sentinel
+                   (min_samples_leaf = 5). A series with a missing
+                   feature is outside the training distribution and
+                   its probability should not be interpreted.
 
   Note on feature scaling:
     No StandardScaler is applied. Random Forest is invariant to
@@ -65,13 +69,13 @@ multiple independent algorithms.
                      empirical frequencies, which is important
                      for the borderline threshold logic in the
                      ChronoScope GUI (Rhythmic >= 0.70,
-                     Arrhythmic <= 0.30, Borderline in between).
+                     Arrhythmic < 0.30, Borderline in between).
     Calibration quality is reported via Brier score in Section 6.
 
 4. FEATURE SET (11 features)
 --------------------------------------------------------------------------------
 
-Features are extracted from five circadian detection sub-methods
+Features are extracted from four circadian detection sub-methods
 plus derived consensus metrics:
 
   Sub-methods:
@@ -79,7 +83,8 @@ plus derived consensus metrics:
     - Cosinor OLS:      Cosine regression with period optimization
     - Lomb-Scargle:     Spectral analysis for unevenly-sampled data
     - Fourier F24:      24-hour Fourier component significance test
-    - Harmonic Cosinor: Multi-harmonic cosine regression (2 harmonics)
+  (Harmonic Cosinor is also run, for the GUI radar chart only; its
+  outputs have not been model features since v2.)
 
   Feature                        Importance   Description
   -----------------------------  ----------   ------------------------------------
@@ -270,9 +275,9 @@ plus derived consensus metrics:
 
   6.2 Holdout test set performance (high-confidence cases)
 
-    NOTE: This holdout EXCLUDES BioCycle borderline-q genes
-    (0.01 < q <= 0.20). Performance on those is reported in
-    Section 6.5 below.
+    NOTE: This holdout EXCLUDES the GSE11516 BioCycle X-class
+    genes (in RhythmicDB but q > 0.01 or period outside
+    20-28 h). Performance on those is reported in Section 6.5.
 
     95% confidence intervals from percentile bootstrap
     (n=1000 resamples, 1000 valid; iterations with single-
@@ -308,9 +313,10 @@ plus derived consensus metrics:
     weighted avg       0.88      0.88      0.88      1117
     
 
-  6.5 Ambiguous holdout (BioCycle borderline-q genes)
+  6.5 Ambiguous holdout (BioCycle X-class genes)
 
-    Genes with 0.01 < BioCycle q-value <= 0.20 were excluded
+    GSE11516 genes listed in RhythmicDB but outside the R class
+    (BioCycle q > 0.01 or period outside 20-28 h) were excluded
     from the training set (label noise) AND from the main
     holdout (6.2). They form an independent evaluation set
     of borderline cases — the kind of biology that BioCycle
@@ -418,11 +424,11 @@ plus derived consensus metrics:
     python train_consensus_model.py
 
   Output files:
-    Model:            core/models_meta_classifier/consensus_rf_model.pkl
-    Feature names:    core/models_meta_classifier/feature_names.json
-    Main holdout:     core/models_meta_classifier/holdout_predictions.csv
-    Ambiguous holdout: core/models_meta_classifier/ambiguous_holdout_predictions.csv
-    This report:      core/models_meta_classifier/training_report.txt
+    Model:            core/models/consensus_rf_model.pkl
+    Feature names:    core/models/feature_names.json
+    Main holdout:     validation/crs_ai/holdout_predictions.csv
+    Ambiguous holdout: validation/crs_ai/ambiguous_holdout_predictions.csv
+    This report:      validation/crs_ai/training_report.txt
 
   Model file size:    23641.0 KB
 
@@ -440,13 +446,15 @@ core/feature_extraction.py::_resolve_params.
 
   9.1 Parameters affecting model features (bounded)
 
-      period_range:  Honored if and only if it intersects the
-                     training window [18, 32]h. Clipped to that
-                     window if it spills out; falls back to
-                     training defaults (with a warning) if it
-                     lies entirely outside. Applied uniformly
-                     to JTK, Cosinor OLS, Lomb-Scargle, and
-                     Harmonic Cosinor.
+      period_range:  Honored if and only if it overlaps the
+                     training window [18, 32]h by more than
+                     1 h. Clipped to that window if it spills
+                     out; falls back to training defaults
+                     otherwise. Both cases are reported to the
+                     user (GUI Notes column and end-of-run
+                     warning). Applied to JTK, Cosinor OLS
+                     and Harmonic Cosinor; Lomb-Scargle always
+                     keeps its training range (18-32h).
 
       F24 target:    Locked at 24h. f24_score is a model
                      feature trained at a single target.
@@ -470,7 +478,7 @@ core/feature_extraction.py::_resolve_params.
       against period_range=(22, 26)h is maintained as a
       standalone report:
 
-        core/models_meta_classifier/parameter_override_validation.txt
+        validation/crs_ai/parameter_override_validation.txt
 
       The numbers there are model-version-specific. After
       retraining, re-run

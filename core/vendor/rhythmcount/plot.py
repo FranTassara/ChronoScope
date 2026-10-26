@@ -75,7 +75,7 @@ def plot_confidence_intervals(df, count_model, n_components, title='', repetitio
     N = round(df.shape[0] - df.shape[0] / 3)
 
     for i in range(0, N):
-        j = random.randint(0, size)
+        j = random.randint(0, size - 1)  # randint includes its upper bound; entry_at(size) raised IndexError
         p = param_samples.entry_at(j)
         res2.initialize(results.model, p)
         if count_model == 'zero_nb' or count_model == "zero_poisson":
@@ -132,7 +132,7 @@ def subplot_confidence_intervals(df, n_components, count_model, ax, repetitions=
     N = round(df.shape[0] - df.shape[0] / 3)
 
     for i in range(0, N):
-        j = random.randint(0, size)
+        j = random.randint(0, size - 1)  # randint includes its upper bound; entry_at(size) raised IndexError
         p = param_samples.entry_at(j)
         res2.initialize(results.model, p)
         if count_model == 'zero_nb' or count_model == "zero_poisson":

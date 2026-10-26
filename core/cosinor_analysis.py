@@ -18,9 +18,11 @@ Modular wrapper for CosinorPy library with 10 analysis methods:
 from typing import Optional, List, Dict, Any, Tuple, Union
 from dataclasses import dataclass
 from enum import Enum
+import os
 import warnings
 import pandas as pd
 import numpy as np
+from scipy import stats
 from pathlib import Path
 
 # Check CosinorPy availability
@@ -129,13 +131,18 @@ class CosinorAnalyzer:
         """
         Generate periodogram plots for all variables.
 
-        Uses: cosinor.periodogram_df(df, folder=None)
+        Uses: cosinor.periodogram (the per-test loop of cosinor.periodogram_df)
+
+        CosinorPy derives the sampling frequency from the first two raw time
+        values, 1/(X[1]-X[0]), which is 1/0 when the first time point has
+        replicates. The sampling interval is therefore computed here from the
+        unique time points and passed explicitly (sampling_f).
 
         Args:
             save_folder: Optional folder to save plots
 
         Returns:
-            Dict with status and message
+            Dict with status, message and warnings (irregular sampling)
         """
         if self._data is None:
             raise ValueError("No data loaded. Call load_data() first.")
@@ -144,14 +151,28 @@ class CosinorAnalyzer:
         print(f"[DEBUG periodogram] Save folder: {save_folder}")
 
         try:
-            # Call CosinorPy periodogram function
-            cosinor.periodogram_df(self._data, folder=save_folder)
+            names = sorted(self._data['test'].unique())
+            warnings_list = []
+            for name in names:
+                df_name = self._data[self._data['test'] == name]
+                x, y = df_name['x'].values, df_name['y'].values
+                dt = np.diff(np.unique(x))
+                if len(dt) < 2:
+                    raise ValueError(f"{name}: at least 3 distinct time points are needed")
+                step = float(np.median(dt))
+                if not np.allclose(dt, step, rtol=1e-3, atol=1e-6):
+                    warnings_list.append(
+                        f"{name}: time points are not evenly spaced (median step {step:g} h used); "
+                        f"the FFT periodogram assumes a regular sampling grid")
+                save_to = os.path.join(save_folder, "per_" + name) if save_folder else ""
+                cosinor.periodogram(x, y, sampling_f=1.0 / step, save_to=save_to, name=name)
 
             return {
                 'success': True,
-                'message': f'Periodograms generated for {len(self._data["test"].unique())} variables',
-                'n_variables': len(self._data['test'].unique()),
-                'save_folder': save_folder
+                'message': f'Periodograms generated for {len(names)} variables',
+                'n_variables': len(names),
+                'save_folder': save_folder,
+                'warnings': warnings_list
             }
 
         except Exception as e:
@@ -777,8 +798,9 @@ class CosinorAnalyzer:
                 # Model parameters
                 'amplitude': safe_get('amplitude'),
                 'acrophase': safe_get('acrophase'),
+                # acrophase_to_hours wraps to [0, period) (multi-component acrophases lie in [-pi, pi])
                 'acrophase_hours': safe_get('acrophase[h]') if safe_get('acrophase[h]') is not None
-                    else (-result_row['period'] * safe_get('acrophase') / (2 * np.pi)
+                    else (cosinor.acrophase_to_hours(safe_get('acrophase'), result_row['period'])
                           if safe_get('acrophase') is not None else None),
                 'mesor': safe_get('MESOR', safe_get('mesor')),
                 # Basic statistics
@@ -876,7 +898,8 @@ class CosinorAnalyzer:
                     else:
                         print(f"[DEBUG] df_extended is None")
 
-                    best_model_value = f'Best model (min p-value)'
+                    # get_best_models chooses n_components by a nested-model F-test
+                    best_model_value = 'Best model (F-test)'
                 elif is_best_fit:
                     # Use the actual criterium column name (mapped from user's choice)
                     if criterium_column == 'RSS':
@@ -964,7 +987,7 @@ class CosinorAnalyzer:
                     'amplitude': safe_get('amplitude'),
                     'acrophase': safe_get('acrophase'),
                     'acrophase_hours': safe_get('acrophase[h]') if safe_get('acrophase[h]') is not None
-                        else (-period_val * safe_get('acrophase') / (2 * np.pi)
+                        else (cosinor.acrophase_to_hours(safe_get('acrophase'), period_val)
                               if safe_get('acrophase') is not None else None),
                     'mesor': safe_get('MESOR', safe_get('mesor')),
                     # Basic statistics (from fit_group)
@@ -1486,7 +1509,9 @@ class CosinorAnalyzer:
                 'n_components': int(result_row['n_components']),
                 'amplitude': safe_get('amplitude'),
                 'acrophase': safe_get('acrophase'),
-                'acrophase_hours': safe_get('acrophase[h]'),
+                'acrophase_hours': safe_get('acrophase[h]') if safe_get('acrophase[h]') is not None
+                    else (cosinor.acrophase_to_hours(safe_get('acrophase'), safe_get('period'))
+                          if safe_get('acrophase') is not None else None),
                 'mesor': safe_get('MESOR', safe_get('mesor')),
                 'p_value': safe_get('p'),
                 'q_value': safe_get('q'),
@@ -1589,7 +1614,10 @@ class CosinorAnalyzer:
                         if metric in original_row.index and metric not in row.index:
                             row[metric] = original_row[metric]
 
-                best_model_value = 'Best model (min p-value)'
+                # get_best_models_population: best period per n_components by the criterium,
+                # then a nested-model F-test across n_components
+                best_model_value = ('Best model (F-test)' if len(n_components) > 1
+                                    else f'Best model (min {criterium_column})')
             else:
                 best_model_value = 'No'
 
@@ -1631,7 +1659,7 @@ class CosinorAnalyzer:
                 'amplitude': safe_get(row, 'amplitude'),
                 'acrophase': safe_get(row, 'acrophase'),
                 'acrophase_hours': safe_get(row, 'acrophase[h]') if safe_get(row, 'acrophase[h]') is not None
-                    else (-period_val * safe_get(row, 'acrophase') / (2 * np.pi)
+                    else (cosinor.acrophase_to_hours(safe_get(row, 'acrophase'), period_val)
                           if safe_get(row, 'acrophase') is not None else None),
                 'mesor': safe_get(row, 'MESOR', safe_get(row, 'mesor')),
                 'p_value': safe_get(row, 'p'),
@@ -1740,7 +1768,7 @@ class CosinorAnalyzer:
                     )
                 else:  # Independent Models
                     return self._compare_independent_single_independent(
-                        test_pairs, period, period1, period2, save_folder
+                        test_pairs, period, period1, period2, save_folder, save_cosinorpy_plots
                     )
             # Multi-component
             else:
@@ -1763,12 +1791,11 @@ class CosinorAnalyzer:
         save_folder: Optional[str],
         save_cosinorpy_plots: bool
     ) -> Dict[str, Any]:
-        """Single-component comparison using pooled model (cosinor1.test_cosinor_pairs)."""
+        """Single-component comparison using pooled model (cosinor1.test_cosinor_pairs),
+        once per period of the range (the library function takes a single period)."""
         print(f"[DEBUG] Using cosinor1.test_cosinor_pairs (pooled model)")
 
-        # Ensure period is single value
-        if isinstance(period, list):
-            period = period[0]
+        period_list = period if isinstance(period, list) else [period]
 
         # Prepare folder and plot settings
         # CRITICAL BUG FIX: cosinor1.test_cosinor_pairs ALWAYS calls plot_pair() which calls plt.show()
@@ -1789,15 +1816,24 @@ class CosinorAnalyzer:
             print(f"[DEBUG] Using temporary folder to avoid plot display: {folder}")
 
         try:
-            # Call cosinor1.test_cosinor_pairs
-            df_results = cosinor1.test_cosinor_pairs(
-                self._data,
-                pairs=test_pairs,
-                period=period,
-                folder=folder,
-                plot_measurements=plot_measurements,
-                legend=True
-            )
+            results_list = []
+            for per in period_list:
+                # Several periods: one subfolder per period so that the plots are not overwritten
+                current_folder = folder
+                if len(period_list) > 1 and not use_temp_folder:
+                    current_folder = os.path.join(folder, f"period_{per}h")
+                    os.makedirs(current_folder, exist_ok=True)
+
+                # Call cosinor1.test_cosinor_pairs
+                results_list.append(cosinor1.test_cosinor_pairs(
+                    self._data,
+                    pairs=test_pairs,
+                    period=per,
+                    folder=current_folder,
+                    plot_measurements=plot_measurements,
+                    legend=True
+                ))
+            df_results = pd.concat(results_list, ignore_index=True) if len(results_list) > 1 else results_list[0]
 
             print(f"[DEBUG] test_cosinor_pairs returned {len(df_results)} rows")
             print(f"[DEBUG] Columns: {df_results.columns.tolist()}")
@@ -1822,38 +1858,42 @@ class CosinorAnalyzer:
         period: Union[float, List[float]],
         period1: Optional[float] = None,
         period2: Optional[float] = None,
-        save_folder: Optional[str] = None
+        save_folder: Optional[str] = None,
+        save_cosinorpy_plots: bool = False
     ) -> Dict[str, Any]:
-        """Single-component comparison using independent models (cosinor1.test_cosinor_pairs_independent)."""
+        """Single-component comparison using independent models (cosinor1.test_cosinor_pairs_independent),
+        at the per-condition periods (period1/period2) or once per period of the range."""
         print(f"[DEBUG] Using cosinor1.test_cosinor_pairs_independent (independent models)")
 
-        # Determine which periods to use
-        # If period1 and period2 are provided (from UI), use them
-        # Otherwise, use the default period parameter
+        # (period of condition 1, period of condition 2 or None = same) for each call
         if period1 is not None and period2 is not None:
             # User specified different periods for each condition
             print(f"[DEBUG] Using per-condition periods: period1={period1}, period2={period2}")
-            final_period = period1
-            final_period2 = period2
+            runs = [(period1, period2)]
         else:
-            # Use default period (same for both conditions)
-            if isinstance(period, list):
-                final_period = period[0]
-            else:
-                final_period = period
-            final_period2 = None  # Same period for both conditions
-            print(f"[DEBUG] Using same period for both conditions: {final_period}")
+            # Same period for both conditions, every period of the range
+            runs = [(per, None) for per in (period if isinstance(period, list) else [period])]
+            print(f"[DEBUG] Using same period for both conditions: {[r[0] for r in runs]}")
 
         # Call cosinor1.test_cosinor_pairs_independent
-        df_results = cosinor1.test_cosinor_pairs_independent(
-            self._data,
-            pairs=test_pairs,
-            period=final_period,
-            period2=final_period2
-        )
+        results_list = [cosinor1.test_cosinor_pairs_independent(self._data, pairs=test_pairs,
+                                                                period=p1, period2=p2)
+                        for p1, p2 in runs]
+        df_results = pd.concat(results_list, ignore_index=True) if len(results_list) > 1 else results_list[0]
 
         print(f"[DEBUG] test_cosinor_pairs_independent returned {len(df_results)} rows")
         print(f"[DEBUG] Columns: {df_results.columns.tolist()}")
+
+        # test_cosinor_pairs_independent draws nothing: save each condition's own fit
+        # (at its own period) with the cosinor1 single-component plotting routine
+        if save_cosinorpy_plots and save_folder:
+            import matplotlib
+            matplotlib.use('Agg')
+            fits = {(t, p1) for p1, _ in runs for t, _ in test_pairs}
+            fits |= {(t, p2 or p1) for p1, p2 in runs for _, t in test_pairs}
+            for test, per in sorted(fits):
+                cosinor1.fit_group(self._data[self._data['test'] == test], period=[per],
+                                   save_folder=save_folder, plot_on=True)
 
         return {
             'comparison_type': 'independent_models',
@@ -1950,7 +1990,7 @@ class CosinorAnalyzer:
                     if folder is not None:
                         limo_kwargs['folder'] = folder
 
-                    df_result = cosinor.compare_pairs_limo(self._data, **limo_kwargs)
+                    df_result = self._compare_pairs_limo(self._data, **limo_kwargs)
 
                 print(f"[DEBUG] Got {len(df_result)} rows for period={per}, n_components={n_comp}")
                 results_list.append(df_result)
@@ -1964,6 +2004,14 @@ class CosinorAnalyzer:
         print(f"[DEBUG] Total comparison results: {len(df_results)} rows")
         print(f"[DEBUG] Columns: {df_results.columns.tolist()}")
 
+        # cosinor.compare_pairs draws nothing (LimoRhyde saves its own pair plots):
+        # save each condition's fit for every (period, n_components) compared
+        if comparison_method == 'Independent' and folder is not None:
+            tests = sorted({t for pair in test_pairs for t in pair})
+            df_models = pd.DataFrame([{'test': t, 'period': per, 'n_components': n}
+                                      for t in tests for per in period_list for n in n_components])
+            cosinor.plot_df_models(self._data, df_models, folder=folder)
+
         return {
             'comparison_type': f'multi_{comparison_method.lower()}',
             'n_pairs': len(test_pairs),
@@ -1971,6 +2019,77 @@ class CosinorAnalyzer:
             'n_periods': len(period_list),
             'results_df': df_results
         }
+
+    @staticmethod
+    def _compare_pairs_limo(
+        df: pd.DataFrame,
+        pairs: List[Tuple[str, str]],
+        n_components: List[int],
+        period: List[float],
+        folder: str = "",
+        prefix: str = "",
+        analysis: str = "",
+        parameters_to_analyse: List[str] = ['amplitude', 'acrophase', 'mesor'],
+        parameters_angular: List[str] = ['acrophase'],
+        **kwargs
+    ) -> pd.DataFrame:
+        """
+        CosinorPy 3.1 cosinor.compare_pairs_limo, calling the vendored
+        compare_pair_df_extended (core/vendor/cosinorpy/limo.py).
+
+        The library's compare_pair_df_extended fails under pandas >= 3 (positional
+        lookup on a labelled Series), with analysis='bootstrap2' stores its results
+        under keys this loop does not read, and takes 'p params' over coefficients
+        shifted by one position. Everything else (columns,
+        per-pair statistics, BH q-values across the rows of the call) is unchanged.
+        """
+        from statsmodels.stats import multitest
+        from .vendor.cosinorpy.limo import compare_pair_df_extended
+
+        if analysis not in ("", "CI1", "bootstrap1", "CI2", "bootstrap2"):
+            raise ValueError(f"Invalid LimoRhyde analysis: {analysis!r}")
+
+        columns = ['test', 'period', 'n_components', 'p', 'q', 'p params', 'q params', 'p(F test)', 'q(F test)',
+                   'd_amplitude', 'd_acrophase']
+        if analysis:
+            for param in parameters_to_analyse:
+                columns += [f'd_{param}', f'CI(d_{param})', f'p(d_{param})', f'q(d_{param})']
+        columns = list(dict.fromkeys(columns))
+        rows = []
+
+        for test1, test2 in pairs:
+            for per in period:
+                for n_comps in n_components:
+                    save_to = (os.path.join(folder, prefix + test1 + '-' + test2 + '_per=' + str(per) +
+                                            '_comps=' + str(n_comps)) if folder else '')
+                    # plot only when saving (without a folder the library would call plt.show())
+                    p_overall, p_params, p_F, _, _, rhythm_params = compare_pair_df_extended(
+                        df, test1, test2, n_components=n_comps, period=per, save_to=save_to,
+                        plot=bool(folder), additional_analysis=analysis,
+                        parameters_to_analyse=parameters_to_analyse,
+                        parameters_angular=parameters_angular, **kwargs)
+
+                    d = {'test': test1 + ' vs. ' + test2, 'period': per, 'n_components': n_comps,
+                         'd_amplitude': rhythm_params['d_amplitude'], 'd_acrophase': rhythm_params['d_acrophase'],
+                         'p': p_overall, 'p params': p_params, 'p(F test)': p_F}
+                    if analysis:
+                        for param in parameters_to_analyse:
+                            d[f'd_{param}'] = rhythm_params[f'd_{param}']
+                            d[f'CI(d_{param})'] = rhythm_params[f'CI(d_{param})']
+                            d[f'p(d_{param})'] = rhythm_params[f'p(d_{param})']
+                    rows.append(d)
+
+        df_results = pd.DataFrame(rows, columns=columns)
+        if len(df_results) > 0:
+            df_results['q'] = multitest.multipletests(df_results['p'], method='fdr_bh')[1]
+            df_results['q params'] = multitest.multipletests(df_results['p params'], method='fdr_bh')[1]
+            df_results['q(F test)'] = multitest.multipletests(df_results['p(F test)'], method='fdr_bh')[1]
+            if analysis:
+                for param in parameters_to_analyse:
+                    df_results[f'q(d_{param})'] = multitest.multipletests(
+                        df_results[f'p(d_{param})'], method='fdr_bh')[1]
+
+        return df_results
 
     # ========================================================================
     # METHOD 5: COMPARE CONDITIONS (DEPENDENT/POPULATION DATA)
@@ -2038,7 +2157,7 @@ class CosinorAnalyzer:
             else:
                 return self._compare_dependent_multi(
                     test_pairs, period, n_components, analysis_method,
-                    parameters_to_analyse, lin_comp, save_folder
+                    parameters_to_analyse, lin_comp, save_folder, save_cosinorpy_plots
                 )
 
         except Exception as e:
@@ -2175,7 +2294,8 @@ class CosinorAnalyzer:
         analysis_method: str = 'CI',
         parameters_to_analyse: List[str] = None,
         lin_comp: bool = False,
-        save_folder: Optional[str] = None
+        save_folder: Optional[str] = None,
+        save_cosinorpy_plots: bool = False
     ) -> Dict[str, Any]:
         """
         Multi-component population comparison.
@@ -2188,6 +2308,7 @@ class CosinorAnalyzer:
             parameters_to_analyse: Parameters to compare (default: all)
             lin_comp: Include linear component
             save_folder: Folder for saving plots (optional)
+            save_cosinorpy_plots: Whether to save plots
         """
         print(f"[DEBUG _compare_dependent_multi] Using cosinor.compare_pairs_population")
         print(f"[DEBUG] analysis_method={analysis_method}")
@@ -2217,8 +2338,7 @@ class CosinorAnalyzer:
                     analysis=analysis_method,
                     parameters_to_analyse=parameters_to_analyse,
                     parameters_angular=['acrophase'],
-                    lin_comp=lin_comp,
-                    folder=save_folder or ''  # Empty string for no plots
+                    lin_comp=lin_comp
                 )
 
                 print(f"[DEBUG] Got {len(df_result)} rows for period={per}, n_components={n_comp}")
@@ -2232,6 +2352,16 @@ class CosinorAnalyzer:
 
         print(f"[DEBUG] compare_pairs_population returned {len(df_results)} total rows")
         print(f"[DEBUG] Columns: {df_results.columns.tolist()}")
+
+        # compare_pairs_population accepts a folder but draws nothing: save each
+        # condition's population fit for every (period, n_components) compared
+        if save_cosinorpy_plots and save_folder:
+            import matplotlib
+            matplotlib.use('Agg')
+            tests = sorted({t for pair in test_pairs for t in pair})
+            df_models = pd.DataFrame([{'test': t, 'period': per, 'n_components': n}
+                                      for t in tests for per in period_list for n in n_components])
+            cosinor.plot_df_models_population(self._data, df_models, folder=save_folder)
 
         return {
             'comparison_type': 'dependent_multi',
@@ -2416,15 +2546,13 @@ class CosinorAnalyzer:
 
             all_results.append(result_dict)
 
-        # If multiple periods, mark best model by min p-value
-        if len(all_results) > 1:
-            best_idx = min(range(len(all_results)),
-                          key=lambda i: all_results[i].get('p_value', float('inf')) or float('inf'))
-            for i, r in enumerate(all_results):
-                r['best_model'] = 'Yes (min p-value)' if i == best_idx else 'No'
-            return all_results
-        else:
-            return all_results[0]
+        # If multiple periods, mark best model by min p-value (RSS of a re-fit breaks p = 0 ties)
+        def rss_of(period):
+            fit = cosinor_nonlin.fit_generalized_cosinor(
+                df_test['x'].values, df_test['y'].values, period=period)
+            return fit[1]['RSS'] if fit else None
+
+        return self._mark_best_period(all_results, df_test, rss_of)
 
     def _nonlinear_independent_fixed_ncomp(
         self,
@@ -2503,6 +2631,7 @@ class CosinorAnalyzer:
                 'q_acrophase': result_row.get('q(acrophase)'),
                 'q_amplification': result_row.get('q(amplification)'),
                 'q_lin_comp': result_row.get('q(lin_comp)'),
+                'rss': fit_row.get('RSS'),
                 'amplitude_ci': amp_ci,
                 'acrophase_ci': acro_ci,
                 'amplification_ci': amplification_ci,
@@ -2513,14 +2642,7 @@ class CosinorAnalyzer:
             all_results.append(result_dict)
 
         # If multiple periods, mark best model
-        if len(all_results) > 1:
-            best_idx = min(range(len(all_results)),
-                          key=lambda i: all_results[i].get('p_value', float('inf')) or float('inf'))
-            for i, r in enumerate(all_results):
-                r['best_model'] = 'Yes (min p-value)' if i == best_idx else 'No'
-            return all_results
-        else:
-            return all_results[0]
+        return self._mark_best_period(all_results, df_test)
 
     def _nonlinear_independent_best_ncomp(
         self,
@@ -2596,6 +2718,7 @@ class CosinorAnalyzer:
                 'q_acrophase': result_row.get('q(acrophase)'),
                 'q_amplification': best_row.get('q(amplification)'),
                 'q_lin_comp': best_row.get('q(lin_comp)'),
+                'rss': best_row.get('RSS'),
                 'amplitude_ci': amp_ci,
                 'acrophase_ci': acro_ci,
                 'amplification_ci': amplification_ci,
@@ -2607,14 +2730,7 @@ class CosinorAnalyzer:
             all_results.append(result_dict)
 
         # If multiple periods, mark best model
-        if len(all_results) > 1:
-            best_idx = min(range(len(all_results)),
-                          key=lambda i: all_results[i].get('p_value', float('inf')) or float('inf'))
-            for i, r in enumerate(all_results):
-                r['best_model'] = 'Yes (min p-value)' if i == best_idx else 'No'
-            return all_results
-        else:
-            return all_results[0]
+        return self._mark_best_period(all_results, df_test)
 
     def _parse_ci(self, ci_value) -> Optional[Tuple[float, float]]:
         """Parse CI value from various formats to tuple."""
@@ -2632,6 +2748,63 @@ class CosinorAnalyzer:
             except:
                 pass
         return None
+
+    def _mark_best_period(
+        self,
+        all_results: List[Dict[str, Any]],
+        df_test: pd.DataFrame,
+        rss_of=None
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """
+        Flag the best period of a nonlinear period scan (min p-value of the model F-test).
+
+        CosinorPy computes p = 1 - F.cdf(F), which underflows to exactly 0.0 for
+        p < ~1e-16, so a clear rhythm gives several periods tied at p = 0 (the old
+        key `p or inf` even ranked them last). Ties are broken by the same F-test
+        evaluated in log space, log F.sf(F; k-1, N-k), with
+        F = ((TSS - RSS)/(k - 1)) / (RSS/(N - k)) rebuilt from each fit's RSS
+        (k = 3 + 2·n_components parameters; N, TSS of the data that was fitted).
+        For a least-squares fit with a free MESOR, TSS - RSS is the model sum of
+        squares, so this is exactly CosinorPy's F-test; for population fits (curve
+        of the mean parameters) it is an approximation. With a fixed n_components
+        it orders periods by RSS.
+
+        rss_of(period) re-fits a period whose result dict has no 'rss'.
+        """
+        if len(all_results) == 1:
+            return all_results[0]
+
+        def p_of(r):
+            p = r.get('p_value')
+            return float('inf') if p is None or pd.isna(p) else float(p)
+
+        p_min = min(p_of(r) for r in all_results)
+        tied = [i for i, r in enumerate(all_results) if p_of(r) == p_min]
+        best_idx = tied[0]
+
+        if len(tied) > 1:
+            y = df_test['y'].to_numpy(dtype=float)
+            n, tss = y.size, float(np.sum((y - y.mean()) ** 2))
+
+            def log_p(i):
+                r = all_results[i]
+                rss = r.get('rss')
+                if (rss is None or pd.isna(rss)) and rss_of is not None:
+                    rss = rss_of(r['period'])
+                    r['rss'] = rss
+                k = 3 + 2 * int(r.get('n_components') or 1)
+                if rss is None or pd.isna(rss) or n <= k:
+                    return float('inf')
+                if rss <= 0:
+                    return float('-inf')
+                F = ((tss - rss) / (k - 1)) / (rss / (n - k))
+                return float(stats.f.logsf(F, k - 1, n - k))
+
+            best_idx = min(tied, key=log_p)
+
+        for i, r in enumerate(all_results):
+            r['best_model'] = 'Yes (min p-value)' if i == best_idx else 'No'
+        return all_results
 
     # ========================================================================
     # METHOD 7: NON-LINEAR ANALYSIS (DEPENDENT/POPULATION DATA)
@@ -2830,15 +3003,11 @@ class CosinorAnalyzer:
 
             all_results.append(result_dict)
 
-        # If multiple periods, mark best model by min p-value
-        if len(all_results) > 1:
-            best_idx = min(range(len(all_results)),
-                          key=lambda i: all_results[i].get('p_value', float('inf')) or float('inf'))
-            for i, r in enumerate(all_results):
-                r['best_model'] = 'Yes (min p-value)' if i == best_idx else 'No'
-            return all_results
-        else:
-            return all_results[0]
+        # If multiple periods, mark best model by min p-value (RSS of a re-fit breaks p = 0 ties)
+        def rss_of(period):
+            return cosinor_nonlin.population_fit_generalized_cosinor(df_test, period=period)['RSS']
+
+        return self._mark_best_period(all_results, df_test, rss_of)
 
     def _nonlinear_dependent_fixed_ncomp(
         self,
@@ -2922,14 +3091,7 @@ class CosinorAnalyzer:
             all_results.append(result_dict)
 
         # If multiple periods, mark best model
-        if len(all_results) > 1:
-            best_idx = min(range(len(all_results)),
-                          key=lambda i: all_results[i].get('p_value', float('inf')) or float('inf'))
-            for i, r in enumerate(all_results):
-                r['best_model'] = 'Yes (min p-value)' if i == best_idx else 'No'
-            return all_results
-        else:
-            return all_results[0]
+        return self._mark_best_period(all_results, df_test)
 
     def _nonlinear_dependent_best_ncomp(
         self,
@@ -3013,14 +3175,7 @@ class CosinorAnalyzer:
             all_results.append(result_dict)
 
         # If multiple periods, mark best model
-        if len(all_results) > 1:
-            best_idx = min(range(len(all_results)),
-                          key=lambda i: all_results[i].get('p_value', float('inf')) or float('inf'))
-            for i, r in enumerate(all_results):
-                r['best_model'] = 'Yes (min p-value)' if i == best_idx else 'No'
-            return all_results
-        else:
-            return all_results[0]
+        return self._mark_best_period(all_results, df_test)
 
     # ========================================================================
     # METHOD 8: NON-LINEAR COMPARE CONDITIONS (INDEPENDENT DATA)
@@ -3047,9 +3202,11 @@ class CosinorAnalyzer:
             - n_comp == 1, use_dependent_model=True:
                 → fit_generalized_cosinor_compare_pairs_dependent(period)
                 → Joint model with group-indicator variable (interaction terms).
-                → Shared period forced. Returns global F-test p + per-parameter stats.
+                → Shared period forced. Returns per-parameter stats plus the F-test p of
+                  the joint model against a constant mean ('p_global'; it tests whether
+                  the model fits at all, not whether the conditions differ).
             - n_comp == 1, use_dependent_model=False:
-                → fit_generalized_cosinor_compare_pairs_independent(period1, period2)
+                → _fit_generalized_cosinor_compare_pairs_independent(period1, period2)
                 → Two independent fits compared via t-test. Allows different periods.
             - n_comp > 1:
                 → compare_pairs_n_comp_bootstrap_group(n_components=n_comp)
@@ -3065,8 +3222,11 @@ class CosinorAnalyzer:
             save_cosinorpy_plots: If True, generate and save CosinorPy plots
             period1: Explicit period for condition 1 (n_comp=1, independent model, 2 conditions)
             period2: Explicit period for condition 2 (n_comp=1, independent model, 2 conditions)
-            use_dependent_model: If True and n_comp=1, use joint model (shared period, F-test).
-                                  If False (default), use two separate fits (t-test on differences).
+            use_dependent_model: If True and n_comp=1, use the joint model (shared period).
+                                  If False, use two separate fits (t-test on differences).
+                                  The keyword default here is False, but the GUI default
+                                  ("Comparison Type" = "Pooled Model") and the engine's
+                                  default when the key is missing are both True.
 
         Returns:
             List of comparison result Dicts (one per pair per n_components value)
@@ -3207,7 +3367,8 @@ class CosinorAnalyzer:
     ) -> List[Dict[str, Any]]:
         """
         Single component comparison for independent data.
-        Uses fit_generalized_cosinor_compare_pairs_independent().
+        Uses _fit_generalized_cosinor_compare_pairs_independent() (CosinorPy's
+        pairs loop with the per-condition periods actually passed on).
 
         period1/period2: explicit per-condition period override (from use_dependent_model=False).
         When provided, these take precedence over the period parameter.
@@ -3235,7 +3396,7 @@ class CosinorAnalyzer:
         if plot_folder:
             params['folder'] = plot_folder
 
-        df_results = cosinor_nonlin.fit_generalized_cosinor_compare_pairs_independent(
+        df_results = self._fit_generalized_cosinor_compare_pairs_independent(
             self._data,
             **params
         )
@@ -3283,6 +3444,64 @@ class CosinorAnalyzer:
             results.append(result_dict)
 
         return results
+
+    @staticmethod
+    def _fit_generalized_cosinor_compare_pairs_independent(
+        df: pd.DataFrame,
+        pairs: List[Tuple[str, str]],
+        period1: float = 24,
+        period2: float = 24,
+        folder: str = "",
+        **kwargs
+    ) -> pd.DataFrame:
+        """
+        CosinorPy 3.1 cosinor_nonlin.fit_generalized_cosinor_compare_pairs_independent,
+        with period1/period2 passed to the per-pair fit.
+
+        The library version calls fit_generalized_cosinor_compare_independent with
+        period1=24, period2=24 hard-coded, so every pair was fitted at 24 h whatever
+        the periods requested (the 'period1'/'period2' columns still echoed the
+        request). Everything else (columns, per-pair statistics, BH q-values across
+        the pairs of the call) is unchanged.
+        """
+        from statsmodels.stats import multitest
+
+        columns = ['test', 'period1', 'period2', 'd_amplitude', 'p(d_amplitude)', 'q(d_amplitude)', 'CI(d_amplitude)',
+                   'd_acrophase', 'p(d_acrophase)', 'q(d_acrophase)', 'CI(d_acrophase)',
+                   'd_amplification', 'p(d_amplification)', 'q(d_amplification)', 'CI(d_amplification)',
+                   'd_lin_comp', 'p(d_lin_comp)', 'q(d_lin_comp)', 'CI(d_lin_comp)']
+        rows = []
+
+        for test1, test2 in pairs:
+            save_to = str(Path(folder) / f"{test1}_{test2}") if folder else ""
+
+            X1 = df[df.test == test1].x.values
+            Y1 = df[df.test == test1].y.values
+            X2 = df[df.test == test2].x.values
+            Y2 = df[df.test == test2].y.values
+
+            stats_params = cosinor_nonlin.fit_generalized_cosinor_compare_independent(
+                X1, Y1, X2, Y2, period1=period1, period2=period2,
+                save_to=save_to, test1=test1, test2=test2, **kwargs
+            )
+
+            sp, pv, ci = stats_params['params'], stats_params['p_values'], stats_params['CIs']
+            rows.append({
+                'test': test1 + ' vs. ' + test2,
+                'period1': period1 if period1 else sp['period1'],
+                'period2': period2 if period2 else sp['period2'],
+                'd_amplitude': sp['d_B'], 'p(d_amplitude)': pv['d_B'], 'CI(d_amplitude)': ci['d_B'],
+                'd_amplification': sp['d_C'], 'p(d_amplification)': pv['d_C'], 'CI(d_amplification)': ci['d_C'],
+                'd_lin_comp': sp['d_D'], 'p(d_lin_comp)': pv['d_D'], 'CI(d_lin_comp)': ci['d_D'],
+                'd_acrophase': sp['d_acrophase'], 'p(d_acrophase)': pv['d_acrophase'], 'CI(d_acrophase)': ci['d_acrophase'],
+            })
+
+        df_results = pd.DataFrame(rows, columns=columns)
+        if len(df_results) > 0:
+            for param in ('amplitude', 'amplification', 'lin_comp', 'acrophase'):
+                df_results[f'q(d_{param})'] = multitest.multipletests(df_results[f'p(d_{param})'], method='fdr_bh')[1]
+
+        return df_results
 
     def _nonlinear_compare_independent_fixed_ncomp(
         self,

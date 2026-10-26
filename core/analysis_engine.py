@@ -157,7 +157,13 @@ class AnalysisResult:
     # Peaks and troughs
     peak_times: Optional[List[float]] = None  # Times of rhythm peaks (hours)
     trough_times: Optional[List[float]] = None  # Times of rhythm troughs (hours)
-    
+    peak_cis: Optional[List[List[float]]] = None         # RhythmCount: [lower, upper] per peak (hours)
+    peak_height_cis: Optional[List[List[float]]] = None  # RhythmCount: [lower, upper] per peak height
+    # Harmonic Cosinor: per-harmonic components (harmonic order) and the fitted waveform
+    harmonic_amplitudes: Optional[List[float]] = None
+    harmonic_acrophases: Optional[List[float]] = None   # first peak of harmonic k, [0, period/k)
+    waveform_amplitude: Optional[float] = None          # half the peak-to-trough range
+
     # Method-specific
     tau: Optional[float] = None  # JTK Kendall tau
     # Bonferroni correction for the number of candidate periods scanned.
@@ -172,7 +178,8 @@ class AnalysisResult:
     dominant_period: Optional[float] = None
     dominant_power: Optional[float] = None  # Fourier F24
     target_power: Optional[float] = None    # Fourier F24
-    correlation_r: Optional[float] = None   # Fourier F24 (replicate correlation)
+    f24_norm: Optional[float] = None        # Fourier F24 normalised to max 1 (Wijnen et al., 2006)
+    p_f24: Optional[float] = None           # Fourier F24 permutation p-value (pF24)
     n_components: Optional[int] = None  # Multi-component cosinor
     amplification: Optional[float] = None  # Nonlinear cosinor - damping/forcing coefficient
     lin_comp: Optional[float] = None  # Nonlinear cosinor - linear trend component
@@ -272,6 +279,19 @@ class ComparisonResult:
     q1: Optional[float] = None  # Condition 1 rhythm detection q-value
     q2: Optional[float] = None  # Condition 2 rhythm detection q-value
 
+    # Joint-model F-test (nonlinear Pooled Model): joint model vs. constant mean.
+    # Tests whether the model fits at all, not whether the conditions differ.
+    model_p: Optional[float] = None
+    model_q: Optional[float] = None
+
+    # LimoRhyde (CosinorPy compare_pairs_limo): 'p params' = smallest p-value of the
+    # condition-specific coefficients of the joint model; 'p(F test)' = extra-sum-of-squares
+    # F-test of the joint model against a single model fitted to both conditions pooled.
+    p_params: Optional[float] = None
+    q_params: Optional[float] = None
+    p_ftest: Optional[float] = None
+    q_ftest: Optional[float] = None
+
     # Acrophase in hours (CircaCompare)
     acrophase_g0_hours: Optional[float] = None
     acrophase_g1_hours: Optional[float] = None
@@ -303,6 +323,7 @@ class ComparisonResult:
     q_lin_comp: Optional[float] = None
 
     period: float = 24.0
+    period2: Optional[float] = None  # condition 2 period when it differs from `period` (condition 1)
     n_components: Optional[int] = None
 
     # Raw data for plotting (optional)
@@ -735,13 +756,17 @@ class AnalysisEngine:
                 variable=variable, condition=condition
             )
 
-            if result is None:
+            if result is None or not result.success:
+                failed = AnalysisResult(
+                    variable=variable, condition=condition,
+                    method="circacompare_single", period=p,
+                    success=False,
+                    message=(f"Fit failed (period {p:g} h): no fit met the constraints (amplitude > 0, "
+                             f"0 < acrophase < 2π) in {max_iterations} random starts")
+                )
                 if is_single:
-                    return AnalysisResult(
-                        variable=variable, condition=condition,
-                        method="circacompare_single",
-                        success=False, message="Fit failed"
-                    )
+                    return failed
+                results.append(failed)  # reported by the caller, not tabulated
                 continue
 
             acrophase_hours = (result.acrophase * p) / (2 * np.pi)
@@ -819,7 +844,10 @@ class AnalysisEngine:
         values_g1 = data_g1[variable].values.astype(float) if len(data_g1) > 0 else None
 
         # Load data and common settings once
-        self._circacompare.load_dataframe(filtered)
+        self._circacompare.load_dataframe(
+            filtered, time_column=time_col, condition_column=condition_col,
+            variable_columns=[variable]
+        )
         self._circacompare.set_loss(loss)
         self._circacompare.set_f_scale(f_scale)
         self._circacompare.set_max_iterations(max_iterations)
@@ -844,14 +872,19 @@ class AnalysisEngine:
 
             print(f"  Result: {result}")
 
-            if result is None:
+            if result is None or not result.success:
+                failed = ComparisonResult(
+                    variable=variable, condition1=condition1, condition2=condition2,
+                    method="circacompare_compare", period=p,
+                    success=False,
+                    message=(f"Comparison failed (period {p:g} h): no fit met the constraints "
+                             f"(amplitudes > 0, 0 < acrophase < 2π, |Δacrophase| < π) in "
+                             f"{max_iterations} random starts")
+                )
                 if is_single:
-                    return ComparisonResult(
-                        variable=variable, condition1=condition1, condition2=condition2,
-                        method="circacompare_compare",
-                        success=False, message="Comparison failed"
-                    )
-                continue  # skip failed period in range
+                    return failed
+                comparison_results.append(failed)  # reported by the caller, not tabulated
+                continue
 
             sig_mesor = calc_sig('d_mesor', result.confidence_intervals)
             sig_amplitude = calc_sig('d_amplitude', result.confidence_intervals)
@@ -945,16 +978,16 @@ class AnalysisEngine:
         show_all = len(period_range) > 1
 
         if show_all:
-            # Period sweep: analytical p-values only (empirical would be too slow)
+            # Period sweep: empirical p-values (if requested) share one null over the whole range
             per_period = _run_discrete_jtk_all_periods(
-                series, period_range=period_range, asymmetries=asymmetries
+                series, period_range=period_range, asymmetries=asymmetries,
+                n_permutations=n_permutations
             )
             if not per_period:
                 return AnalysisResult(
                     variable=variable, condition=condition,
                     method="jtk", success=False, message="JTK analysis failed"
                 )
-            best_p = min(r.p_value for r in per_period)
             results = []
             for r in per_period:
                 results.append(AnalysisResult(
@@ -972,7 +1005,7 @@ class AnalysisEngine:
                     amplitude=r.amplitude,
                     times=times, values=values,
                     success=True,
-                    best_model="Yes" if r.p_value == best_p else "No"
+                    best_model="Yes" if r.best_fit else "No"
                 ))
             return results
 
@@ -1084,8 +1117,16 @@ class AnalysisEngine:
         from .rhythm_analysis import _fit_harmonic_cosinor, DefaultPeriodRanges
 
         n_harmonics = parameters.get('n_harmonics', 2)
-        period_range = parameters.get('period_range', None)
-        if period_range is None:
+        # 'period' as in the other Module I methods: a value or a list of periods.
+        # Not 'period_range': the GUI sends it as (min, max), which would test
+        # exactly those two periods (and double the Bonferroni p).
+        period = parameters.get('period', None)
+        if period is not None:
+            if isinstance(period, list):
+                period_range = [float(p) for p in period]
+            else:
+                period_range = [float(period)]
+        else:
             period_range = DefaultPeriodRanges.CIRCADIAN
 
         result = _fit_harmonic_cosinor(times, values, period_range=period_range, n_harmonics=n_harmonics)
@@ -1097,14 +1138,11 @@ class AnalysisEngine:
                 success=False, message="Harmonic cosinor failed"
             )
 
-        # Get primary amplitude and acrophase from lists
-        primary_amplitude = result.amplitudes[0] if result.amplitudes else None
-        primary_acrophase = result.acrophases[0] if result.acrophases else None
-
-        # Build amplitude/acrophase info for all harmonics in message
+        # amplitude / acrophase_hours: the fundamental (harmonic 1); the lists are
+        # in harmonic order
         harmonic_details = ", ".join(
-            f"H{i+1}: A={a:.4f} φ={p:.2f}h"
-            for i, (a, p) in enumerate(zip(result.amplitudes, result.acrophases))
+            f"H{k}: A={a:.4f} φ={p:.2f}h"
+            for k, a, p in zip(result.harmonic_numbers, result.amplitudes, result.acrophases)
         )
         msg = result.warning or ""
         if len(result.amplitudes) > 1:
@@ -1114,16 +1152,21 @@ class AnalysisEngine:
             variable=variable,
             condition=condition,
             method="harmonic_cosinor",
-            amplitude=primary_amplitude,
-            acrophase_hours=primary_acrophase,
+            mesor=round(result.fit_model['mesor'], 4),
+            amplitude=result.amplitudes[0],
+            acrophase_hours=result.acrophases[0],
             period=result.period,
             # Same convention as cosinor_ols: p_value is the raw F-test at the
             # best-fitting period, bonf_p_value corrects it for the period scan.
             p_value=result.p_value,
             bonf_p_value=result.adj_p_value,
             n_components=result.n_harmonics,
-            peak_times=result.acrophases,    # all harmonic acrophases (h)
-            trough_times=result.amplitudes,  # all harmonic amplitudes (repurposed field)
+            harmonic_amplitudes=result.amplitudes,
+            harmonic_acrophases=result.acrophases,
+            # peaks / troughs / amplitude of the fitted waveform (all harmonics summed)
+            peak_times=result.waveform_peaks,
+            trough_times=result.waveform_troughs,
+            waveform_amplitude=result.waveform_amplitude,
             times=times,
             values=values,
             success=True,
@@ -1356,10 +1399,16 @@ class AnalysisEngine:
             elif per_type == 'lombscargle':
                 # Lomb-Scargle can handle uneven sampling.
                 # signal.lombscargle expects angular frequencies (rad/hr), not cycles/hr.
-                min_per = 2
+                # Shortest period: the Nyquist period of the median spacing of the
+                # distinct time points (shorter periods are aliases), and at least 2 h
+                time_diffs = np.diff(np.unique(X))
+                min_per = max(2.0, 2 * float(np.median(time_diffs))) if len(time_diffs) else 2.0
                 f_cycles = np.linspace(1/max_per, 1/min_per, 1000)
                 f = 2 * np.pi * f_cycles  # angular frequencies passed to lombscargle
-                Y_proc = Y - np.mean(Y) if detrending else Y
+                # Always mean-centred (classic Lomb-Scargle definition): this
+                # implementation does not fit an offset, so an uncentred mean leaks
+                # into every frequency
+                Y_proc = Y - np.mean(Y)
                 Pxx_den = signal.lombscargle(X, Y_proc, f)
                 Y_u = Y_proc  # For significance calculation
 
@@ -1387,10 +1436,21 @@ class AnalysisEngine:
             Pxx = Pxx[mask]
             per = per[mask]
 
-            # Calculate significance threshold (Refinetti et al. 2007)
+            # Calculate significance threshold (Refinetti et al. 2007, eq. 4):
+            # g = largest R_j^2 / sum of R_j^2 over j >= 1, so the mean (DC) bin
+            # is not part of the sum. Fisher's (1929) test uses m = (N-1)//2, the
+            # number of Fourier frequencies; with N (data points) in its place the
+            # white-noise false-positive rate is 40-95%
             p_t = 0.05
             N = len(Y_u)
-            T = (1 - (p_t/N)**(1/(N-1))) * sum(Pxx_den)
+            m = max(2, (N - 1) // 2)
+            g_crit = 1 - (p_t/m)**(1/(m-1))
+            if per_type == 'lombscargle':
+                # Unnormalised LS power P is on a 1000-point grid; its analogue of g
+                # is the fraction of variance W = 2P / sum((y - mean)^2)
+                T = g_crit * np.sum((Y - np.mean(Y))**2) / 2
+            else:
+                T = g_crit * np.sum(Pxx_den[f > 0])
 
             # Find dominant period (highest power peak — always computed)
             max_idx = np.argmax(Pxx)
@@ -1446,8 +1506,7 @@ class AnalysisEngine:
         parameters: Dict[str, Any]
     ) -> Union[AnalysisResult, List[AnalysisResult]]:
         """Run AR-JTK Cycle analysis (JTK with autocorrelation correction)."""
-        from .rhythm_analysis import _run_ar_jtk, _run_discrete_jtk_all_periods
-        from .rhythm_analysis import _is_white_noise_ranked, _prewhiten_ranked_residuals, _generate_triangle_template_time
+        from .rhythm_analysis import _run_ar_jtk, _run_discrete_jtk_all_periods, _ar_prewhitened_ranks
         import pandas as pd
 
         # Get period range - support both period_range tuple and period list
@@ -1488,6 +1547,49 @@ class AnalysisEngine:
             else:
                 series = pd.Series(values, index=times)
 
+            # The AR filter needs the series in time order
+            series = series.sort_index()
+
+            if len(period_range) > 1:
+                # One row per period. Phase and shape come from JTK on the original
+                # series; the p-values from JTK on the pre-whitened ranks (the same
+                # pre-whitening as a single-result run over the whole range)
+                _, r_pw = _ar_prewhitened_ranks(series, period_range, None, asymmetries,
+                                                ar_lag, ljungbox_lag, prewhiten)
+                msg = "AR correction applied" if r_pw is not None else "No autocorrelation detected"
+                per_period = _run_discrete_jtk_all_periods(
+                    series, period_range=period_range, asymmetries=asymmetries
+                )
+                if r_pw is not None or n_permutations > 0:
+                    p_rows = _run_discrete_jtk_all_periods(
+                        r_pw if r_pw is not None else series, period_range=period_range,
+                        asymmetries=asymmetries, n_permutations=n_permutations
+                    )
+                else:
+                    p_rows = per_period
+                results = []
+                for r, rp in zip(per_period, p_rows):
+                    results.append(AnalysisResult(
+                        variable=variable, condition=condition,
+                        method="ar_jtk",
+                        period=r.period,
+                        acrophase_hours=r.acrophase,
+                        p_value=rp.bh_p_value,
+                        raw_p_value=rp.p_value,
+                        bonf_p_value=rp.bonf_p_value,
+                        tau=r.tau,
+                        lag=r.lag,
+                        asymmetry=r.asymmetry,
+                        n_tests=rp.n_tests,
+                        amplitude=r.amplitude,  # (p90 - p10) / 2 of the original data
+                        times=times, values=values,
+                        success=True,
+                        message=msg,
+                        # the period a single-result run reports (best template of the original data)
+                        best_model="Yes" if r.best_fit else "No"
+                    ))
+                return results
+
             result, autocorr_detected = _run_ar_jtk(
                 series,
                 period_range=period_range,
@@ -1506,51 +1608,6 @@ class AnalysisEngine:
                 )
 
             msg = "AR correction applied" if autocorr_detected else "No autocorrelation detected"
-            show_all = len(period_range) > 1
-
-            if show_all:
-                # Re-run all-periods on the (possibly prewhitened) series used internally
-                # We use the same prewhitening logic as _run_ar_jtk
-                import numpy as _np
-                unique_t = _np.unique(times)
-                if len(unique_t) < len(times):
-                    avg_v = _np.array([_np.mean(values[times == t]) for t in unique_t])
-                    series_ap = pd.Series(avg_v, index=unique_t)
-                else:
-                    series_ap = pd.Series(values, index=times)
-
-                # Always run all-periods on the original (non-prewhitened) series.
-                # Running on the prewhitened series (rank space) causes two bugs:
-                # (1) Amplitude in rank-space units instead of original data units.
-                # (2) Phase inversion: when the first JTK selects a template with tau<0,
-                #     the prewhitened series peaks where the original data troughs, so
-                #     the second JTK reports the trough time as the acrophase (off by T/2).
-                per_period = _run_discrete_jtk_all_periods(
-                    series_ap, period_range=period_range, asymmetries=asymmetries
-                )
-                amp = (series.values.max() - series.values.min()) / 2  # from original data
-                best_p = min(r.p_value for r in per_period)
-                results = []
-                for r in per_period:
-                    results.append(AnalysisResult(
-                        variable=variable, condition=condition,
-                        method="ar_jtk",
-                        period=r.period,
-                        acrophase_hours=r.acrophase,
-                        p_value=r.bh_p_value,
-                        raw_p_value=r.p_value,
-                        bonf_p_value=r.bonf_p_value,
-                        tau=r.tau,
-                        lag=r.lag,
-                        asymmetry=r.asymmetry,
-                        n_tests=r.n_tests,
-                        amplitude=amp,  # from original data (not rank space)
-                        times=times, values=values,
-                        success=True,
-                        message=msg,
-                        best_model="Yes" if r.p_value == best_p else "No"
-                    ))
-                return results
 
             return AnalysisResult(
                 variable=variable,
@@ -1611,23 +1668,12 @@ class AnalysisEngine:
             # Create series with time as index
             series = pd.Series(values, index=times)
 
-            result = _run_cosine_kendall(series, period_range=period_range, interval=interval,
-                                         n_permutations=n_permutations)
-
-            if result is None:
-                return AnalysisResult(
-                    variable=variable, condition=condition,
-                    method="cosine_kendall",
-                    success=False, message="Analysis failed"
-                )
-
-            show_all = len(period_range) > 1
-
-            if show_all:
+            if len(period_range) > 1:
+                # Empirical p-values (if requested) share one null over the whole range
                 per_period = _run_cosine_kendall_all_periods(
-                    series, period_range=period_range, interval=interval
+                    series, period_range=period_range, interval=interval,
+                    n_permutations=n_permutations
                 )
-                best_p = min(r.p_value for r in per_period)
                 results = []
                 for r in per_period:
                     results.append(AnalysisResult(
@@ -1645,9 +1691,19 @@ class AnalysisEngine:
                         amplitude=r.amplitude,
                         times=times, values=values,
                         success=True,
-                        best_model="Yes" if r.p_value == best_p else "No"
+                        best_model="Yes" if r.best_fit else "No"
                     ))
                 return results
+
+            result = _run_cosine_kendall(series, period_range=period_range, interval=interval,
+                                         n_permutations=n_permutations)
+
+            if result is None:
+                return AnalysisResult(
+                    variable=variable, condition=condition,
+                    method="cosine_kendall",
+                    success=False, message="Analysis failed"
+                )
 
             return AnalysisResult(
                 variable=variable,
@@ -1685,7 +1741,7 @@ class AnalysisEngine:
     ) -> AnalysisResult:
         """Run Fourier F24 analysis (effect size measure).
 
-        Uses the two-replicate method (with correlation_r) when a 'replicate'
+        Uses the two-replicate method (averaged spectra) when a 'replicate'
         or 'subject' column is present and has at least 2 unique values.
         Falls back to the single-series method otherwise.
         """
@@ -1726,7 +1782,8 @@ class AnalysisEngine:
                     values2 = rep2[variable].values.astype(float)
                 else:
                     # More than 2 replicates: randomly split into two groups and average
-                    rng = np.random.default_rng()
+                    # (seeded, as in RhythmAnalyzer.run_fourier_f24, so F24 is reproducible)
+                    rng = np.random.default_rng(42)
                     indices = np.arange(len(rep_ids))
                     rng.shuffle(indices)
                     mid = len(indices) // 2
@@ -1768,10 +1825,13 @@ class AnalysisEngine:
                     success=False, message="Analysis failed"
                 )
 
-            # F24 > 2 is typically considered rhythmic (Wijnen et al., 2006)
-            is_rhythmic = result.f24_score > 2.0
+            # The call uses the permutation p-value pF24 (Wijnen et al., 2006): the
+            # F24 score itself scales with the number of time points
+            alpha = parameters.get('alpha', 0.05)
+            is_rhythmic = result.p_f24 < alpha
             rep_note = " (2-replicate method)" if use_replicates else ""
-            msg = f"F24={result.f24_score:.2f} ({'rhythmic' if is_rhythmic else 'not rhythmic'}, threshold=2.0){rep_note}"
+            msg = (f"F24={result.f24_score:.2f}, F24 norm={result.f24_norm:.2f}, pF24={result.p_f24:.3g} "
+                   f"({'rhythmic' if is_rhythmic else 'not rhythmic'} at pF24 < {alpha:g}){rep_note}")
 
             # Convert frequencies to periods for plotting
             frequencies = result.frequencies
@@ -1790,7 +1850,8 @@ class AnalysisEngine:
                 power=result.f24_score,  # F24 score as effect size
                 dominant_power=result.dominant_power,
                 target_power=result.target_power,
-                correlation_r=result.correlation_r,
+                f24_norm=result.f24_norm,
+                p_f24=result.p_f24,
                 times=all_times,
                 values=all_values,
                 periods=periods,
@@ -2062,15 +2123,18 @@ class AnalysisEngine:
             'feature_importances': result['feature_importances'],
             'sub_method_details': result['sub_method_details'],
             'sem_values': sem_values.tolist(),
+            'notes': result.get('notes', []),
+            'missing_features': result.get('missing_features', []),
+            'probability_with_sentinel': result.get('probability_with_sentinel'),
         })
 
         return AnalysisResult(
             variable=variable,
             condition=condition,
             method="consensus_ai",
-            # p_value = 1 - probability so lower = more significant (standard sorting)
-            p_value=1.0 - probability,
-            # r_squared stores the raw probability score (0-1)
+            # No p_value: the score is a calibrated class probability, not a test
+            # (it used to be exported as p_value = 1 - probability).
+            # r_squared stores the probability score (0-1); None when not applicable
             r_squared=probability,
             # Cosinor parameters from sub-methods
             amplitude=features.get('cosinor_amplitude'),
@@ -2211,11 +2275,14 @@ class AnalysisEngine:
                     message="LME analysis failed for all tested periods"
                 )
 
-            best_p_val = min(r.p_value for _, r in per_period)
+            # Lowest p = largest LR statistic (same null model and df=2 at every
+            # period); the LR is unrounded, so p-values that underflow or round
+            # to 0 do not tie
+            best_p, _ = max(per_period, key=lambda pr: pr[1].lr_stat)
             results = []
             for p, r in per_period:
                 ar = _make_result(r, p)
-                ar.best_model = "Yes" if r.p_value == best_p_val else "No"
+                ar.best_model = "Yes" if p == best_p else "No"
                 results.append(ar)
             return results
 
@@ -2231,6 +2298,21 @@ class AnalysisEngine:
     # ========================================================================
     # COSINORPY NEW REFACTORED METHODS
     # ========================================================================
+
+    @staticmethod
+    def _subject_column(data: pd.DataFrame, parameters: Dict[str, Any]) -> Optional[str]:
+        """Subject column for dependent (population) data: the one detected or set at load
+        time (parameters['subject_col'], e.g. 'animal' or 'mouse'), else a column named 'subject'."""
+        col = parameters.get('subject_col')
+        if col and col in data.columns:
+            return col
+        return 'subject' if 'subject' in data.columns else None
+
+    @staticmethod
+    def _failed_comparison(variable: str, method: str, error: Exception) -> ComparisonResult:
+        """A failed compare-conditions run, so that the error reaches the user instead of 0 rows."""
+        return ComparisonResult(variable=variable, condition1="", condition2="", method=method,
+                                success=False, message=f"Error: {type(error).__name__}: {error}")
 
     def _convert_to_cosinorpy_format(
         self,
@@ -2500,6 +2582,7 @@ class AnalysisEngine:
 
             total_combinations = 0
             successful_combinations = 0
+            notes = []
 
             for var in selected_variables:
                 for cond in selected_conditions:
@@ -2523,6 +2606,7 @@ class AnalysisEngine:
 
                         if result_temp.get('success', False):
                             successful_combinations += 1
+                            notes.extend(result_temp.get('warnings', []))
 
                             # Rename files to correct names
                             # CosinorPy generates: per_{var}_{cond}.png and per_{var}_{cond}.pdf
@@ -2542,11 +2626,13 @@ class AnalysisEngine:
                                         print(f"[DEBUG] Renamed: {old_pattern}{ext} -> {new_pattern}{ext}")
                         else:
                             print(f"[DEBUG] WARNING: Failed to generate periodogram for {var}_{cond}")
+                            notes.append(result_temp.get('message', f'{var}_{cond}: failed'))
 
             # Create final result based on success count
             result = {
                 'success': successful_combinations > 0,
                 'message': f"Generated {successful_combinations}/{total_combinations} periodogram(s)"
+                           + ''.join(f"\n{n}" for n in notes)
             }
 
             if result['success']:
@@ -2560,6 +2646,7 @@ class AnalysisEngine:
                     method="cosinorpy_periodogram",  # Use lowercase identifier for detection
                     success=True,
                     message=f"Plots saved in: {plot_folder}\n{successful_combinations} periodogram(s) generated for {len(selected_variables)} variable(s) × {len(selected_conditions)} condition(s)"
+                            + ''.join(f"\n{n}" for n in notes)
                 )
             else:
                 return AnalysisResult(
@@ -2637,7 +2724,9 @@ class AnalysisEngine:
 
             bootstrap_size = parameters.get('bootstrap_size', 1000)
 
-            plot_folder = get_cosinorpy_plot_folder(data_file_path)
+            # cosinorpy_plots/ is only created when the user asked for the plots
+            plot_folder = (get_cosinorpy_plot_folder(data_file_path)
+                           if parameters.get('save_cosinorpy_plots', False) else None)
 
             # Convert to CosinorPy format
             df_cosinorpy = self._convert_to_cosinorpy_format(
@@ -2844,10 +2933,13 @@ class AnalysisEngine:
 
             bootstrap_size = parameters.get('bootstrap_size', 1000)
 
-            plot_folder = get_cosinorpy_plot_folder(data_file_path)
+            plot_folder = (get_cosinorpy_plot_folder(data_file_path)
+                           if parameters.get('save_cosinorpy_plots', False) else None)
 
             # Get subject column
-            subject_col = 'subject' if 'subject' in data.columns else None
+            subject_col = self._subject_column(data, parameters)
+            if subject_col is None:
+                raise ValueError("Dependent data requires a subject column (none was detected or assigned)")
 
             # Convert to CosinorPy format
             df_cosinorpy = self._convert_to_cosinorpy_format(
@@ -3021,6 +3113,10 @@ class AnalysisEngine:
             period = row.get('period') or row.get('period1', 24.0)
             if isinstance(period, (list, np.ndarray)):
                 period = period[0] if len(period) > 0 else 24.0
+            # Independent Models with per-condition periods: condition 2 period, when it differs
+            period2 = row.get('period2')
+            if period2 is None or pd.isna(period2) or float(period2) == float(period):
+                period2 = None
 
             # Build method string from the result dict's comparison_type (snake_case),
             # which is more reliable than the function argument (which may be a UI string).
@@ -3089,13 +3185,10 @@ class AnalysisEngine:
                     acrophase_diff_ci = self._parse_ci(row.get('CI(d_acrophase)'))
                     mesor_diff_ci = self._parse_ci(row.get('CI(d_mesor)'))
                 else:
-                    # Empty analysis: only joint p/q params available
-                    p_amplitude = row.get('p params')
-                    p_acrophase = row.get('p params')
-                    p_mesor = row.get('p params')
-                    q_amplitude = row.get('q params')
-                    q_acrophase = row.get('q params')
-                    q_mesor = row.get('q params')
+                    # Empty analysis: no per-parameter tests; the joint tests (model p/q,
+                    # p/q params, p/q(F test)) are reported in their own columns below
+                    p_amplitude = p_acrophase = p_mesor = None
+                    q_amplitude = q_acrophase = q_mesor = None
                     amplitude_diff_ci = None
                     acrophase_diff_ci = None
                     mesor_diff_ci = None
@@ -3126,6 +3219,18 @@ class AnalysisEngine:
             q1 = row.get('q1') if is_dependent_multi else None
             q2 = row.get('q2') if is_dependent_multi else None
 
+            # LimoRhyde joint tests: model F-test (p, q), condition coefficients (p params),
+            # extra-sum-of-squares F-test (p(F test))
+            limo = {k: row.get(c) if is_limo else None for k, c in (
+                ('model_p', 'p'), ('model_q', 'q'), ('p_params', 'p params'), ('q_params', 'q params'),
+                ('p_ftest', 'p(F test)'), ('q_ftest', 'q(F test)'))}
+
+            # Linear-trend difference (multi-component Independent, Include Linear Component)
+            lin_comp_diff = row.get('d_lin_comp')
+            lin_comp_diff_ci = self._parse_ci(row.get('CI(d_lin_comp)'))
+            p_lin_comp = row.get('p(d_lin_comp)')
+            q_lin_comp = row.get('q(d_lin_comp)')
+
             # Extract n_components (for multi-component comparisons)
             n_comp_value = row.get('n_components', row.get('n_components1'))
             if n_comp_value is not None:
@@ -3141,6 +3246,7 @@ class AnalysisEngine:
                 condition2=cond2.strip(),
                 method=method_str,
                 period=float(period),
+                period2=float(period2) if period2 is not None else None,
                 n_components=n_comp_value,
                 # Group 0 parameters
                 amplitude_g0=amplitude_g0,
@@ -3167,10 +3273,16 @@ class AnalysisEngine:
                 p2=p2,
                 q1=q1,
                 q2=q2,
+                **limo,
                 # Confidence intervals
                 amplitude_diff_ci=amplitude_diff_ci,
                 acrophase_diff_ci=acrophase_diff_ci,
                 mesor_diff_ci=mesor_diff_ci,
+                # Linear-trend difference
+                lin_comp_diff=lin_comp_diff,
+                lin_comp_diff_ci=lin_comp_diff_ci,
+                p_lin_comp=p_lin_comp,
+                q_lin_comp=q_lin_comp,
                 success=True,
                 message=""
             )
@@ -3245,8 +3357,7 @@ class AnalysisEngine:
             print(f"[DEBUG] Found conditions: {conditions}")
 
             if len(conditions) < 2:
-                print(f"[DEBUG] Not enough conditions for comparison")
-                return []
+                raise ValueError("At least 2 conditions are needed to compare conditions")
 
             # Get parameters
             period = parameters.get('period', 24.0)
@@ -3327,7 +3438,7 @@ class AnalysisEngine:
             print(f"[DEBUG _run_cosinorpy_compare_independent_new] ERROR: {e}")
             import traceback
             traceback.print_exc()
-            return []
+            return [self._failed_comparison(variable, "cosinorpy_compare_independent", e)]
 
     def _run_cosinorpy_compare_dependent_new(
         self,
@@ -3351,14 +3462,12 @@ class AnalysisEngine:
             print(f"[DEBUG] Found conditions: {conditions}")
 
             if len(conditions) < 2:
-                print(f"[DEBUG] Not enough conditions for comparison")
-                return []
+                raise ValueError("At least 2 conditions are needed to compare conditions")
 
             # Check for subject column (required for dependent data)
-            subject_col = 'subject' if 'subject' in data.columns else None
+            subject_col = self._subject_column(data, parameters)
             if subject_col is None:
-                print(f"[ERROR] Dependent data requires a 'subject' column")
-                return []
+                raise ValueError("Dependent data requires a subject column (none was detected or assigned)")
 
             # Get parameters
             period = parameters.get('period', 24.0)
@@ -3432,7 +3541,7 @@ class AnalysisEngine:
             print(f"[DEBUG _run_cosinorpy_compare_dependent_new] ERROR: {e}")
             import traceback
             traceback.print_exc()
-            return []
+            return [self._failed_comparison(variable, "cosinorpy_compare_dependent", e)]
 
     def _enrich_dependent_comparison_results(
         self,
@@ -3485,9 +3594,10 @@ class AnalysisEngine:
                 comp_result.mesor_g0 = float(res1['means'][0])
                 comp_result.amplitude_g0 = float(res1['means'][3])
                 comp_result.acrophase_g0 = float(res1['means'][4])
-                # Extract individual rhythmicity p-value (p1) for condition 1
+                # Rhythmicity p-value (p1) for condition 1 from this n=1 re-fit, only when the
+                # comparison did not return one (multi-component: p1 of the n-component model)
                 p1_val = res1.get('p_value')
-                if p1_val is not None and not (isinstance(p1_val, float) and np.isnan(p1_val)):
+                if comp_result.p1 is None and p1_val is not None and not (isinstance(p1_val, float) and np.isnan(p1_val)):
                     comp_result.p1 = float(p1_val)
             except Exception as e:
                 print(f"[DEBUG] Could not fit population for {cond1_name}: {e}")
@@ -3498,9 +3608,9 @@ class AnalysisEngine:
                 comp_result.mesor_g1 = float(res2['means'][0])
                 comp_result.amplitude_g1 = float(res2['means'][3])
                 comp_result.acrophase_g1 = float(res2['means'][4])
-                # Extract individual rhythmicity p-value (p2) for condition 2
+                # Rhythmicity p-value (p2) for condition 2, as for p1
                 p2_val = res2.get('p_value')
-                if p2_val is not None and not (isinstance(p2_val, float) and np.isnan(p2_val)):
+                if comp_result.p2 is None and p2_val is not None and not (isinstance(p2_val, float) and np.isnan(p2_val)):
                     comp_result.p2 = float(p2_val)
             except Exception as e:
                 print(f"[DEBUG] Could not fit population for {cond2_name}: {e}")
@@ -3589,7 +3699,7 @@ class AnalysisEngine:
                 if len(df_g1) > 0:
                     try:
                         fit_res, amp, acr, _ = cosinor1_mod.fit_cosinor(
-                            df_g1.x.values, df_g1.y.values, period=period_val, plot_on=False
+                            df_g1.x.values, df_g1.y.values, period=comp_result.period2 or period_val, plot_on=False
                         )
                         comp_result.mesor_g1 = float(fit_res.params.iloc[0])
                         if comp_result.amplitude_g1 is None:
@@ -3647,7 +3757,7 @@ class AnalysisEngine:
             bootstrap_size = parameters.get('bootstrap_size', 100)
             save_cosinorpy_plots = parameters.get('save_cosinorpy_plots', False)
 
-            plot_folder = get_cosinorpy_plot_folder(data_file_path)
+            plot_folder = get_cosinorpy_plot_folder(data_file_path) if save_cosinorpy_plots else None
 
             # Convert to CosinorPy format
             df_cosinorpy = self._convert_to_cosinorpy_format(
@@ -3819,11 +3929,11 @@ class AnalysisEngine:
                 n_components = [n_components]
 
             save_cosinorpy_plots = parameters.get('save_cosinorpy_plots', False)
-            plot_folder = get_cosinorpy_plot_folder(data_file_path)
+            plot_folder = get_cosinorpy_plot_folder(data_file_path) if save_cosinorpy_plots else None
 
             # Convert to CosinorPy format for DEPENDENT data
             df_cosinorpy = self._convert_to_cosinorpy_format_population(
-                data, variable, condition, time_col, condition_col
+                data, variable, condition, time_col, condition_col, self._subject_column(data, parameters)
             )
 
             # Load data as DEPENDENT
@@ -3976,8 +4086,7 @@ class AnalysisEngine:
             print(f"[DEBUG] Conditions to compare: {conditions}")
 
             if len(conditions) < 2:
-                print(f"[DEBUG] Need at least 2 conditions to compare")
-                return []
+                raise ValueError("At least 2 conditions are needed to compare conditions")
 
             # Get parameters
             period_range = parameters.get('period_range', (24.0, 24.0))
@@ -4000,7 +4109,7 @@ class AnalysisEngine:
 
             bootstrap_size = parameters.get('bootstrap_size', 1000)
             save_cosinorpy_plots = parameters.get('save_cosinorpy_plots', False)
-            plot_folder = get_cosinorpy_plot_folder(data_file_path)
+            plot_folder = get_cosinorpy_plot_folder(data_file_path) if save_cosinorpy_plots else None
 
             print(f"[DEBUG _run_cosinorpy_nonlinear_compare_independent_new] period={period}, period1={period1}, period2={period2}, use_dependent_model={use_dependent_model}")
 
@@ -4037,9 +4146,10 @@ class AnalysisEngine:
                     condition1=res_dict.get('condition1', ''),
                     condition2=res_dict.get('condition2', ''),
                     method="cosinorpy_nonlinear_compare_independent",
-                    # Global F-test p/q (joint model only; None for independent model)
-                    p1=res_dict.get('p_global'),
-                    q1=res_dict.get('q_global'),
+                    # Joint-model F-test p/q (Pooled Model only; None for Independent Models).
+                    # Not a per-condition rhythm test, so not stored in p1/q1 (p-Cond1).
+                    model_p=res_dict.get('p_global'),
+                    model_q=res_dict.get('q_global'),
                     # Differences
                     amplitude_diff=res_dict.get('d_amplitude'),
                     acrophase_diff=res_dict.get('d_acrophase'),
@@ -4063,6 +4173,8 @@ class AnalysisEngine:
                     q_lin_comp=res_dict.get('q_d_lin_comp'),
                     # Period and components info
                     period=res_dict.get('period1', period),
+                    period2=(res_dict.get('period2')
+                             if res_dict.get('period2') not in (None, res_dict.get('period1', period)) else None),
                     n_components=res_dict.get('n_components1', 1),
                     success=True
                 ))
@@ -4079,7 +4191,7 @@ class AnalysisEngine:
             print(f"[DEBUG _run_cosinorpy_nonlinear_compare_independent_new] ERROR: {e}")
             import traceback
             traceback.print_exc()
-            return []
+            return [self._failed_comparison(variable, "cosinorpy_nonlinear_compare_independent", e)]
 
     def _run_cosinorpy_nonlinear_compare_dependent_new(
         self,
@@ -4108,8 +4220,7 @@ class AnalysisEngine:
             print(f"[DEBUG] Conditions to compare: {conditions}")
 
             if len(conditions) < 2:
-                print(f"[DEBUG] Need at least 2 conditions to compare")
-                return []
+                raise ValueError("At least 2 conditions are needed to compare conditions")
 
             # Get parameters
             period_range = parameters.get('period_range', (24.0, 24.0))
@@ -4120,11 +4231,11 @@ class AnalysisEngine:
                 n_components = [n_components]
 
             save_cosinorpy_plots = parameters.get('save_cosinorpy_plots', False)
-            plot_folder = get_cosinorpy_plot_folder(data_file_path)
+            plot_folder = get_cosinorpy_plot_folder(data_file_path) if save_cosinorpy_plots else None
 
             # Convert to CosinorPy format for DEPENDENT data
             df_cosinorpy = self._convert_to_cosinorpy_format_population_all_conditions(
-                data, variable, time_col, condition_col
+                data, variable, time_col, condition_col, self._subject_column(data, parameters)
             )
 
             # Load data
@@ -4190,7 +4301,7 @@ class AnalysisEngine:
             print(f"[DEBUG _run_cosinorpy_nonlinear_compare_dependent_new] ERROR: {e}")
             import traceback
             traceback.print_exc()
-            return []
+            return [self._failed_comparison(variable, "cosinorpy_nonlinear_compare_dependent", e)]
 
     # =========================================================================
     # RhythmCount Methods
@@ -4379,6 +4490,7 @@ class AnalysisEngine:
                     'McFadden_R2': result.prsquared,
                     'success': result.success,
                     'error': result.error or '',
+                    'warning': self._rhythmcount.design_warning(n_comp, float(period)),
                 })
 
         if not rows:
@@ -4402,6 +4514,8 @@ class AnalysisEngine:
                 f"Period={row.get('period')}h, N={row.get('n_components')}, "
                 f"Model={row.get('count_model')}"
             )
+            if row.get('warning'):
+                msg += f" | {row.get('warning')}"
             return AnalysisResult(
                 variable=variable,
                 condition=condition,
@@ -4466,6 +4580,9 @@ class AnalysisEngine:
                     f"Period={period}h, Model={row.get('count_model', 'N/A')}, "
                     f"N={row.get('n_components', 'N/A')}"
                 )
+                warning = self._rhythmcount.design_warning(int(row.get('n_components', 1)), float(period))
+                if warning:
+                    msg += f" | {warning}"
                 results.append(AnalysisResult(
                     variable=variable,
                     condition=condition,
@@ -4520,6 +4637,9 @@ class AnalysisEngine:
         for period in periods:
             per_params = dc_replace(params, period=float(period))
             result = self._rhythmcount.fit_best_model(per_params)
+            # smallest unresolved N among the candidates (they enter the selection)
+            warning = next((w for w in (self._rhythmcount.design_warning(n, float(period))
+                                        for n in sorted(per_params.n_components)) if w), '')
 
             table_json = None
             if result.success and not result.all_results.empty:
@@ -4547,6 +4667,7 @@ class AnalysisEngine:
                     f"Period={period}h — Best: {result.count_model}, N={result.n_components}, "
                     f"criterion={result.selection_test}"
                     + (f" | Error: {result.error}" if result.error else "")
+                    + (f" | {warning}" if warning else "")
                 ),
             ))
 
@@ -4591,22 +4712,30 @@ class AnalysisEngine:
         for period in periods:
             per_params = dc_replace(params, period=float(period))
 
-            if ref_peaks_raw is not None:
-                reference_peaks = np.array(ref_peaks_raw, dtype=float)
-            else:
-                reference_peaks = np.array([float(period) / 2.0])
-
             for n_comp in n_comps_list:
+                if ref_peaks_raw is not None:
+                    reference_peaks = np.array(ref_peaks_raw, dtype=float)
+                else:
+                    # Peaks of the same model fitted to the full data
+                    full_fit = self._rhythmcount.fit_single_model(count_model, int(n_comp), per_params)
+                    reference_peaks = np.asarray(full_fit.peaks, dtype=float)
+
                 result = self._rhythmcount.calculate_parameter_cis(
                     count_model, int(n_comp), reference_peaks, per_params
                 )
 
                 amplitude_ci = None
                 mesor_ci = None
+                peak_cis = None
+                peak_height_cis = None
                 if result.success and len(result.amplitude_CIs) >= 2:
                     amplitude_ci = (float(result.amplitude_CIs[0]), float(result.amplitude_CIs[1]))
                 if result.success and len(result.mesor_CIs) >= 2:
                     mesor_ci = (float(result.mesor_CIs[0]), float(result.mesor_CIs[1]))
+                if result.success and len(result.peaks_CIs) > 0:
+                    peak_cis = np.atleast_2d(result.peaks_CIs).tolist()
+                    peak_height_cis = np.atleast_2d(result.heights_CIs).tolist()
+                warning = self._rhythmcount.design_warning(int(n_comp), float(period))
 
                 results.append(AnalysisResult(
                     variable=variable,
@@ -4616,11 +4745,15 @@ class AnalysisEngine:
                     period=float(period),
                     amplitude_ci=amplitude_ci,
                     mesor_ci=mesor_ci,
+                    peak_times=reference_peaks.tolist() if len(reference_peaks) > 0 else None,
+                    peak_cis=peak_cis,
+                    peak_height_cis=peak_height_cis,
                     success=result.success,
                     message=(
-                        f"Bootstrap CIs ({result.repetitions} reps), "
+                        f"Subsampling CIs ({result.repetitions} reps of 2/3 of the data), "
                         f"period={period}h, model={result.count_model}, N={result.n_components}"
                         + (f" | Error: {result.error}" if result.error else "")
+                        + (f" | {warning}" if warning else "")
                     ),
                 ))
 
@@ -4649,8 +4782,12 @@ class AnalysisEngine:
         """Compare count-based cosinor models across all groups, for each period in the range."""
         from dataclasses import replace as dc_replace
 
-        # Build X/Y/group DataFrame with all conditions (done once, period-independent)
+        # Build X/Y/group DataFrame with the conditions selected in the GUI
+        # (all conditions if none are given; done once, period-independent)
         df_xy = data[[time_col, variable, condition_col]].copy()
+        selected_conditions = parameters.get('selected_conditions')
+        if selected_conditions:
+            df_xy = df_xy[df_xy[condition_col].isin(selected_conditions)]
         df_xy = df_xy.rename(columns={time_col: 'X', variable: 'Y'})
         df_xy = df_xy.dropna(subset=['X', 'Y'])
         self._rhythmcount.load_data(df_xy)
@@ -4666,6 +4803,8 @@ class AnalysisEngine:
                 params=per_params,
                 plot_comparison=False,
             )
+            warning = next((w for w in (self._rhythmcount.design_warning(n, float(period))
+                                        for n in sorted(per_params.n_components)) if w), '')
 
             table_json = None
             if result.success and not result.results_table.empty:
@@ -4682,6 +4821,7 @@ class AnalysisEngine:
                     f"Period={period}h — Group comparison ({result.group_column}), "
                     f"criterion={result.selection_test}"
                     + (f" | Error: {result.error}" if result.error else "")
+                    + (f" | {warning}" if warning else "")
                 ),
             ))
 

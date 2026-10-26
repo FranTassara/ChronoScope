@@ -428,7 +428,8 @@ class DataPanel(QWidget):
         self._awd_bin_spin.setValue(6)
         self._awd_bin_spin.setSuffix(" min")
         self._awd_bin_spin.setToolTip(
-            "Native AWD bin is typically 6 min. Set a larger value to re-bin."
+            "Bin size used for analysis. The native epoch is read from the\n"
+            "AWD header; data are re-binned to this value when it differs."
         )
         self._awd_bin_spin.valueChanged.connect(self._update_awd_preview)
         bin_layout.addWidget(self._awd_bin_spin)

@@ -106,12 +106,15 @@ class AnalysisWorker(QThread):
         self.loader = loader
         self.source_type = source_type
         self.results = []
+        self.errors = []  # failed analyses, reported to the user when the run finishes
+        self.warnings = []  # e.g. preprocessing stages not applied, reported likewise
         self.detected_period = None
         self.detected_n_components = None
 
     def run(self):
         try:
-            # Handle visualization methods separately (they don't use the analysis engine)
+            # Handle visualization methods separately (they don't use the analysis
+            # engine and do not apply the preprocessing pipeline)
             if self.config.method == AnalysisMethod.VISUALIZATION_ACTIVITY_PROFILE:
                 self._run_activity_profile_visualization()
                 return
@@ -126,6 +129,8 @@ class AnalysisWorker(QThread):
                 data = self.loader.get_data()
                 time_col = self.loader.get_time_column()
                 condition_col = self.loader._condition_col if hasattr(self.loader, '_condition_col') else 'condition'
+                # Subject column detected/assigned at load time (dependent-data methods)
+                self.config.parameters['subject_col'] = getattr(self.loader, '_subject_col', None)
             else:  # rosbash
                 # For Rosbash, we need to prepare data differently
                 # This is a simplified placeholder - you may need to adjust
@@ -135,17 +140,26 @@ class AnalysisWorker(QThread):
 
             # Apply preprocessing pipeline (operates on a copy; original loader data unchanged)
             preproc_cfg = self.config.preprocessing
+            if data is None and preproc_cfg is not None and (
+                    preproc_cfg.remove_outliers or preproc_cfg.detrend or preproc_cfg.smooth):
+                # Rosbash expression is extracted per gene later on, without the
+                # pipeline; say so instead of ignoring the settings silently
+                self.warnings.append("Preprocessing: settings are not applied to "
+                                     "single-cell RNA-seq (Rosbash) data")
             if data is not None and preproc_cfg is not None:
                 if preproc_cfg.remove_outliers or preproc_cfg.detrend or preproc_cfg.smooth:
                     self.progress.emit(0, "Applying preprocessing...")
                     from core.preprocessing import apply_preprocessing
-                    data, _ = apply_preprocessing(
+                    data, preproc_report = apply_preprocessing(
                         data,
                         self.config.variables,
                         preproc_cfg,
                         time_col=time_col,
                         condition_col=condition_col,
+                        subject_col=self.config.parameters.get('subject_col'),
                     )
+                    # Stages that could not be applied are reported when the run finishes
+                    self.warnings.extend(f"Preprocessing: {w}" for w in preproc_report.warnings)
 
             # TODO: Auto-period detection needs to be reimplemented for refactored architecture
             # The old periodogram method signature is incompatible with the new refactored version
@@ -208,11 +222,13 @@ class AnalysisWorker(QThread):
                             # For Rosbash, compare conditions within specific cluster
                             result = self._run_rosbash_comparison(var, cond1, cond2, cluster, analysis_type)
 
-                        if isinstance(result, list):
-                            for r in result:
-                                self.results.append(r.to_dict())
-                        elif result:
-                            self.results.append(result.to_dict())
+                        # Failed comparisons carry the error message and are reported, not tabulated
+                        if result:
+                            for r in (result if isinstance(result, list) else [result]):
+                                if r.success:
+                                    self.results.append(r.to_dict())
+                                else:
+                                    self.errors.append(f"{var} ({cond1} vs {cond2}): {r.message}")
 
                         current += 1
 
@@ -255,11 +271,13 @@ class AnalysisWorker(QThread):
                             else:  # rosbash
                                 result = self._run_rosbash_comparison(var, cond1, cond2, cluster, analysis_type)
 
-                            if isinstance(result, list):
-                                for r in result:
-                                    self.results.append(r.to_dict())
-                            elif result:
-                                self.results.append(result.to_dict())
+                            # Failed comparisons carry the error message and are reported, not tabulated
+                            if result:
+                                for r in (result if isinstance(result, list) else [result]):
+                                    if r.success:
+                                        self.results.append(r.to_dict())
+                                    else:
+                                        self.errors.append(f"{var} ({cond1} vs {cond2}): {r.message}")
 
                             current += 1
 
@@ -311,15 +329,15 @@ class AnalysisWorker(QThread):
                             # For Rosbash, prepare data with all conditions for specific cluster
                             result = self._run_rosbash_compare_all(var, self.config.conditions, cluster, analysis_type)
 
-                        # Handle both single result and list of results
+                        # Handle both single result and list of results (one per pair);
+                        # failed runs carry the error message and are reported, not tabulated
                         if result:
-                            if isinstance(result, list):
-                                # Multiple comparison results (multiple pairs)
-                                for res in result:
-                                    self.results.append(res.to_dict() if hasattr(res, 'to_dict') else res)
-                            else:
-                                # Single result
-                                self.results.append(result.to_dict() if hasattr(result, 'to_dict') else result)
+                            for res in (result if isinstance(result, list) else [result]):
+                                res = res.to_dict() if hasattr(res, 'to_dict') else res
+                                if res.get('success', True):
+                                    self.results.append(res)
+                                else:
+                                    self.errors.append(f"{var}: {res.get('message', 'unknown error')}")
 
                         current += 1
 
@@ -353,6 +371,7 @@ class AnalysisWorker(QThread):
                         self.results.append(result.to_dict())
                     elif result:
                         self.results.append(result.to_dict())
+                        self.errors.append(result.message)
                 else:
                     # Rosbash not supported for periodogram
                     pass
@@ -399,6 +418,8 @@ class AnalysisWorker(QThread):
                                     for res in result:
                                         if res.success:
                                             self.results.append(res.to_dict())
+                                        else:
+                                            self.errors.append(f"{var} / {cond}: {res.message}")
                                 else:
                                     # Single result
                                     if result.success:
@@ -411,16 +432,47 @@ class AnalysisWorker(QThread):
                                             print(f"[DEBUG Worker] Auto-components detected: {result.n_components} components, p-value: {result.p_value}")
                                     else:
                                         print(f"[ERROR Worker] Analysis failed for {var}/{cond}: {getattr(result, 'message', 'unknown error')}")
+                                        self.errors.append(f"{var} / {cond}: {getattr(result, 'message', 'unknown error')}")
 
                             current += 1
 
+            # CosinorPy q-values: Benjamini-Hochberg across all variables of this run
+            from core.multiple_testing import bh_across_variables
+            bh_across_variables(self.results, self.config.parameters)
+
+            # CRS-AI caveats (period range clipped, ...) travel in each result's JSON
+            self.warnings.extend(self._crs_ai_warnings(self.results))
+
             self.progress.emit(100, "Complete")
-            self.finished.emit(True, self.results, "Analysis completed successfully")
+            if self.errors or self.warnings:
+                issues = self.errors + self.warnings
+                shown = issues[:10] + ([f"... and {len(issues) - 10} more"] if len(issues) > 10 else [])
+                message = (f"Analysis completed with {len(self.errors)} error(s) and "
+                           f"{len(self.warnings)} warning(s):\n" + "\n".join(shown))
+                self.finished.emit(bool(self.results), self.results or None, message)
+            else:
+                self.finished.emit(True, self.results, "Analysis completed successfully")
 
         except Exception as e:
             import traceback
             traceback.print_exc()
             self.finished.emit(False, None, str(e))
+
+    @staticmethod
+    def _crs_ai_warnings(results) -> list:
+        """One warning per distinct CRS-AI note, with the number of series it applies to."""
+        import json
+        series = [r for r in results if r.get('method') == 'consensus_ai']
+        counts = {}
+        for r in series:
+            try:
+                notes = json.loads(r.get('message') or '{}').get('notes', [])
+            except (ValueError, TypeError, AttributeError):
+                notes = []
+            for note in notes:
+                counts[note] = counts.get(note, 0) + 1
+        return [note if k == len(series) else f"{note} ({k} of {len(series)} series)"
+                for note, k in counts.items()]
 
     def _map_method_to_type(self, method: AnalysisMethod):
         """Map UI AnalysisMethod to engine AnalysisType."""
@@ -745,13 +797,18 @@ class AnalysisWorker(QThread):
             # analysis expects (time / condition / subject / activity). A generic
             # CSV or Excel table does not, so map the user's column choices onto
             # that same shape and let everything downstream stay unchanged.
+            params = self.config.parameters
             if self.source_type not in ('dam', 'awd'):
                 data, err = self._activity_frame_from_table(data)
                 if err:
                     self.finished.emit(False, None, err)
                     return
-
-            params = self.config.parameters
+                # Tabular time is in clock hours: express it in ZT as the DAM/AWD
+                # loaders do (ZT0 of day 1 = last lights-on at or before the first
+                # sample). With lights-on at 0 h the time column is used as is.
+                lights_on = float(params.get('viz_lights_on_hour', 0))
+                zt0 = lights_on + 24.0 * np.floor((data['time'].min() - lights_on) / 24.0)
+                data['time'] = data['time'] - zt0
             ld_end = int(params.get('viz_ld_end_day', 0))
             dd_end = int(params.get('viz_dd_end_day', 0))
             ll_end = int(params.get('viz_ll_end_day', 0))
@@ -764,12 +821,13 @@ class AnalysisWorker(QThread):
 
             # Build lighting_phases dict for downstream plotting
             # Derive DD start from LD end; LL start from DD end
+            # LL ends day = 0 means no LL phase.
             dd_start = (ld_end + 1) if ld_end > 0 else 1
             ll_start = (dd_end + 1) if dd_end > 0 else None
             lighting_phases = {
                 'LD': (1, ld_end) if ld_end > 0 else None,
                 'DD': (dd_start, dd_end if dd_end > 0 else None),
-                'LL': (ll_start, ll_end if ll_end > 0 else None) if ll_start else None,
+                'LL': (ll_start, ll_end) if (ll_start and ll_end > 0) else None,
             }
 
             self.progress.emit(15, "Calculating ZT times and days...")
@@ -872,7 +930,8 @@ class AnalysisWorker(QThread):
                 cond_df = df_plot[df_plot['condition'] == cond]
                 grouped = cond_df.groupby(['day', 'zt'])['activity'].mean().reset_index()
                 grouped.columns = ['day', 'zt', 'mean']
-                pivot = grouped.pivot(index='day', columns='zt', values='mean').fillna(0)
+                # Unrecorded (day, ZT) cells stay NaN, not 0 (partial first/last days)
+                pivot = grouped.pivot(index='day', columns='zt', values='mean')
                 profile_data[cond] = {
                     'days': pivot.index.tolist(),
                     'zt_times': pivot.columns.tolist(),
@@ -1000,11 +1059,20 @@ class AnalysisWorker(QThread):
 
             # ===== CHI-SQUARE PERIODOGRAM (per individual, rhythmic filter) =====
             chi_sq_data = {}
+            run_notes = []
+            # The locomotor metrics are defined on raw activity counts, so the
+            # preprocessing pipeline is not applied here; say so explicitly.
+            preproc_cfg = getattr(self.config, 'preprocessing', None)
+            if preproc_cfg is not None and (preproc_cfg.remove_outliers or
+                                            preproc_cfg.detrend or preproc_cfg.smooth):
+                run_notes.append("preprocessing settings are not applied to "
+                                      "Locomotor Activity Analysis (raw activity used)")
             for cond in conditions:
                 cond_df = df_plot[df_plot['condition'] == cond]
                 subjects = cond_df['subject'].unique() if 'subject' in cond_df.columns else [None]
 
                 individual_results = []
+                n_full_recording = 0  # individuals whose DD window was too short
                 for subj in subjects:
                     sub_df = cond_df[cond_df['subject'] == subj] if subj is not None else cond_df
                     t_s = sub_df.groupby('time')['activity'].mean().reset_index()['time'].values
@@ -1012,6 +1080,7 @@ class AnalysisWorker(QThread):
 
                     if dd_phase is not None:
                         t_s, a_s = filter_days(t_s, a_s, dd_phase[0] + dd_skip, dd_phase[1])
+                    used_full = dd_phase is None or len(t_s) < 10
                     if len(t_s) < 10:
                         t_s_orig = sub_df.groupby('time')['activity'].mean().reset_index()['time'].values
                         a_s_orig = sub_df.groupby('time')['activity'].mean().reset_index()['activity'].values
@@ -1025,6 +1094,19 @@ class AnalysisWorker(QThread):
                                                period_min=tau_min, period_max=tau_max,
                                                period_step=0.1, alpha=chi_alpha)
                     individual_results.append(r)
+                    n_full_recording += used_full
+
+                # 'DD' only if every individual was analysed on its DD window.
+                if n_full_recording == 0:
+                    phase_used = 'DD'
+                elif n_full_recording == len(individual_results):
+                    phase_used = 'all'
+                else:
+                    phase_used = 'mixed'
+                if n_full_recording:
+                    run_notes.append(
+                        f"{cond}: {n_full_recording}/{len(individual_results)} individual(s) "
+                        f"had < 10 points in the DD window; τ computed on the full recording")
 
                 n_total = len(individual_results)
                 # Scan-wide permutation test (accounts for searching the
@@ -1060,7 +1142,8 @@ class AnalysisWorker(QThread):
                         'alpha': chi_alpha,
                         'n_rhythmic': n_rhythmic,
                         'n_total': n_total,
-                        'phase_used': 'DD' if dd_phase else 'all',
+                        'phase_used': phase_used,
+                        'n_full_recording': n_full_recording,
                     }
                 else:
                     ref = individual_results[0] if individual_results else {}
@@ -1072,7 +1155,8 @@ class AnalysisWorker(QThread):
                         'threshold_curve': threshold_curve,
                         'alpha': chi_alpha,
                         'n_rhythmic': 0, 'n_total': n_total,
-                        'phase_used': 'DD' if dd_phase else 'all',
+                        'phase_used': phase_used,
+                        'n_full_recording': n_full_recording,
                     }
 
             self.progress.emit(75, "Computing IS/IV metrics...")
@@ -1107,6 +1191,8 @@ class AnalysisWorker(QThread):
 
             subjects_info = ", ".join([f"{cond}: n={n_subjects.get(cond, '?')}" for cond in conditions])
             message = f"Activity profile: {n_days} days, {len(conditions)} condition(s) ({subjects_info})"
+            if run_notes:
+                message += ". Warning: " + "; ".join(run_notes)
 
             result = {
                 'type': 'activity_profile',
@@ -2104,11 +2190,15 @@ class AnalysisPanel(QWidget):
         # Bootstrap size (for Bootstrap analysis method)
         self._bootstrap_size_label = QLabel("Bootstrap Size:")
         self._bootstrap_size_spin = QSpinBox()
-        self._bootstrap_size_spin.setRange(5, 10000)
+        # Minimum 50: CosinorPy's nonlinear bootstrap uses a t quantile with
+        # df = B - (2N + 3), so B <= 2N + 3 (up to 11 for N = 4) gives NaN, and
+        # below ~50 the CI half-width varies 2-3x between runs (G3, 2026-10-21).
+        self._bootstrap_size_spin.setRange(50, 10000)
         self._bootstrap_size_spin.setValue(100)
         self._bootstrap_size_spin.setSingleStep(10)
         self._bootstrap_size_spin.setToolTip(
-            "Number of bootstrap iterations (higher = more accurate but slower)"
+            "Number of bootstrap iterations (higher = more accurate but slower).\n"
+            "Minimum 50: with fewer resamples the intervals are unstable between runs."
         )
         self._params_layout.addRow(self._bootstrap_size_label, self._bootstrap_size_spin)
 
@@ -2254,7 +2344,7 @@ class AnalysisPanel(QWidget):
         )
         self._params_layout.addRow("Oversampling:", self._n_periods_spin)
 
-        # Significance Threshold (for Lomb-Scargle)
+        # Significance Threshold (for Lomb-Scargle and Fourier F24)
         self._alpha_combo = QComboBox()
         self._alpha_combo.addItems(['0.05', '0.01', '0.001'])
         self._alpha_combo.setToolTip(
@@ -2292,7 +2382,8 @@ class AnalysisPanel(QWidget):
         self._detrending_check.setChecked(True)
         self._detrending_check.setToolTip(
             "Remove mean or linear trend before spectral analysis.\n"
-            "Important for FFT-based methods."
+            "Important for FFT-based methods (per, welch);\n"
+            "lombscargle always centres the data."
         )
         self._params_layout.addRow("", self._detrending_check)
 
@@ -2394,9 +2485,9 @@ class AnalysisPanel(QWidget):
 
         # Info label for Parameter CIs
         self._rc_cis_info_label = QLabel(
-            "ℹ This method requires reference peak times from a prior\n"
-            "Best Model run. Configure the Count Model and N Components\n"
-            "to match the best model found previously."
+            "ℹ Peak intervals use the peaks of this model fitted to the\n"
+            "full data as reference. Configure the Count Model and N\n"
+            "Components to match the best model found previously."
         )
         self._rc_cis_info_label.setWordWrap(True)
         self._rc_cis_info_label.setStyleSheet(
@@ -2411,9 +2502,12 @@ class AnalysisPanel(QWidget):
         # which parameters move the model and which are display-only,
         # so the user understands what their slider actually does.
         self._ai_consensus_info_label = QLabel(
-            "ℹ Period applies to JTK, Cosinor, Lomb-Scargle and Harmonic searches. "
-            "Values outside [18, 32]h are automatically clipped to the model's "
-            "training window."
+            "ℹ Period applies to the JTK, Cosinor and Harmonic searches; "
+            "Lomb-Scargle always searches its training range (18-32 h). "
+            "Ranges extending beyond the model's training window [18, 32] h are "
+            "clipped to it; ranges overlapping it by 1 h or less are replaced by "
+            "the training defaults. Either case is reported when the analysis "
+            "finishes and in the Notes column."
         )
         self._ai_consensus_info_label.setWordWrap(True)
         self._ai_consensus_info_label.setStyleSheet(
@@ -2542,8 +2636,8 @@ class AnalysisPanel(QWidget):
         self._viz_lights_on_spin.setValue(0)
         self._viz_lights_on_spin.setSuffix(" h")
         self._viz_lights_on_spin.setToolTip(
-            "Clock hour at which lights turn on (ZT0), used to place the light/dark\n"
-            "shading on the actogram and activity profile.\n"
+            "Clock hour at which lights turn on (ZT0). The time column is read as\n"
+            "clock hours and converted to ZT, so days run from lights-on to lights-on.\n"
             "Only used for tabular (CSV/Excel) activity data; for DAM and AWD\n"
             "recordings this is taken from the loader configuration instead.\n"
             "Leave at 0 if the time column is already expressed in ZT."
@@ -2673,7 +2767,9 @@ class AnalysisPanel(QWidget):
                 options = ['RSS', 'AIC', 'BIC', 'Log-Likelihood']
                 default = 'RSS'
         elif module_text == "RhythmCount (Velikajne et al., 2022)":
-            options = ['AIC', 'BIC', 'Vuong', 'F']
+            # No 'F': the F test across N is always applied, and it is undefined
+            # between count models with the same N
+            options = ['AIC', 'BIC', 'Vuong']
             default = 'AIC'
         else:
             options = ['RSS', 'AIC', 'BIC', 'Log-Likelihood']
@@ -3087,6 +3183,7 @@ class AnalysisPanel(QWidget):
             self._hide_param("DD ends day:")
             self._hide_param("LL ends day:")
             self._hide_param("τ search (h):")
+            self._hide_param("Lights on (ZT0):")
             self._hide_param("α/ρ threshold:")
             self._hide_checkbox(self._viz_normalize_check)
             self._hide_param("Actogram:")
@@ -3255,7 +3352,7 @@ class AnalysisPanel(QWidget):
             # 5. Harmonic Cosinor
             elif method_text == "Harmonic Cosinor":
                 self._show_param("Period:")
-                self._set_period_mode('single')
+                self._set_period_mode('range')
                 self._show_param("Components:")
 
             # 6. Fourier F24
@@ -3263,6 +3360,7 @@ class AnalysisPanel(QWidget):
                 self._show_param("Period:")
                 self._set_period_mode('single')
                 self._show_param("Permutations:")
+                self._show_param("Significance Level:")  # alpha of the pF24 call in Notes
 
             # 7. Lomb-Scargle
             elif method_text == "Lomb-Scargle":
@@ -3349,7 +3447,7 @@ class AnalysisPanel(QWidget):
             self._set_period_mode('range')
             # Hide the step controls — the AI uses fixed internal grids
             # per sub-method (JTK integer step, Cosinor/Harmonic 0.5h,
-            # LS log-spaced 1000 points), so the step value is ignored.
+            # LS 1000 linearly spaced periods), so the step value is ignored.
             self._period_step_label.setVisible(False)
             self._period_step_spin.setVisible(False)
             self._set_row_visible_for_widget(
@@ -3387,7 +3485,7 @@ class AnalysisPanel(QWidget):
 
         # For pairwise comparison methods, hide condition list (use dropdowns instead)
         # For Compare All/Conditions/Nonlinear Compare, show condition list but make it read-only (user shouldn't select)
-        if is_compare_all_or_conditions:
+        if is_compare_all_or_conditions and not is_rhythmcount_compare:
             self._cond_list.setVisible(True)
             # Disable selection for Compare All/Conditions/Nonlinear Compare (all conditions will be used automatically)
             self._cond_list.setSelectionMode(QAbstractItemView.NoSelection)
@@ -3608,11 +3706,11 @@ class AnalysisPanel(QWidget):
             methods = [
                 ("JTK Cycle",
                  "Nonparametric rhythm detection using Kendall's tau correlation with triangle waveforms. "
-                 "Robust to outliers and non-normal distributions. Uses Benjamini-Hochberg correction for multiple testing. "
+                 "Robust to outliers and non-normal distributions. Corrects for the period × lag × asymmetry templates tested. "
                  "Suitable for: Independent data (cross-sectional designs)."),
                 ("AR-JTK",
                  "JTK Cycle with autoregressive noise correction. Detects and corrects for autocorrelation in residuals "
-                 "using Ljung-Box test and AR prewhitening. Better statistical power for time series with temporal dependencies. "
+                 "using Ljung-Box test and AR prewhitening, which keeps autocorrelated noise from being called rhythmic. "
                  "Suitable for: Dependent data (longitudinal/repeated measures)."),
                 ("Cosine-Kendall",
                  "Nonparametric rhythm detection using Kendall's tau with cosine templates. Similar to JTK but assumes "
@@ -3624,7 +3722,7 @@ class AnalysisPanel(QWidget):
                  "Assumes independence between observations. "
                  "Suitable for: Independent data (cross-sectional), or pre-averaged time series."),
                 ("Harmonic Cosinor",
-                 "Extended cosinor with multiple harmonics (up to 4) for complex or asymmetric waveforms. Uses OLS regression "
+                 "Extended cosinor with multiple harmonics (up to 6) for complex or asymmetric waveforms. Uses OLS regression "
                  "with F-tests for overall significance and incremental harmonic contribution. Assumes independence between observations. "
                  "Suitable for: Independent data (cross-sectional), or pre-averaged time series."),
                 ("Fourier F24",
@@ -3683,8 +3781,9 @@ class AnalysisPanel(QWidget):
                  "Lomb-Scargle and Fourier F24 into a single calibrated probability (0-1) "
                  "that a series belongs to the rhythmic class, as defined by its "
                  "BioCycle/RhythmicDB-derived training labels. It is not a p-value. "
-                 "Uses a pre-trained, calibrated Random Forest (11 features) trained on "
-                 "5,649 series (1,696 synthetic + 3,953 real transcriptomic). Output regimes: "
+                 "Uses a pre-trained, calibrated Random Forest (11 features) fitted on "
+                 "4,532 of 5,649 labelled series (1,696 synthetic + 3,953 real transcriptomic; "
+                 "the other 1,117 were held out for evaluation). Output regimes: "
                  "Rhythmic (>= 0.70), Borderline (0.30-0.70), Arrhythmic (< 0.30). "
                  "Trained and evaluated on transcriptomic and synthetic data only.")
             ]
@@ -3791,10 +3890,12 @@ class AnalysisPanel(QWidget):
         is_pairwise_comparison = "Compare" in method_text and not is_compare_all and not is_compare_conditions and not is_nonlinear_compare and not is_circacompare_compare and not is_rhythmcount_compare
 
         if is_compare_all or is_compare_conditions or is_nonlinear_compare or is_circacompare_compare or is_rhythmcount_compare:
-            # For "Compare All" and "Compare Conditions", automatically use ALL available conditions
+            # For "Compare All" and "Compare Conditions", automatically use ALL available conditions;
+            # RhythmCount Compare Groups uses the conditions selected in the list
             selected_conds = [
                 self._cond_list.item(i).text()
                 for i in range(self._cond_list.count())
+                if self._cond_list.item(i).isSelected() or not is_rhythmcount_compare
             ]
             compare_conditions = None  # Not needed for Compare All/Conditions
 
@@ -3808,7 +3909,9 @@ class AnalysisPanel(QWidget):
                 else:
                     comparison_name = "Compare All"
                 QMessageBox.warning(self, "Not Enough Conditions",
-                                  f"{comparison_name} requires at least 2 conditions in your data.")
+                                  f"{comparison_name} requires at least 2 conditions in your data."
+                                  if not is_rhythmcount_compare else
+                                  f"{comparison_name} requires at least 2 selected conditions.")
                 return
 
         elif is_pairwise_comparison:
@@ -3854,6 +3957,8 @@ class AnalysisPanel(QWidget):
         params = self._get_current_parameters()
         if rosbash_compare_type:
             params['rosbash_compare_type'] = rosbash_compare_type
+        if is_rhythmcount_compare:
+            params['selected_conditions'] = selected_conds
 
         config = AnalysisConfig(
             method=self._get_current_method_enum(),
@@ -3933,7 +4038,13 @@ class AnalysisPanel(QWidget):
         self._cancel_btn.setVisible(False)
         self._progress_bar.setVisible(False)
         
-        if success:
+        if success and message.startswith("Analysis completed with"):
+            # Some analyses failed: show the results that were obtained and the errors
+            self._status_label.setText(f"⚠ {message.splitlines()[0]}")
+            self._status_label.setStyleSheet("color: darkorange;")
+            self.analysis_completed.emit(results)
+            QMessageBox.warning(self, "Analysis finished with errors or warnings", message)
+        elif success:
             self._status_label.setText(f"✓ {message}")
             self._status_label.setStyleSheet("color: green;")
             self.analysis_completed.emit(results)

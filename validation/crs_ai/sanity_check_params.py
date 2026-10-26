@@ -54,17 +54,17 @@ p, w = _capture_warnings(lambda: _resolve_params({'period_range': (22, 26)}))
 assert not w, f"unexpected warnings: {w}"
 _show(p)
 assert p['jtk_periods'] == [22, 23, 24, 25, 26]
-assert p['ls_range'] == (22.0, 26.0)
+assert p['ls_range'] == (18.0, 32.0)  # Lomb-Scargle keeps its training range
 
 print()
 print("=" * 60)
 print("TEST 3: period_range=(16, 30) — clips low end")
 print("=" * 60)
 p, w = _capture_warnings(lambda: _resolve_params({'period_range': (16, 30)}))
-assert len(w) == 1 and 'clipping' in w[0].lower(), f"expected clip warning, got: {w}"
+assert len(w) == 1 and 'clipped' in w[0].lower(), f"expected clip warning, got: {w}"
 print(f"  WARN: {w[0]}")
 _show(p)
-assert p['ls_range'] == (18.0, 30.0)
+assert p['ls_range'] == (18.0, 32.0)
 assert p['jtk_periods'][0] == 18
 
 print()
@@ -72,7 +72,7 @@ print("=" * 60)
 print("TEST 4: period_range=(6, 12) — fully outside, falls back")
 print("=" * 60)
 p, w = _capture_warnings(lambda: _resolve_params({'period_range': (6, 12)}))
-assert len(w) == 1 and 'outside' in w[0].lower(), f"expected fallback warning, got: {w}"
+assert len(w) == 1 and 'does not overlap' in w[0].lower(), f"expected fallback warning, got: {w}"
 print(f"  WARN: {w[0]}")
 _show(p)
 assert p['ls_range'] == (18.0, 32.0)

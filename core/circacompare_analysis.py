@@ -111,7 +111,10 @@ def _param_standard_errors(optimised_result, y: np.ndarray) -> np.ndarray:
         Array of standard errors for each parameter
     """
     ssr = np.nansum(optimised_result.fun ** 2)
-    dof = y.size - 2
+    # Residual degrees of freedom: n minus the number of fitted parameters
+    # (3 for the single model, 6 for the two-group model). The circacompare_py
+    # port used n - 2 for both.
+    dof = y.size - optimised_result.x.size
     mse = ssr / dof
     rmse = np.sqrt(mse)
     neg_hess = np.dot(optimised_result.jac.T, optimised_result.jac)
